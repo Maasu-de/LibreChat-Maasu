@@ -5,7 +5,13 @@ import { Constants } from 'librechat-data-provider';
 import { useGetStartupConfig } from '~/data-provider';
 import { useLocalize } from '~/hooks';
 
-function Footer({ className }: { className?: string }) {
+function Footer({
+  className,
+  sensitiveValuesCount = 0,
+}: {
+  className?: string;
+  sensitiveValuesCount?: number;
+}) {
   const { data: config } = useGetStartupConfig();
   const localize = useLocalize();
 
@@ -68,9 +74,13 @@ function Footer({ className }: { className?: string }) {
   ));
 
   const governedRender = <span>{localize('com_ui_governed')}</span>;
+  const sensitiveValuesRender = (
+    <span>{localize('com_ui_sensitive_values_masked', { 0: sensitiveValuesCount })}</span>
+  );
   const footerElements = [
     ...mainContentRender,
     governedRender,
+    sensitiveValuesRender,
     privacyPolicyRender,
     termsOfServiceRender,
   ].filter(Boolean);

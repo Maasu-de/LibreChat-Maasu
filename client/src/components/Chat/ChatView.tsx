@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
 import { Spinner } from '@librechat/client';
@@ -16,7 +16,7 @@ import ChatForm from './Input/ChatForm';
 import Landing from './Landing';
 import Header from './Header';
 import Footer from './Footer';
-import { cn } from '~/utils';
+import { cn, countSensitiveValuesInMessages } from '~/utils';
 import store from '~/store';
 
 function LoadingSpinner() {
@@ -65,6 +65,10 @@ function ChatView({ index = 0 }: { index?: number }) {
     (!messagesTree || messagesTree.length === 0) &&
     (conversationId === Constants.NEW_CONVO || !conversationId);
   const isNavigating = (!messagesTree || messagesTree.length === 0) && conversationId != null;
+  const sensitiveValuesCount = useMemo(
+    () => countSensitiveValuesInMessages(messagesTree),
+    [messagesTree],
+  );
 
   if (isLoading && conversationId !== Constants.NEW_CONVO) {
     content = <LoadingSpinner />;
@@ -100,10 +104,14 @@ function ChatView({ index = 0 }: { index?: number }) {
                     )}
                   >
                     <ChatForm index={index} />
-                    {isLandingPage ? <ConversationStarters /> : <Footer />}
+                    {isLandingPage ? (
+                      <ConversationStarters />
+                    ) : (
+                      <Footer sensitiveValuesCount={sensitiveValuesCount} />
+                    )}
                   </div>
                 </div>
-                {isLandingPage && <Footer />}
+                {isLandingPage && <Footer sensitiveValuesCount={0} />}
               </>
             </div>
           </Presentation>
