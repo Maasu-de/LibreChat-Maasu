@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useMediaQuery } from '@librechat/client';
 import { useOutletContext } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -11,14 +11,32 @@ import ExportAndShareMenu from './ExportAndShareMenu';
 import BookmarkMenu from './Menus/BookmarkMenu';
 import { TemporaryChat } from './TemporaryChat';
 import AddMultiConvo from './AddMultiConvo';
-import { useHasAccess } from '~/hooks';
+import { useHasAccess, useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
 const defaultInterface = getConfigDefaults().interface;
+const securityLevelStorageKey = 'librechat-security-level';
+
+type SecurityLevel = 'S1' | 'S2';
+
+function getInitialSecurityLevel(): SecurityLevel {
+  if (typeof window === 'undefined') {
+    return 'S1';
+  }
+
+  return window.localStorage.getItem(securityLevelStorageKey) === 'S2' ? 'S2' : 'S1';
+}
 
 function Header() {
+  const localize = useLocalize();
   const { data: startupConfig } = useGetStartupConfig();
   const { navVisible, setNavVisible } = useOutletContext<ContextType>();
+  const [securityLevel, setSecurityLevel] = useState<SecurityLevel>(getInitialSecurityLevel);
+
+  const changeSecurityLevel = (level: SecurityLevel) => {
+    setSecurityLevel(level);
+    window.localStorage.setItem(securityLevelStorageKey, level);
+  };
 
   const interfaceConfig = useMemo(
     () => startupConfig?.interface ?? defaultInterface,
@@ -75,6 +93,15 @@ function Header() {
                 !navVisible && !isSmallScreen ? 'pl-2' : '',
               )}
             >
+              <select
+                value={securityLevel}
+                onChange={(event) => changeSecurityLevel(event.target.value as SecurityLevel)}
+                aria-label={localize('com_ui_security_level')}
+                className="h-10 min-w-[140px] rounded-lg border border-border-medium bg-surface-primary pl-2 pr-8 text-sm text-text-primary"
+              >
+                <option value="S1">{localize('com_ui_security_level_s1')}</option>
+                <option value="S2">{localize('com_ui_security_level_s2')}</option>
+              </select>
               <ModelSelector startupConfig={startupConfig} />
               {interfaceConfig.presets === true && interfaceConfig.modelSelect && <PresetsMenu />}
               {hasAccessToBookmarks === true && <BookmarkMenu />}
