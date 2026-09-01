@@ -35,6 +35,8 @@ export * from './agents';
 export * from './prompts';
 /* Endpoints */
 export * from './endpoints';
+/* Governance */
+export * from './governance/dlp';
 /* Files */
 export * from './files';
 /* Tools */

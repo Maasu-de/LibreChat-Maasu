@@ -21,4 +21,6 @@ export type RequestBody = {
 export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   user?: IUser;
   config?: AppConfig;
+  /** Set only after the server-side plain-text DLP preflight allows this request. */
+  governanceDlpEligible?: boolean;
 };
