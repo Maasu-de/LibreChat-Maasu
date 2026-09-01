@@ -1620,6 +1620,10 @@ export enum ErrorTypes {
    * SSE stream 404 — job completed, expired, or was deleted before the subscriber connected
    */
   STREAM_EXPIRED = 'stream_expired',
+  /** Governance policy blocked a message before completion. */
+  GOVERNANCE_BLOCKED = 'governance_blocked',
+  /** Governance requires review of a WARN or MASK result before completion. */
+  GOVERNANCE_INTERVENTION = 'governance_intervention',
 }
 
 /**
