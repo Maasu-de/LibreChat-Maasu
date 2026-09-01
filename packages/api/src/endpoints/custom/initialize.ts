@@ -10,6 +10,11 @@ import type { AppConfig } from '@librechat/data-schemas';
 import type { BaseInitializeParams, InitializeResultBase, EndpointTokenConfig } from '~/types';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
 import { isUserProvided, checkUserKeyExpiry } from '~/utils';
+import {
+  createGovernanceDlpFetch,
+  isGovernanceDlpEnabled,
+  isGovernanceGatewayUrl,
+} from '~/governance/dlp';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
 import { validateEndpointURL } from '~/auth';
@@ -170,6 +175,21 @@ export async function initializeCustom({
   };
 
   const options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
+  if (
+    req.governanceDlpEligible === true &&
+    baseURL != null &&
+    isGovernanceDlpEnabled() &&
+    isGovernanceGatewayUrl(baseURL)
+  ) {
+    options.configOptions = {
+      ...(options.configOptions ?? {}),
+      fetch: createGovernanceDlpFetch({
+        userId,
+        fetch: options.configOptions?.fetch,
+      }),
+    };
+  }
+
   if (options != null) {
     (options as InitializeResultBase).useLegacyContent = true;
     (options as InitializeResultBase).endpointTokenConfig = endpointTokenConfig;
