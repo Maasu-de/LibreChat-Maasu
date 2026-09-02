@@ -1,20 +1,22 @@
-import { ErrorTypes } from 'librechat-data-provider';
+import { ErrorTypes, ContentTypes } from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
+import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
 import {
+  getModel,
   checkDlp,
+  hasSelectedTools,
   createDlpIntervention,
+  isPlainTextSubmission,
   createGovernanceDlpFetch,
   GovernanceDlpError,
   type CheckDlpParams,
   type DlpCheckResponse,
   type DlpCheckResult,
   type HttpPoster,
+  type GovernanceSubmissionBody,
 } from '../dlp';
 
-const environmentKeys = [
-  'GOVERNANCE_API_BASE_URL',
-  'LIBRECHAT_SERVICE_CREDENTIAL',
-] as const;
+const environmentKeys = ['GOVERNANCE_API_BASE_URL', 'LIBRECHAT_SERVICE_CREDENTIAL'] as const;
 
 const originalEnvironment = new Map<string, string | undefined>(
   environmentKeys.map((key): [string, string | undefined] => [key, process.env[key]]),
@@ -274,5 +276,88 @@ describe('Governance DLP', () => {
     expect(check).not.toHaveBeenCalled();
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
     expect(result).toBe(upstreamResponse);
+  });
+});
+
+const plainTextBody = (overrides: GovernanceSubmissionBody = {}): GovernanceSubmissionBody => ({
+  text: 'a normal question',
+  ...overrides,
+});
+
+describe('hasSelectedTools', () => {
+  it('is false for a missing or empty ephemeral agent', () => {
+    expect(hasSelectedTools()).toBe(false);
+    expect(hasSelectedTools(null)).toBe(false);
+    expect(hasSelectedTools({ mcp: [] })).toBe(false);
+  });
+
+  it.each<[string, TEphemeralAgent]>([
+    ['mcp servers', { mcp: ['server-a'] }],
+    ['web search', { web_search: true }],
+    ['file search', { file_search: true }],
+    ['code execution', { execute_code: true }],
+  ])('is true when %s is selected', (_label, agent) => {
+    expect(hasSelectedTools(agent)).toBe(true);
+  });
+});
+
+describe('isPlainTextSubmission', () => {
+  it('accepts a first-turn plain-text message', () => {
+    expect(isPlainTextSubmission(plainTextBody())).toBe(true);
+  });
+
+  const editedContent: TEditedContent = {
+    index: 0,
+    type: ContentTypes.TEXT,
+    [ContentTypes.TEXT]: 'edited',
+  };
+
+  it.each<[string, GovernanceSubmissionBody]>([
+    ['blank text', { text: '   ' }],
+    ['missing text', { text: undefined }],
+    ['an edit', { editedContent }],
+    ['a continuation', { isContinued: true }],
+    ['a regeneration', { isRegenerate: true }],
+    ['an added conversation', { addedConvo: { conversationId: 'c1' } as TConversation }],
+    ['an agent target', { agent_id: 'agent-1' }],
+    ['an assistant target', { assistant_id: 'asst-1' }],
+    ['attached files', { files: [{ file_id: 'f1' }] }],
+    ['selected tools list', { tools: ['web-browser'] }],
+    ['an ephemeral tool', { ephemeralAgent: { web_search: true } }],
+  ])('rejects a submission with %s', (_label, overrides) => {
+    expect(isPlainTextSubmission(plainTextBody(overrides))).toBe(false);
+  });
+
+  it('ignores empty file and tool arrays', () => {
+    expect(isPlainTextSubmission(plainTextBody({ files: [], tools: [] }))).toBe(true);
+  });
+});
+
+describe('getModel', () => {
+  it('prefers the resolved endpoint model parameters', () => {
+    const body = plainTextBody({
+      model: 'raw-model',
+      endpointOption: {
+        model_parameters: { model: 'param-model' },
+        modelOptions: { model: 'option-model' },
+      },
+    });
+    expect(getModel(body)).toBe('param-model');
+  });
+
+  it('falls back to modelOptions, then the raw body model', () => {
+    expect(
+      getModel(
+        plainTextBody({
+          model: 'raw-model',
+          endpointOption: { modelOptions: { model: 'option-model' } },
+        }),
+      ),
+    ).toBe('option-model');
+    expect(getModel(plainTextBody({ model: 'raw-model' }))).toBe('raw-model');
+  });
+
+  it('returns "unknown" when no model is present', () => {
+    expect(getModel(plainTextBody())).toBe('unknown');
   });
 });

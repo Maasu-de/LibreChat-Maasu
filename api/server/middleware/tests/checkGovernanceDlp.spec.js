@@ -1,13 +1,17 @@
+const mockGetModel = jest.fn();
 const mockCheckTextSubmission = jest.fn();
 const mockCreateDlpFailure = jest.fn();
 const mockCreateDlpIntervention = jest.fn();
+const mockIsPlainTextSubmission = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockDenyRequest = jest.fn();
 
 jest.mock('@librechat/api', () => ({
+  getModel: (...args) => mockGetModel(...args),
   checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
   createDlpFailure: (...args) => mockCreateDlpFailure(...args),
   createDlpIntervention: (...args) => mockCreateDlpIntervention(...args),
+  isPlainTextSubmission: (...args) => mockIsPlainTextSubmission(...args),
   isGovernanceDlpEnabled: (...args) => mockIsGovernanceDlpEnabled(...args),
 }));
 
@@ -28,6 +32,19 @@ describe('checkGovernanceDlp', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockIsGovernanceDlpEnabled.mockReturnValue(true);
+    mockIsPlainTextSubmission.mockReturnValue(true);
+    mockGetModel.mockReturnValue('governed-model');
+  });
+
+  it('skips the check when the submission is not plain text', async () => {
+    mockIsPlainTextSubmission.mockReturnValue(false);
+    const req = { body: { text: 'has tools' }, user: { id: 'user-123' } };
+    const next = jest.fn();
+
+    await checkGovernanceDlp(req, {}, next);
+
+    expect(mockCheckTextSubmission).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it('allows a normal plain-text submission to continue only after an ALLOW check', async () => {
@@ -61,7 +78,9 @@ describe('checkGovernanceDlp', () => {
         decision,
         findings: [],
         maskedPreview:
-          decision === 'MASK' ? [{ location: '/messages/0/content', text: 'masked text' }] : undefined,
+          decision === 'MASK'
+            ? [{ location: '/messages/0/content', text: 'masked text' }]
+            : undefined,
         dlpToken: 'signed-dlp-token',
       };
       mockCheckTextSubmission.mockResolvedValue(result);
@@ -87,7 +106,9 @@ describe('checkGovernanceDlp', () => {
   it('denies a BLOCK result through the shared SSE error path', async () => {
     const result = {
       decision: 'BLOCK',
-      findings: [{ location: '/messages/0/content', start: 0, end: 4, category: 'ssn', action: 'BLOCK' }],
+      findings: [
+        { location: '/messages/0/content', start: 0, end: 4, category: 'ssn', action: 'BLOCK' },
+      ],
     };
     const body = {
       type: 'governance_blocked',

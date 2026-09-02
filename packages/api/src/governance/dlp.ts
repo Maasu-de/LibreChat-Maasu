@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { ErrorTypes } from 'librechat-data-provider';
+import type { TPayload, TEndpointOption, TEphemeralAgent } from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { isEnabled } from '~/utils/common';
 
@@ -178,6 +179,67 @@ export async function checkDlp({
   }
 
   return normalizeResponse(response.data);
+}
+
+/** The message-form request body fields inspected by the server-side DLP preflight. */
+export type GovernanceSubmissionBody = Partial<
+  Pick<
+    TPayload,
+    | 'text'
+    | 'model'
+    | 'files'
+    | 'tools'
+    | 'agent_id'
+    | 'assistant_id'
+    | 'isContinued'
+    | 'isRegenerate'
+    | 'addedConvo'
+    | 'editedContent'
+    | 'ephemeralAgent'
+  >
+> & {
+  endpointOption?: Pick<TEndpointOption, 'model' | 'model_parameters' | 'modelOptions'>;
+};
+
+/** True when the ephemeral agent has any tool selected that would bypass a plain-text send. */
+export function hasSelectedTools(ephemeralAgent?: TEphemeralAgent | null): boolean {
+  return (
+    (Array.isArray(ephemeralAgent?.mcp) && ephemeralAgent.mcp.length > 0) ||
+    ephemeralAgent?.web_search === true ||
+    ephemeralAgent?.file_search === true ||
+    ephemeralAgent?.execute_code === true
+  );
+}
+
+/** True when the submission is a first-turn plain-text message with no tools, files, or edits. */
+export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
+  return (
+    typeof body?.text === 'string' &&
+    body.text.trim().length > 0 &&
+    body.editedContent == null &&
+    body.isContinued !== true &&
+    body.isRegenerate !== true &&
+    body.addedConvo == null &&
+    body.agent_id == null &&
+    body.assistant_id == null &&
+    (body.files == null || (Array.isArray(body.files) && body.files.length === 0)) &&
+    (body.tools == null || (Array.isArray(body.tools) && body.tools.length === 0)) &&
+    !hasSelectedTools(body.ephemeralAgent)
+  );
+}
+
+function readModel(params?: Record<string, unknown>): string | undefined {
+  return typeof params?.model === 'string' ? params.model : undefined;
+}
+
+/** Resolves the model name for the DLP check from the endpoint option, then the raw body. */
+export function getModel(body: GovernanceSubmissionBody): string {
+  return (
+    readModel(body.endpointOption?.model_parameters) ??
+    readModel(body.endpointOption?.modelOptions) ??
+    (typeof body.model === 'string' ? body.model : undefined) ??
+    'unknown'
+  );
 }
 
 /** Checks the plain text submitted through LibreChat's normal message form. */
