@@ -14,6 +14,8 @@ const DLP_BLOCKED_MESSAGE =
   "This message was blocked by your organization's data loss prevention policy. No content was sent to the model.";
 const DLP_INTERVENTION_MESSAGE =
   "This message needs review against your organization's data loss prevention policy before it can be sent.";
+const DLP_UNSUPPORTED_MESSAGE =
+  'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
 
 export type GovernanceDecision = 'ALLOW' | 'WARN' | 'MASK' | 'BLOCK';
 
@@ -240,10 +242,28 @@ export function isGovernanceGatewayUrl(completionBaseUrl: string): boolean {
   return gatewayRoot(completionBaseUrl) === getDlpConfiguration().gatewayUrl;
 }
 
+function getRequestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  return input instanceof URL ? input.href : input.url;
+}
+
+function getRequestPathname(input: RequestInfo | URL): string {
+  return new URL(getRequestUrl(input), 'http://localhost').pathname;
+}
+
 function isChatCompletionsUrl(input: RequestInfo | URL): boolean {
-  const rawUrl =
-    typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-  return new URL(rawUrl, 'http://localhost').pathname.endsWith('/chat/completions');
+  return getRequestPathname(input).endsWith('/chat/completions');
+}
+
+/**
+ * The OpenAI Responses API (`/responses`) sends user content in a request shape the Governance
+ * Backend does not accept, so it cannot be scanned or issued an `X-DLP-Token` here. Such a
+ * request must fail closed rather than reach the model without the outbound DLP check.
+ */
+function isResponsesApiUrl(input: RequestInfo | URL): boolean {
+  return getRequestPathname(input).endsWith('/responses');
 }
 
 async function getRequestBody(
@@ -329,7 +349,8 @@ function withGovernanceRequest(
 /**
  * Checks the exact allow-listed text request immediately before it is streamed to the Governance
  * Backend. This gives the gateway a token bound to the final message list while leaving the
- * response stream untouched.
+ * response stream untouched. A governed completion sent through an unsupported request shape
+ * (currently the Responses API) is rejected here rather than forwarded without a scan or token.
  */
 export function createGovernanceDlpFetch({
   userId,
@@ -337,6 +358,10 @@ export function createGovernanceDlpFetch({
   check = checkDlp,
 }: GovernanceFetchParams): typeof globalThis.fetch {
   return async (input, init) => {
+    if (isResponsesApiUrl(input)) {
+      throw new GovernanceDlpError('dlp_check_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
+    }
+
     if (!isChatCompletionsUrl(input)) {
       return fetch(input, init);
     }

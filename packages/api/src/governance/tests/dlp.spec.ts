@@ -233,4 +233,46 @@ describe('Governance DLP', () => {
     ).rejects.toBeInstanceOf(GovernanceDlpError);
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
+
+  it('rejects a Responses API completion instead of forwarding it without a scan or token', async () => {
+    const upstreamFetch = jest.fn();
+    const check = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+      check,
+    });
+
+    await expect(
+      governedFetch('http://governance.test/v1/responses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'governed-model',
+          input: [{ role: 'user', content: 'normal text' }],
+        }),
+      }),
+    ).rejects.toMatchObject({ code: 'dlp_check_unsupported_request' });
+    expect(check).not.toHaveBeenCalled();
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('still passes non-completion requests through untouched', async () => {
+    const upstreamResponse = new Response('[]');
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => upstreamResponse,
+    );
+    const check = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+      check,
+    });
+
+    const result = await governedFetch('http://governance.test/v1/models', { method: 'GET' });
+
+    expect(check).not.toHaveBeenCalled();
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(result).toBe(upstreamResponse);
+  });
 });
