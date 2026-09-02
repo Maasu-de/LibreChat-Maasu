@@ -2,6 +2,7 @@ const mockCheckTextSubmission = jest.fn();
 const mockCreateDlpFailure = jest.fn();
 const mockCreateDlpIntervention = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
+const mockDenyRequest = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
@@ -14,12 +15,14 @@ jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn() },
 }));
 
-const checkGovernanceDlp = require('../checkGovernanceDlp');
+jest.mock(
+  '../denyRequest',
+  () =>
+    (...args) =>
+      mockDenyRequest(...args),
+);
 
-const createResponse = () => ({
-  status: jest.fn().mockReturnThis(),
-  json: jest.fn().mockReturnThis(),
-});
+const checkGovernanceDlp = require('../checkGovernanceDlp');
 
 describe('checkGovernanceDlp', () => {
   beforeEach(() => {
@@ -37,10 +40,9 @@ describe('checkGovernanceDlp', () => {
       },
       user: { id: 'user-123' },
     };
-    const res = createResponse();
     const next = jest.fn();
 
-    await checkGovernanceDlp(req, res, next);
+    await checkGovernanceDlp(req, {}, next);
 
     expect(mockCheckTextSubmission).toHaveBeenCalledWith({
       text: 'normal text',
@@ -49,40 +51,54 @@ describe('checkGovernanceDlp', () => {
     });
     expect(req.governanceDlpEligible).toBe(true);
     expect(next).toHaveBeenCalledTimes(1);
-    expect(res.status).not.toHaveBeenCalled();
+    expect(mockDenyRequest).not.toHaveBeenCalled();
   });
 
-  it('passes a MASK result to the existing intervention response path', async () => {
+  it('denies a MASK result through the shared SSE error path', async () => {
     const result = {
       decision: 'MASK',
       findings: [],
       maskedPreview: [{ location: '/messages/0/content', text: 'masked text' }],
       dlpToken: 'signed-dlp-token',
     };
-    const intervention = {
-      status: 422,
-      body: {
-        type: 'governance_intervention',
-        decision: 'MASK',
-        findings: result.findings,
-        masked_preview: result.maskedPreview,
-        dlp_token: result.dlpToken,
-      },
+    const body = {
+      type: 'governance_intervention',
+      decision: 'MASK',
+      findings: result.findings,
+      masked_preview: result.maskedPreview,
+      dlp_token: result.dlpToken,
     };
     mockCheckTextSubmission.mockResolvedValue(result);
-    mockCreateDlpIntervention.mockReturnValue(intervention);
+    mockCreateDlpIntervention.mockReturnValue({ status: 422, body });
     const req = {
       body: { text: 'normal text', model: 'governed-model' },
       user: { id: 'user-123' },
     };
-    const res = createResponse();
+    const res = {};
     const next = jest.fn();
 
     await checkGovernanceDlp(req, res, next);
 
     expect(mockCreateDlpIntervention).toHaveBeenCalledWith(result);
-    expect(res.status).toHaveBeenCalledWith(422);
-    expect(res.json).toHaveBeenCalledWith(intervention.body);
+    expect(mockDenyRequest).toHaveBeenCalledWith(req, res, body);
+    expect(req.governanceDlpEligible).toBeUndefined();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('denies through the shared SSE error path when the check itself fails', async () => {
+    const body = { type: 'governance_unavailable', message: 'try again later' };
+    mockCheckTextSubmission.mockRejectedValue(new Error('gateway down'));
+    mockCreateDlpFailure.mockReturnValue({ status: 503, body });
+    const req = {
+      body: { text: 'normal text', model: 'governed-model' },
+      user: { id: 'user-123' },
+    };
+    const res = {};
+    const next = jest.fn();
+
+    await checkGovernanceDlp(req, res, next);
+
+    expect(mockDenyRequest).toHaveBeenCalledWith(req, res, body);
     expect(next).not.toHaveBeenCalled();
   });
 });

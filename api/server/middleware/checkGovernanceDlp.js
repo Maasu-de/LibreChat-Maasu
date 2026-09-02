@@ -5,6 +5,7 @@ const {
   createDlpIntervention,
   isGovernanceDlpEnabled,
 } = require('@librechat/api');
+const denyRequest = require('./denyRequest');
 
 function hasSelectedTools(ephemeralAgent) {
   return (
@@ -58,14 +59,12 @@ async function checkGovernanceDlp(req, res, next) {
       return next();
     }
 
-    const intervention = createDlpIntervention(result);
-    return res.status(intervention.status).json(intervention.body);
+    return await denyRequest(req, res, createDlpIntervention(result).body);
   } catch (error) {
     logger.error('[GovernanceDlp] preflight failed', {
       code: error?.code ?? 'dlp_check_failed',
     });
-    const failure = createDlpFailure();
-    return res.status(failure.status).json(failure.body);
+    return await denyRequest(req, res, createDlpFailure().body);
   }
 }
 

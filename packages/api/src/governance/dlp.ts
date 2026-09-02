@@ -229,7 +229,7 @@ export function createDlpFailure(): {
   return {
     status: 503,
     body: {
-      type: ErrorTypes.GOVERNANCE_BLOCKED,
+      type: ErrorTypes.GOVERNANCE_UNAVAILABLE,
       message: DLP_FAILURE_MESSAGE,
     },
   };
@@ -349,7 +349,10 @@ export function createGovernanceDlpFetch({
 
     const result = await check({ request, userId });
     if (result.decision !== 'ALLOW') {
-      throw new GovernanceDlpError('dlp_check_intervention_required');
+      throw new GovernanceDlpError(
+        'dlp_check_intervention_required',
+        createDlpIntervention(result).body.message,
+      );
     }
 
     return fetch(input, withGovernanceRequest(input, init, request, userId, result.dlpToken));
