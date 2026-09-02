@@ -3,7 +3,7 @@ import { useRecoilValue } from 'recoil';
 import MarkdownLite from '~/components/Chat/Messages/Content/MarkdownLite';
 import Markdown from '~/components/Chat/Messages/Content/Markdown';
 import { useMessageContext } from '~/Providers';
-import { cn, maskSensitiveValues } from '~/utils';
+import { cn } from '~/utils';
 import store from '~/store';
 
 type TextPartProps = {
@@ -21,20 +21,16 @@ const TextPart = memo(function TextPart({ text, isCreatedByUser, showCursor }: T
   const { isSubmitting = false, isLatestMessage = false } = useMessageContext();
   const enableUserMsgMarkdown = useRecoilValue(store.enableUserMsgMarkdown);
   const showCursorState = useMemo(() => showCursor && isSubmitting, [showCursor, isSubmitting]);
-  const displayText = useMemo(
-    () => (isCreatedByUser ? maskSensitiveValues(text).maskedText : text),
-    [isCreatedByUser, text],
-  );
 
   const content: ContentType = useMemo(() => {
     if (!isCreatedByUser) {
-      return <Markdown content={displayText} isLatestMessage={isLatestMessage} />;
+      return <Markdown content={text} isLatestMessage={isLatestMessage} />;
     } else if (enableUserMsgMarkdown) {
-      return <MarkdownLite content={displayText} />;
+      return <MarkdownLite content={text} />;
     } else {
-      return <>{displayText}</>;
+      return <>{text}</>;
     }
-  }, [isCreatedByUser, enableUserMsgMarkdown, displayText, isLatestMessage]);
+  }, [isCreatedByUser, enableUserMsgMarkdown, text, isLatestMessage]);
 
   return (
     <div
