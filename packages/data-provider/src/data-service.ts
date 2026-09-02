@@ -17,6 +17,10 @@ export function revokeUserKey(name: string): Promise<unknown> {
   return request.delete(endpoints.revokeUserKey(name));
 }
 
+export function testGovernanceConnection(): Promise<q.GovernanceConnectionResponse> {
+  return request.get(endpoints.governanceHealth());
+}
+
 export function revokeAllUserKeys(): Promise<unknown> {
   return request.delete(endpoints.revokeAllUserKeys());
 }
