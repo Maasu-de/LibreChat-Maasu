@@ -348,7 +348,7 @@ export function createGovernanceDlpFetch({
     }
 
     const result = await check({ request, userId });
-    if (result.decision !== 'ALLOW') {
+    if (result.decision === 'BLOCK') {
       throw new GovernanceDlpError(
         'dlp_check_intervention_required',
         createDlpIntervention(result).body.message,

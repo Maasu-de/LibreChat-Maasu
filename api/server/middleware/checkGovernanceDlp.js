@@ -54,7 +54,7 @@ async function checkGovernanceDlp(req, res, next) {
       userId: req.user.id,
     });
 
-    if (result.decision === 'ALLOW') {
+    if (result.decision === 'ALLOW' || result.decision === 'WARN' || result.decision === 'MASK') {
       req.governanceDlpEligible = true;
       return next();
     }

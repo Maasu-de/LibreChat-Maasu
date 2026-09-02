@@ -4,6 +4,7 @@ import {
   checkDlp,
   createDlpIntervention,
   createGovernanceDlpFetch,
+  GovernanceDlpError,
   type CheckDlpParams,
   type DlpCheckResponse,
   type DlpCheckResult,
@@ -166,5 +167,70 @@ describe('Governance DLP', () => {
       }),
     );
     expect(result).toBe(upstreamResponse);
+  });
+
+  it.each(['WARN', 'MASK'] as const)(
+    'forwards a %s decision to the completion call with its DLP token instead of blocking',
+    async (decision) => {
+      const upstreamResponse = new Response('stream remains intact');
+      const upstreamFetch = jest.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+          upstreamResponse,
+      );
+      const check = jest.fn(
+        async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+          decision,
+          findings: [],
+          dlpToken: 'signed-dlp-token',
+        }),
+      );
+      const governedFetch = createGovernanceDlpFetch({
+        userId: 'user-123',
+        fetch: upstreamFetch,
+        check,
+      });
+
+      const result = await governedFetch('http://governance.test/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'governed-model',
+          messages: [{ role: 'user', content: 'sensitive text' }],
+        }),
+      });
+
+      expect(upstreamFetch).toHaveBeenCalledTimes(1);
+      expect(new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers).get('X-DLP-Token')).toBe(
+        'signed-dlp-token',
+      );
+      expect(result).toBe(upstreamResponse);
+    },
+  );
+
+  it('throws instead of calling the completion endpoint on a BLOCK decision', async () => {
+    const upstreamFetch = jest.fn();
+    const check = jest.fn(
+      async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+        decision: 'BLOCK',
+        findings: [],
+      }),
+    );
+    const governedFetch = createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+      check,
+    });
+
+    await expect(
+      governedFetch('http://governance.test/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'governed-model',
+          messages: [{ role: 'user', content: 'blocked text' }],
+        }),
+      }),
+    ).rejects.toBeInstanceOf(GovernanceDlpError);
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 });

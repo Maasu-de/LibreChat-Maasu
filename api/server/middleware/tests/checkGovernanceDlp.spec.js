@@ -54,22 +54,48 @@ describe('checkGovernanceDlp', () => {
     expect(mockDenyRequest).not.toHaveBeenCalled();
   });
 
-  it('denies a MASK result through the shared SSE error path', async () => {
+  it.each(['WARN', 'MASK'])(
+    'allows a %s result to continue, leaving masking to the gateway-side DLP token',
+    async (decision) => {
+      const result = {
+        decision,
+        findings: [],
+        maskedPreview:
+          decision === 'MASK' ? [{ location: '/messages/0/content', text: 'masked text' }] : undefined,
+        dlpToken: 'signed-dlp-token',
+      };
+      mockCheckTextSubmission.mockResolvedValue(result);
+      const req = {
+        body: {
+          text: 'normal text',
+          model: 'governed-model',
+          endpointOption: { model_parameters: { model: 'governed-model' } },
+        },
+        user: { id: 'user-123' },
+      };
+      const next = jest.fn();
+
+      await checkGovernanceDlp(req, {}, next);
+
+      expect(mockCreateDlpIntervention).not.toHaveBeenCalled();
+      expect(mockDenyRequest).not.toHaveBeenCalled();
+      expect(req.governanceDlpEligible).toBe(true);
+      expect(next).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('denies a BLOCK result through the shared SSE error path', async () => {
     const result = {
-      decision: 'MASK',
-      findings: [],
-      maskedPreview: [{ location: '/messages/0/content', text: 'masked text' }],
-      dlpToken: 'signed-dlp-token',
+      decision: 'BLOCK',
+      findings: [{ location: '/messages/0/content', start: 0, end: 4, category: 'ssn', action: 'BLOCK' }],
     };
     const body = {
-      type: 'governance_intervention',
-      decision: 'MASK',
+      type: 'governance_blocked',
+      decision: 'BLOCK',
       findings: result.findings,
-      masked_preview: result.maskedPreview,
-      dlp_token: result.dlpToken,
     };
     mockCheckTextSubmission.mockResolvedValue(result);
-    mockCreateDlpIntervention.mockReturnValue({ status: 422, body });
+    mockCreateDlpIntervention.mockReturnValue({ status: 403, body });
     const req = {
       body: { text: 'normal text', model: 'governed-model' },
       user: { id: 'user-123' },
