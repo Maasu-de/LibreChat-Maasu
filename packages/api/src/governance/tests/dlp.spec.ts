@@ -236,6 +236,66 @@ describe('Governance DLP', () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
+  it.each(['ALLOW', 'WARN', 'MASK'] as const)(
+    'fails closed instead of forwarding a %s completion without a DLP token',
+    async (decision) => {
+      const upstreamFetch = jest.fn();
+      const check = jest.fn(
+        async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+          decision,
+          findings: [],
+        }),
+      );
+      const governedFetch = createGovernanceDlpFetch({
+        userId: 'user-123',
+        fetch: upstreamFetch,
+        check,
+      });
+
+      await expect(
+        governedFetch('http://governance.test/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'governed-model',
+            messages: [{ role: 'user', content: 'normal text' }],
+          }),
+        }),
+      ).rejects.toMatchObject({ code: 'dlp_check_malformed_response' });
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('treats an empty-string dlp_token from the gateway as a malformed check', async () => {
+    const http: HttpPoster = async () =>
+      ({
+        status: 200,
+        data: {
+          action: 'ALLOW',
+          findings: [],
+          dlp_token: '',
+        },
+      }) as AxiosResponse<DlpCheckResponse>;
+    const upstreamFetch = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+      check: (params) => checkDlp({ ...params, http }),
+    });
+
+    await expect(
+      governedFetch('http://governance.test/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'governed-model',
+          messages: [{ role: 'user', content: 'normal text' }],
+        }),
+      }),
+    ).rejects.toMatchObject({ code: 'dlp_check_malformed_response' });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
   it('rejects a Responses API completion instead of forwarding it without a scan or token', async () => {
     const upstreamFetch = jest.fn();
     const check = jest.fn();

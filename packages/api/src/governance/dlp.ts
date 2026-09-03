@@ -151,7 +151,10 @@ function normalizeResponse(response: DlpCheckResponse): DlpCheckResult {
     policyVersion: response.policy_version,
     findings: response.findings ?? [],
     maskedPreview: response.masked_preview ?? undefined,
-    dlpToken: typeof response.dlp_token === 'string' ? response.dlp_token : undefined,
+    dlpToken:
+      typeof response.dlp_token === 'string' && response.dlp_token.length > 0
+        ? response.dlp_token
+        : undefined,
   };
 }
 
@@ -400,16 +403,14 @@ function withGovernanceRequest(
   init: RequestInit | undefined,
   request: GovernanceChatCompletionRequest,
   userId: string,
-  dlpToken?: string,
+  dlpToken: string,
 ): RequestInit {
   const requestHeaders =
     typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined;
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
-  if (dlpToken !== undefined) {
-    headers.set(DLP_TOKEN_HEADER, dlpToken);
-  }
+  headers.set(DLP_TOKEN_HEADER, dlpToken);
   return { ...init, body: JSON.stringify(request), headers };
 }
 
@@ -445,6 +446,10 @@ export function createGovernanceDlpFetch({
         'dlp_check_intervention_required',
         createDlpIntervention(result).body.message,
       );
+    }
+
+    if (result.dlpToken === undefined) {
+      throw new GovernanceDlpError('dlp_check_malformed_response');
     }
 
     return fetch(input, withGovernanceRequest(input, init, request, userId, result.dlpToken));
