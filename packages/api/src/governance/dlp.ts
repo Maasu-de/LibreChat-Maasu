@@ -18,8 +18,6 @@ const DLP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
 const DLP_BLOCKED_MESSAGE =
   "This message was blocked by your organization's data loss prevention policy. No content was sent to the model.";
-const DLP_INTERVENTION_MESSAGE =
-  "This message needs review against your organization's data loss prevention policy before it can be sent.";
 const DLP_UNSUPPORTED_MESSAGE =
   'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
 
@@ -60,17 +58,15 @@ export interface DlpCheckResult {
   dlpToken?: string;
 }
 
-export interface DlpIntervention {
+export interface DlpBlock {
   status: number;
   body: {
     type: ErrorTypes;
-    reason: 'policy_blocked' | 'policy_intervention';
+    reason: 'policy_blocked';
     message: string;
-    decision: Exclude<GovernanceDecision, 'ALLOW'>;
+    decision: 'BLOCK';
     policy_version?: number;
     findings: GovernanceFinding[];
-    masked_preview?: GovernanceMaskedContent[];
-    dlp_token?: string;
   };
 }
 
@@ -272,24 +268,21 @@ export function checkTextSubmission({
   });
 }
 
-/** Formats WARN, MASK, and BLOCK responses for the existing error/intervention path. */
-export function createDlpIntervention(result: DlpCheckResult): DlpIntervention {
-  if (result.decision === 'ALLOW') {
-    throw new GovernanceDlpError('dlp_intervention_not_required');
+/** Formats a BLOCK decision for the shared SSE deny path. Only BLOCK denies a completion. */
+export function createDlpBlock(result: DlpCheckResult): DlpBlock {
+  if (result.decision !== 'BLOCK') {
+    throw new GovernanceDlpError('dlp_block_not_applicable');
   }
 
-  const isBlock = result.decision === 'BLOCK';
   return {
-    status: isBlock ? 403 : 422,
+    status: 403,
     body: {
-      type: isBlock ? ErrorTypes.GOVERNANCE_BLOCKED : ErrorTypes.GOVERNANCE_INTERVENTION,
-      reason: isBlock ? 'policy_blocked' : 'policy_intervention',
-      message: isBlock ? DLP_BLOCKED_MESSAGE : DLP_INTERVENTION_MESSAGE,
-      decision: result.decision,
+      type: ErrorTypes.GOVERNANCE_BLOCKED,
+      reason: 'policy_blocked',
+      decision: 'BLOCK',
+      message: DLP_BLOCKED_MESSAGE,
       policy_version: result.policyVersion,
       findings: result.findings,
-      masked_preview: result.maskedPreview,
-      dlp_token: result.dlpToken,
     },
   };
 }
@@ -444,7 +437,7 @@ export function createGovernanceDlpFetch({
     if (result.decision === 'BLOCK') {
       throw new GovernanceDlpError(
         'dlp_check_intervention_required',
-        createDlpIntervention(result).body.message,
+        createDlpBlock(result).body.message,
       );
     }
 

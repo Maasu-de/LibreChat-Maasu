@@ -366,7 +366,6 @@
   "com_error_files_validation": "An error occurred while validating the file.",
   "com_error_google_tool_conflict": "Usage of built-in Google tools are not supported with external tools. Please disable either the built-in tools or the external tools.",
   "com_error_governance_blocked": "This message was blocked by your organization's data loss prevention policy. No content was sent to the model.",
-  "com_error_governance_intervention": "This message needs review against your organization's data loss prevention policy before it can be sent.",
   "com_error_governance_unavailable": "Your message couldn't be checked against your organization's data loss prevention policy. Please try again in a moment.",
   "com_error_heic_conversion": "Failed to convert HEIC image to JPEG. Please try converting the image manually or use a different format.",
   "com_error_illegal_model_request": "The model \"{{0}}\" is not available for {{1}}. Please select a different model.",

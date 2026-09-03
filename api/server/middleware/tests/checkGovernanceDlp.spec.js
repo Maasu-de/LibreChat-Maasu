@@ -1,7 +1,7 @@
 const mockGetModel = jest.fn();
 const mockCheckTextSubmission = jest.fn();
 const mockCreateDlpFailure = jest.fn();
-const mockCreateDlpIntervention = jest.fn();
+const mockCreateDlpBlock = jest.fn();
 const mockIsPlainTextSubmission = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockDenyRequest = jest.fn();
@@ -10,7 +10,7 @@ jest.mock('@librechat/api', () => ({
   getModel: (...args) => mockGetModel(...args),
   checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
   createDlpFailure: (...args) => mockCreateDlpFailure(...args),
-  createDlpIntervention: (...args) => mockCreateDlpIntervention(...args),
+  createDlpBlock: (...args) => mockCreateDlpBlock(...args),
   isPlainTextSubmission: (...args) => mockIsPlainTextSubmission(...args),
   isGovernanceDlpEnabled: (...args) => mockIsGovernanceDlpEnabled(...args),
 }));
@@ -96,7 +96,7 @@ describe('checkGovernanceDlp', () => {
 
       await checkGovernanceDlp(req, {}, next);
 
-      expect(mockCreateDlpIntervention).not.toHaveBeenCalled();
+      expect(mockCreateDlpBlock).not.toHaveBeenCalled();
       expect(mockDenyRequest).not.toHaveBeenCalled();
       expect(req.governanceDlpEligible).toBe(true);
       expect(next).toHaveBeenCalledTimes(1);
@@ -116,7 +116,7 @@ describe('checkGovernanceDlp', () => {
       findings: result.findings,
     };
     mockCheckTextSubmission.mockResolvedValue(result);
-    mockCreateDlpIntervention.mockReturnValue({ status: 403, body });
+    mockCreateDlpBlock.mockReturnValue({ status: 403, body });
     const req = {
       body: { text: 'normal text', model: 'governed-model' },
       user: { id: 'user-123' },
@@ -126,7 +126,7 @@ describe('checkGovernanceDlp', () => {
 
     await checkGovernanceDlp(req, res, next);
 
-    expect(mockCreateDlpIntervention).toHaveBeenCalledWith(result);
+    expect(mockCreateDlpBlock).toHaveBeenCalledWith(result);
     expect(mockDenyRequest).toHaveBeenCalledWith(req, res, body);
     expect(req.governanceDlpEligible).toBeUndefined();
     expect(next).not.toHaveBeenCalled();

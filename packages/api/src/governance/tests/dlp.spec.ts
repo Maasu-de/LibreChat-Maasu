@@ -4,8 +4,8 @@ import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-d
 import {
   getModel,
   checkDlp,
+  createDlpBlock,
   hasSelectedTools,
-  createDlpIntervention,
   isPlainTextSubmission,
   createGovernanceDlpFetch,
   GovernanceDlpError,
@@ -90,28 +90,36 @@ describe('Governance DLP', () => {
     });
   });
 
-  it('creates the existing intervention payload for every non-allow decision', () => {
-    for (const [decision, status, type] of [
-      ['WARN', 422, ErrorTypes.GOVERNANCE_INTERVENTION],
-      ['MASK', 422, ErrorTypes.GOVERNANCE_INTERVENTION],
-      ['BLOCK', 403, ErrorTypes.GOVERNANCE_BLOCKED],
-    ] as const) {
-      const intervention = createDlpIntervention({
-        decision,
-        findings: [],
-        dlpToken: 'signed-dlp-token',
-      });
+  it('formats the deny payload for a BLOCK decision', () => {
+    const block = createDlpBlock({
+      decision: 'BLOCK',
+      policyVersion: 7,
+      findings: [
+        { location: '/messages/0/content', start: 0, end: 4, category: 'ssn', action: 'BLOCK' },
+      ],
+    });
 
-      expect(intervention).toMatchObject({
-        status,
-        body: {
-          type,
-          decision,
-          dlp_token: 'signed-dlp-token',
-        },
-      });
-    }
+    expect(block).toEqual({
+      status: 403,
+      body: {
+        type: ErrorTypes.GOVERNANCE_BLOCKED,
+        reason: 'policy_blocked',
+        decision: 'BLOCK',
+        message: expect.any(String),
+        policy_version: 7,
+        findings: [
+          { location: '/messages/0/content', start: 0, end: 4, category: 'ssn', action: 'BLOCK' },
+        ],
+      },
+    });
   });
+
+  it.each(['ALLOW', 'WARN', 'MASK'] as const)(
+    'throws rather than building a deny payload for a %s decision',
+    (decision) => {
+      expect(() => createDlpBlock({ decision, findings: [] })).toThrow(GovernanceDlpError);
+    },
+  );
 
   it('forwards the exact check token and text-only request without consuming the stream', async () => {
     const upstreamResponse = new Response('stream remains intact');

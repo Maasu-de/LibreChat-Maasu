@@ -1622,8 +1622,6 @@ export enum ErrorTypes {
   STREAM_EXPIRED = 'stream_expired',
   /** Governance policy blocked a message before completion. */
   GOVERNANCE_BLOCKED = 'governance_blocked',
-  /** Governance requires review of a WARN or MASK result before completion. */
-  GOVERNANCE_INTERVENTION = 'governance_intervention',
   /** Governance DLP check could not be completed (gateway error or timeout). */
   GOVERNANCE_UNAVAILABLE = 'governance_unavailable',
 }

@@ -1,9 +1,9 @@
 const { logger } = require('@librechat/data-schemas');
 const {
   getModel,
-  checkTextSubmission,
+  createDlpBlock,
   createDlpFailure,
-  createDlpIntervention,
+  checkTextSubmission,
   isPlainTextSubmission,
   isGovernanceDlpEnabled,
 } = require('@librechat/api');
@@ -22,12 +22,12 @@ async function checkGovernanceDlp(req, res, next) {
       userId: req.user.id,
     });
 
-    if (result.decision === 'ALLOW' || result.decision === 'WARN' || result.decision === 'MASK') {
-      req.governanceDlpEligible = true;
-      return next();
+    if (result.decision === 'BLOCK') {
+      return await denyRequest(req, res, createDlpBlock(result).body);
     }
 
-    return await denyRequest(req, res, createDlpIntervention(result).body);
+    req.governanceDlpEligible = true;
+    return next();
   } catch (error) {
     logger.error('[GovernanceDlp] preflight failed', {
       code: error?.code ?? 'dlp_check_failed',
