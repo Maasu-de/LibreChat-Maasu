@@ -11,7 +11,7 @@ import type {
 import type { SettingDefinition } from './generate';
 import type { TMinimalFeedback } from './feedback';
 import type { ContentTypes } from './types/runs';
-import type { Agent } from './types/assistants';
+import type { Agent, AgentModelParameters } from './types/assistants';
 
 export * from './schemas';
 
@@ -81,8 +81,8 @@ export type TEndpointOption = Pick<
   overrideConvoId?: string;
   overrideUserMessageId?: string;
   // Model parameters (used by different endpoints)
-  modelOptions?: Record<string, unknown>;
-  model_parameters?: Record<string, unknown>;
+  modelOptions?: Partial<AgentModelParameters>;
+  model_parameters?: Partial<AgentModelParameters>;
   // Configuration data (added by middleware)
   modelsConfig?: TModelsConfig;
   // File attachments (processed by middleware)

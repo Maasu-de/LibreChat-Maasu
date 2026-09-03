@@ -1,6 +1,11 @@
 import axios from 'axios';
 import { ErrorTypes } from 'librechat-data-provider';
-import type { TPayload, TEndpointOption, TEphemeralAgent } from 'librechat-data-provider';
+import type {
+  TPayload,
+  TEndpointOption,
+  TEphemeralAgent,
+  AgentModelParameters,
+} from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { isEnabled } from '~/utils/common';
 
@@ -228,8 +233,8 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
   );
 }
 
-function readModel(params?: Record<string, unknown>): string | undefined {
-  return typeof params?.model === 'string' ? params.model : undefined;
+function readModel(params?: Partial<AgentModelParameters>): string | undefined {
+  return params?.model;
 }
 
 /** Resolves the model name for the DLP check from the endpoint option, then the raw body. */
