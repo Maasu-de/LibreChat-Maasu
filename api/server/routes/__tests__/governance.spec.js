@@ -3,6 +3,7 @@ const request = require('supertest');
 
 const mockCheckTextSubmission = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
+const mockTestGovernanceConnection = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
@@ -11,6 +12,7 @@ jest.mock('@librechat/api', () => ({
     body: { type: 'governance_unavailable', message: 'DLP unavailable' },
   }),
   isGovernanceDlpEnabled: () => mockIsGovernanceDlpEnabled(),
+  testGovernanceConnection: (...args) => mockTestGovernanceConnection(...args),
 }));
 
 jest.mock('@librechat/data-schemas', () => ({
@@ -33,7 +35,21 @@ app.use('/api/governance', governanceRoute);
 beforeEach(() => {
   mockCheckTextSubmission.mockReset();
   mockIsGovernanceDlpEnabled.mockReset();
+  mockTestGovernanceConnection.mockReset();
   mockIsGovernanceDlpEnabled.mockReturnValue(true);
+  mockTestGovernanceConnection.mockImplementation((_req, res) =>
+    res.status(200).json({ status: 'connected' }),
+  );
+});
+
+describe('GET /api/governance/health', () => {
+  it('delegates the authenticated connection test to the API handler', async () => {
+    const response = await request(app).get('/api/governance/health');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ status: 'connected' });
+    expect(mockTestGovernanceConnection).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('POST /api/governance/dlp/check', () => {

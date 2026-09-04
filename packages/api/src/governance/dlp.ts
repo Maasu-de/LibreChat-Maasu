@@ -76,6 +76,8 @@ export type HttpPoster = (
   config: AxiosRequestConfig,
 ) => Promise<AxiosResponse<DlpCheckResponse>>;
 
+export type GovernanceFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export type DlpChecker = (params: CheckDlpParams) => Promise<DlpCheckResult>;
 
 export interface CheckDlpParams {
@@ -86,7 +88,7 @@ export interface CheckDlpParams {
 
 export interface GovernanceFetchParams {
   userId: string;
-  fetch?: typeof globalThis.fetch;
+  fetch?: GovernanceFetch;
   check?: DlpChecker;
 }
 
@@ -407,7 +409,7 @@ export function createGovernanceDlpFetch({
   userId,
   fetch = globalThis.fetch,
   check = checkDlp,
-}: GovernanceFetchParams): typeof globalThis.fetch {
+}: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
     if (isResponsesApiUrl(input)) {
       throw new GovernanceDlpError('dlp_check_unsupported_request', DLP_UNSUPPORTED_MESSAGE);

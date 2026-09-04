@@ -1,11 +1,18 @@
 const express = require('express');
 const { logger } = require('@librechat/data-schemas');
-const { createDlpFailure, checkTextSubmission, isGovernanceDlpEnabled } = require('@librechat/api');
+const {
+  createDlpFailure,
+  checkTextSubmission,
+  isGovernanceDlpEnabled,
+  testGovernanceConnection,
+} = require('@librechat/api');
 const { requireJwtAuth } = require('~/server/middleware');
 
 const router = express.Router();
 
 router.use(requireJwtAuth);
+
+router.get('/health', testGovernanceConnection);
 
 router.post('/dlp/check', async (req, res) => {
   if (!isGovernanceDlpEnabled()) {

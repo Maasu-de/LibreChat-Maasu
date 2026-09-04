@@ -1,5 +1,6 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
+import type { ReactNode } from 'react';
 import type {
   GovernanceDlpResult,
   GovernanceFinding,
@@ -13,12 +14,12 @@ type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: bo
 const MESSAGE_LOCATION = '/messages/0/content';
 const label = (category: string) => category.replaceAll('_', ' ');
 
-const COPY: Record<GovernanceDecision, { title: string; description: string }> = {
+const COPY = {
   ALLOW: { title: 'com_ui_dlp_mask_title', description: 'com_ui_dlp_mask_description' },
   MASK: { title: 'com_ui_dlp_mask_title', description: 'com_ui_dlp_mask_description' },
   WARN: { title: 'com_ui_dlp_warn_title', description: 'com_ui_dlp_warn_description' },
   BLOCK: { title: 'com_ui_dlp_block_title', description: 'com_ui_dlp_block_description' },
-};
+} as const satisfies Record<GovernanceDecision, { title: string; description: string }>;
 
 const ACTION_CLASS: Record<GovernanceDecision, string> = {
   ALLOW:
