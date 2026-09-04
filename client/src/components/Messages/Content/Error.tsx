@@ -76,6 +76,8 @@ const errorMessages = {
   },
   [ErrorTypes.GOOGLE_TOOL_CONFLICT]: 'com_error_google_tool_conflict',
   [ErrorTypes.STREAM_EXPIRED]: 'com_error_stream_expired',
+  [ErrorTypes.GOVERNANCE_BLOCKED]: 'com_error_governance_blocked',
+  [ErrorTypes.GOVERNANCE_UNAVAILABLE]: 'com_error_governance_unavailable',
   [ViolationTypes.BAN]:
     'Your account has been temporarily banned due to violations of our service.',
   [ViolationTypes.ILLEGAL_MODEL_REQUEST]: (json: TGenericError, localize: LocalizeFunction) => {
