@@ -5,6 +5,10 @@ import type {
   TEndpointOption,
   TEphemeralAgent,
   AgentModelParameters,
+  GovernanceDecision,
+  GovernanceDlpResult,
+  GovernanceFinding,
+  GovernanceMaskedContent,
 } from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { isEnabled } from '~/utils/common';
@@ -21,21 +25,11 @@ const DLP_BLOCKED_MESSAGE =
 const DLP_UNSUPPORTED_MESSAGE =
   'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
 
-export type GovernanceDecision = 'ALLOW' | 'WARN' | 'MASK' | 'BLOCK';
-
-export interface GovernanceFinding {
-  location: string;
-  start: number;
-  end: number;
-  category: string;
-  action: GovernanceDecision;
-  replacement?: string;
-}
-
-export interface GovernanceMaskedContent {
-  location: string;
-  text: string;
-}
+export type {
+  GovernanceDecision,
+  GovernanceFinding,
+  GovernanceMaskedContent,
+} from 'librechat-data-provider';
 
 export interface GovernanceChatMessage {
   role: string;
@@ -50,11 +44,7 @@ export interface GovernanceChatCompletionRequest {
   temperature?: number;
 }
 
-export interface DlpCheckResult {
-  decision: GovernanceDecision;
-  policyVersion?: number;
-  findings: GovernanceFinding[];
-  maskedPreview?: GovernanceMaskedContent[];
+export interface DlpCheckResult extends GovernanceDlpResult {
   dlpToken?: string;
 }
 
