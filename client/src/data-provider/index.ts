@@ -9,6 +9,7 @@ export * from './Misc';
 export * from './Tools';
 export * from './connection';
 export * from './Favorites';
+export * from './Governance';
 export * from './mutations';
 export * from './prompts';
 export * from './queries';
