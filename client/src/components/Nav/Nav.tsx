@@ -228,14 +228,6 @@ const Nav = memo(
           {...{ inert: !navVisible ? '' : undefined }}
         >
           <div className="flex flex-1 flex-col overflow-hidden" ref={outerContainerRef}>
-            <div className="flex h-100 shrink-0 items-center justify-center py-2">
-              <img
-                src="/assets/logo.svg?v=2"
-                className="h-25 max-w-100 object-contain"
-                alt={localize('com_ui_logo', { 0: 'Company' })}
-              />
-            </div>
-
             <MemoNewChat
               subHeaders={subHeaders}
               toggleNav={toggleNavVisible}
@@ -290,13 +282,17 @@ const Nav = memo(
     // Desktop: Inline sidebar with width transition
     return (
       <div
-        className="flex-shrink-0 overflow-hidden"
+        className="h-full flex-shrink-0 overflow-hidden"
         style={{ width: navVisible ? sidebarWidth : 0, transition: 'width 0.2s ease-out' }}
       >
         <motion.div
           data-testid="nav"
           className={cn('nav h-full bg-surface-primary-alt', navVisible && 'active')}
-          style={{ width: sidebarWidth }}
+          style={{
+            width: sidebarWidth,
+            height: 'calc(100% - 7.25rem)',
+            marginTop: '7.25rem',
+          }}
           initial={false}
           animate={{
             x: navVisible ? 0 : -sidebarWidth,

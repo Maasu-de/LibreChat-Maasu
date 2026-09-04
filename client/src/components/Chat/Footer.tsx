@@ -68,9 +68,11 @@ function Footer({ className }: { className?: string }) {
   ));
 
   const governedRender = <span>{localize('com_ui_governed')}</span>;
+  const sensitiveValuesRender = <span>{localize('com_ui_sensitive_values_masked')}</span>;
   const footerElements = [
     ...mainContentRender,
     governedRender,
+    sensitiveValuesRender,
     privacyPolicyRender,
     termsOfServiceRender,
   ].filter(Boolean);

@@ -8,6 +8,7 @@ import {
   useAuthContext,
   useAgentsMap,
   useFileMap,
+  useLocalize,
 } from '~/hooks';
 import {
   PromptGroupsProvider,
@@ -23,6 +24,7 @@ import { useHealthCheck } from '~/data-provider';
 import { Banner } from '~/components/Banners';
 
 export default function Root() {
+  const localize = useLocalize();
   const [showTerms, setShowTerms] = useState(false);
   const [bannerHeight, setBannerHeight] = useState(0);
   const [navVisible, setNavVisible] = useState(() => {
@@ -75,6 +77,13 @@ export default function Root() {
               <Banner onHeightChange={setBannerHeight} />
               <div className="flex" style={{ height: `calc(100dvh - ${bannerHeight}px)` }}>
                 <div className="relative z-0 flex h-full w-full overflow-hidden">
+                  <div className="pointer-events-none absolute left-0 top-0 z-[120] hidden h-[7.25rem] w-[260px] items-center justify-center py-2 md:flex">
+                    <img
+                      src="/assets/logo.svg?v=2"
+                      className="h-25 max-w-100 object-contain"
+                      alt={localize('com_ui_logo', { 0: config?.appTitle ?? 'LibreChat' })}
+                    />
+                  </div>
                   <Nav navVisible={navVisible} setNavVisible={setNavVisible} />
                   <div
                     className="relative flex h-full max-w-full flex-1 flex-col overflow-hidden"
