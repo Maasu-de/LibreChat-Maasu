@@ -6,6 +6,7 @@ import type {
   GovernanceFinding,
   GovernanceDecision,
 } from 'librechat-data-provider';
+import type { TranslationKeys } from '~/hooks';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
@@ -13,6 +14,23 @@ type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: bo
 
 const MESSAGE_LOCATION = '/messages/0/content';
 const label = (category: string) => category.replaceAll('_', ' ');
+
+const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
+  CLIENT_NAME: 'com_ui_dlp_category_client_name',
+  CODE_NAME: 'com_ui_dlp_category_code_name',
+  CREDIT_CARD: 'com_ui_dlp_category_credit_card',
+  EMAIL_ADDRESS: 'com_ui_dlp_category_email_address',
+  IBAN_CODE: 'com_ui_dlp_category_iban_code',
+  PHONE_NUMBER: 'com_ui_dlp_category_phone_number',
+  PROJECT_NAME: 'com_ui_dlp_category_project_name',
+};
+
+const DECISION_COPY: Record<GovernanceDecision, TranslationKeys> = {
+  ALLOW: 'com_ui_dlp_decision_allow',
+  BLOCK: 'com_ui_dlp_decision_block',
+  MASK: 'com_ui_dlp_decision_mask',
+  WARN: 'com_ui_dlp_decision_warn',
+};
 
 const COPY = {
   ALLOW: { title: 'com_ui_dlp_mask_title', description: 'com_ui_dlp_mask_description' },
@@ -94,6 +112,10 @@ export default function DlpInterventionDialog({
 }) {
   const localize = useLocalize();
   const { decision } = result;
+  const categoryLabel = (category: string) => {
+    const key = CATEGORY_COPY[category];
+    return key ? localize(key) : label(category);
+  };
   const originalSegments = useMemo(
     () => buildFindingSegments(originalText, result.findings),
     [originalText, result.findings],
@@ -140,11 +162,11 @@ export default function DlpInterventionDialog({
               (segment, index) => (
                 <mark
                   key={index}
-                  title={label(segment.finding!.category)}
+                  title={categoryLabel(segment.finding!.category)}
                   className="rounded bg-amber-200 px-0.5 text-gray-950 outline outline-1 outline-amber-500 dark:bg-amber-700 dark:text-white"
                 >
                   {segment.text}
-                  <span className="sr-only"> ({label(segment.finding!.category)})</span>
+                  <span className="sr-only"> ({categoryLabel(segment.finding!.category)})</span>
                 </mark>
               ),
             )}
@@ -163,7 +185,7 @@ export default function DlpInterventionDialog({
                         ACTION_CLASS[finding.action],
                       )}
                     >
-                      {label(finding.category)} · {finding.action}
+                      {categoryLabel(finding.category)} · {localize(DECISION_COPY[finding.action])}
                       {finding.replacement ? ` → ${finding.replacement}` : ''}
                     </li>
                   ))}

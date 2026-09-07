@@ -88,8 +88,28 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('PROJECT NAME · BLOCK')).toBeInTheDocument();
+    expect(
+      screen.getByText('com_ui_dlp_category_project_name · com_ui_dlp_decision_block'),
+    ).toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
+  });
+
+  it('falls back to a readable label for an unknown finding category', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'WARN',
+          findings: [finding({ category: 'CUSTOM_SECRET', action: 'WARN' })],
+        }}
+        originalText="Discuss Project Acme now"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText('CUSTOM SECRET · com_ui_dlp_decision_warn → [CONFIDENTIAL]'),
+    ).toBeInTheDocument();
   });
 });
