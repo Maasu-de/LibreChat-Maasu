@@ -7,7 +7,6 @@ const governance = require('./governance');
 const staticRoute = require('./static');
 const messages = require('./messages');
 const memories = require('./memories');
-const governance = require('./governance');
 const presets = require('./presets');
 const prompts = require('./prompts');
 const balance = require('./balance');
@@ -55,7 +54,6 @@ module.exports = {
   memories,
   governance,
   endpoints,
-  governance,
   assistants,
   categories,
   staticRoute,
