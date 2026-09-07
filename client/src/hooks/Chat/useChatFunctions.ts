@@ -34,6 +34,7 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
 import { logger, createDualMessageContent } from '~/utils';
 import store, { useGetEphemeralAgent } from '~/store';
 import useUserKey from '~/hooks/Input/useUserKey';
+import { hasSelectedEphemeralTools } from '~/hooks/Chat/governance';
 import { useGovernanceDlpCheckMutation } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
 
@@ -373,6 +374,9 @@ export default function useChatFunctions({
     const send = () => submitMessageUnchecked({ ...props, text }, options);
 
     const startupConfig = queryClient.getQueryData<TStartupConfig>([QueryKeys.startupConfig]);
+    const ephemeralAgent = getEphemeralAgent(
+      props.conversationId ?? immutableConversation?.conversationId ?? Constants.NEW_CONVO,
+    );
     const isPlainTextSubmission =
       options?.editedContent == null &&
       options?.isContinued !== true &&
@@ -381,7 +385,8 @@ export default function useChatFunctions({
       immutableConversation?.agent_id == null &&
       immutableConversation?.assistant_id == null &&
       !(files && files.size) &&
-      !(immutableConversation?.tools && immutableConversation.tools.length);
+      !(immutableConversation?.tools && immutableConversation.tools.length) &&
+      !hasSelectedEphemeralTools(ephemeralAgent);
     if (startupConfig?.governanceDlpEnabled === false || !isPlainTextSubmission) {
       return send();
     }
