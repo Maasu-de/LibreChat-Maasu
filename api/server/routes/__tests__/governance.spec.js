@@ -103,6 +103,7 @@ describe('POST /api/governance/dlp/check', () => {
   });
 
   it.each([
+    [undefined, 'Text'],
     [{ text: '', model: 'company-assistant' }, 'Text'],
     [{ text: 'hello', model: '' }, 'Model'],
   ])('rejects invalid input %#', async (body, field) => {

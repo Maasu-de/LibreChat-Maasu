@@ -19,7 +19,7 @@ router.post('/dlp/check', async (req, res) => {
     return res.status(200).json({ enabled: false });
   }
 
-  const { text, model } = req.body;
+  const { text, model } = req.body ?? {};
   if (typeof text !== 'string' || text.trim() === '') {
     return res.status(400).json({ message: 'Text must be a non-empty string.' });
   }
