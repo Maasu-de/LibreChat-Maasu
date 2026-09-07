@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { v4 } from 'uuid';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
@@ -42,6 +42,7 @@ type PendingDlpSubmission = {
   result: GovernanceDlpResult;
   props: Parameters<TAskFunction>[0];
   options?: Parameters<TAskFunction>[1];
+  conversationId: string | null;
 };
 
 const logChatRequest = (request: Record<string, unknown>) => {
@@ -373,10 +374,10 @@ export default function useChatFunctions({
     }
     const send = () => submitMessageUnchecked({ ...props, text }, options);
 
+    const targetConversationId =
+      props.conversationId ?? immutableConversation?.conversationId ?? null;
     const startupConfig = queryClient.getQueryData<TStartupConfig>([QueryKeys.startupConfig]);
-    const ephemeralAgent = getEphemeralAgent(
-      props.conversationId ?? immutableConversation?.conversationId ?? Constants.NEW_CONVO,
-    );
+    const ephemeralAgent = getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
     const isPlainTextSubmission =
       options?.editedContent == null &&
       options?.isContinued !== true &&
@@ -385,6 +386,7 @@ export default function useChatFunctions({
       immutableConversation?.agent_id == null &&
       immutableConversation?.assistant_id == null &&
       !(files && files.size) &&
+      !(options?.overrideFiles && options.overrideFiles.length) &&
       !(immutableConversation?.tools && immutableConversation.tools.length) &&
       !hasSelectedEphemeralTools(ephemeralAgent);
     if (startupConfig?.governanceDlpEnabled === false || !isPlainTextSubmission) {
@@ -397,7 +399,12 @@ export default function useChatFunctions({
         onSuccess: (result) =>
           !result.enabled || result.decision === 'ALLOW'
             ? send()
-            : setPendingDlpSubmission({ result, props: { ...props, text }, options }),
+            : setPendingDlpSubmission({
+                result,
+                props: { ...props, text },
+                options,
+                conversationId: targetConversationId,
+              }),
         onError: () => {
           dlpUnavailable();
           send();
@@ -407,6 +414,13 @@ export default function useChatFunctions({
   };
 
   const cancelDlpIntervention = () => setPendingDlpSubmission(null);
+
+  useEffect(() => {
+    const currentConversationId = immutableConversation?.conversationId ?? null;
+    setPendingDlpSubmission((pending) =>
+      pending && pending.conversationId !== currentConversationId ? null : pending,
+    );
+  }, [immutableConversation?.conversationId]);
 
   const confirmDlpIntervention = () => {
     if (!pendingDlpSubmission || pendingDlpSubmission.result.decision === 'BLOCK') {
