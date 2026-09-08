@@ -33,6 +33,7 @@ import SendButton from './SendButton';
 import EditBadges from './EditBadges';
 import BadgeRow from './BadgeRow';
 import Mention from './Mention';
+import DlpInterventionDialog from './DlpInterventionDialog';
 import store from '~/store';
 
 const ChatForm = memo(({ index = 0 }: { index?: number }) => {
@@ -73,6 +74,10 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     filesLoading,
     newConversation,
     handleStopGenerating,
+    pendingDlpSubmission,
+    cancelDlpIntervention,
+    confirmDlpIntervention,
+    isDlpChecking,
   } = useChatContext();
   const {
     generateConversation,
@@ -102,9 +107,16 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     [conversation?.assistant_id, endpoint, assistantMap],
   );
   const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant,
-    [requiresKey, invalidAssistant],
+    () => requiresKey || invalidAssistant || isDlpChecking,
+    [requiresKey, invalidAssistant, isDlpChecking],
   );
+
+  const handleCancelDlpIntervention = useCallback(() => {
+    if (pendingDlpSubmission) {
+      methods.setValue('text', pendingDlpSubmission.props.text, { shouldValidate: true });
+    }
+    cancelDlpIntervention();
+  }, [cancelDlpIntervention, methods, pendingDlpSubmission]);
 
   const handleContainerClick = useCallback(() => {
     /** Check if the device is a touchscreen */
@@ -215,6 +227,14 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
           : 'sm:mb-10',
       )}
     >
+      {pendingDlpSubmission && (
+        <DlpInterventionDialog
+          result={pendingDlpSubmission.result}
+          originalText={pendingDlpSubmission.props.text}
+          onCancel={handleCancelDlpIntervention}
+          onConfirm={confirmDlpIntervention}
+        />
+      )}
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
         <div className={cn('flex w-full items-center', isRTL && 'flex-row-reverse')}>
           {showPlusPopover && !isAssistantsEndpoint(endpoint) && (

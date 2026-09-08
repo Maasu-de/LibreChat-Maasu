@@ -1,6 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
 import { v4 } from 'uuid';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
+import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSetRecoilState, useResetRecoilState, useRecoilValue } from 'recoil';
 import {
@@ -23,6 +25,7 @@ import type {
   TEndpointOption,
   TEndpointsConfig,
   EndpointSchemaKey,
+  GovernanceDlpResult,
 } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
 import type { TAskFunction, ExtendedFile } from '~/common';
@@ -31,7 +34,16 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
 import { logger, createDualMessageContent } from '~/utils';
 import store, { useGetEphemeralAgent } from '~/store';
 import useUserKey from '~/hooks/Input/useUserKey';
-import { useAuthContext } from '~/hooks';
+import { hasSelectedEphemeralTools } from '~/hooks/Chat/governance';
+import { useGovernanceDlpCheckMutation } from '~/data-provider';
+import { useAuthContext, useLocalize } from '~/hooks';
+
+type PendingDlpSubmission = {
+  result: GovernanceDlpResult;
+  props: Parameters<TAskFunction>[0];
+  options?: Parameters<TAskFunction>[1];
+  conversationId: string | null;
+};
 
 const logChatRequest = (request: Record<string, unknown>) => {
   logger.log('=====================================\nAsk function called with:');
@@ -64,9 +76,18 @@ export default function useChatFunctions({
   setLatestMessage?: SetterOrUpdater<TMessage | null>;
 }) {
   const navigate = useNavigate();
+  const localize = useLocalize();
   const getSender = useGetSender();
+  const { showToast } = useToastContext();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
+  const dlpCheckMutation = useGovernanceDlpCheckMutation();
+  const [pendingDlpSubmission, setPendingDlpSubmission] = useState<PendingDlpSubmission | null>(
+    null,
+  );
+  const activeConversationIdRef = useRef<string | null>(
+    immutableConversation?.conversationId ?? null,
+  );
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
   const isTemporary = useRecoilValue(store.isTemporary);
@@ -75,7 +96,7 @@ export default function useChatFunctions({
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(index));
   const resetLatestMultiMessage = useResetRecoilState(store.latestMessageFamily(index + 1));
 
-  const ask: TAskFunction = (
+  const submitMessageUnchecked: TAskFunction = (
     {
       text,
       overrideConvoId,
@@ -346,6 +367,98 @@ export default function useChatFunctions({
     logger.dir('message_stream', submission, { depth: null });
   };
 
+  const dlpUnavailable = () =>
+    showToast({ message: localize('com_error_governance_unavailable'), status: 'error' });
+
+  const ask: TAskFunction = (props, options) => {
+    const text = props.text.trim();
+    if (isSubmitting || dlpCheckMutation.isLoading || text === '') {
+      return;
+    }
+    const send = () => submitMessageUnchecked({ ...props, text }, options);
+
+    const targetConversationId =
+      props.conversationId ?? immutableConversation?.conversationId ?? null;
+    const startupConfig = queryClient.getQueryData<TStartupConfig>([QueryKeys.startupConfig]);
+    const ephemeralAgent = getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
+    const isPlainTextSubmission =
+      options?.editedContent == null &&
+      options?.isContinued !== true &&
+      options?.isRegenerate !== true &&
+      options?.addedConvo == null &&
+      immutableConversation?.agent_id == null &&
+      immutableConversation?.assistant_id == null &&
+      !(files && files.size) &&
+      !(options?.overrideFiles && options.overrideFiles.length) &&
+      !(immutableConversation?.tools && immutableConversation.tools.length) &&
+      !hasSelectedEphemeralTools(ephemeralAgent);
+    if (startupConfig?.governanceDlpEnabled === false || !isPlainTextSubmission) {
+      return send();
+    }
+
+    dlpCheckMutation.mutate(
+      { text, model: immutableConversation?.model ?? 'unknown' },
+      {
+        onSuccess: (result) => {
+          // The conversation may have changed while this check was in flight; a stale
+          // result must never be sent into, or surfaced as a dialog on, a different one.
+          if (activeConversationIdRef.current !== targetConversationId) {
+            return;
+          }
+          if (!result.enabled || result.decision === 'ALLOW') {
+            send();
+            return;
+          }
+          setPendingDlpSubmission({
+            result,
+            props: { ...props, text },
+            options,
+            conversationId: targetConversationId,
+          });
+        },
+        onError: () => {
+          if (activeConversationIdRef.current !== targetConversationId) {
+            return;
+          }
+          dlpUnavailable();
+          send();
+        },
+      },
+    );
+  };
+
+  const cancelDlpIntervention = () => setPendingDlpSubmission(null);
+
+  useEffect(() => {
+    const currentConversationId = immutableConversation?.conversationId ?? null;
+    activeConversationIdRef.current = currentConversationId;
+    setPendingDlpSubmission((pending) =>
+      pending && pending.conversationId !== currentConversationId ? null : pending,
+    );
+  }, [immutableConversation?.conversationId]);
+
+  const confirmDlpIntervention = () => {
+    if (!pendingDlpSubmission || pendingDlpSubmission.result.decision === 'BLOCK') {
+      return;
+    }
+    if (pendingDlpSubmission.conversationId !== activeConversationIdRef.current) {
+      setPendingDlpSubmission(null);
+      return;
+    }
+    const { result, props, options } = pendingDlpSubmission;
+    let { text } = props;
+    if (result.decision === 'MASK') {
+      const masked = result.maskedPreview?.find((m) => m.location === '/messages/0/content');
+      if (!masked || masked.text.trim() === '') {
+        dlpUnavailable();
+        return;
+      }
+      text = masked.text;
+    }
+    setPendingDlpSubmission(null);
+    submitMessageUnchecked({ ...props, text }, options);
+  };
+
   const regenerate = ({ parentMessageId }, options?: { addedConvo?: TConversation | null }) => {
     const messages = getMessages();
     const parentMessage = messages?.find((element) => element.messageId == parentMessageId);
@@ -365,5 +478,9 @@ export default function useChatFunctions({
   return {
     ask,
     regenerate,
+    pendingDlpSubmission,
+    cancelDlpIntervention,
+    confirmDlpIntervention,
+    isDlpChecking: dlpCheckMutation.isLoading,
   };
 }

@@ -1,4 +1,5 @@
 import type { AxiosResponse } from 'axios';
+import type { GovernanceDlpCheckRequest, GovernanceDlpCheckResponse } from './types/governance';
 import type * as t from './types';
 import * as endpoints from './api-endpoints';
 import * as a from './types/assistants';
@@ -12,6 +13,12 @@ import request from './request';
 import * as s from './schemas';
 import * as r from './roles';
 import * as permissions from './accessPermissions';
+
+export function checkGovernanceDlp(
+  payload: GovernanceDlpCheckRequest,
+): Promise<GovernanceDlpCheckResponse> {
+  return request.post(endpoints.governanceDlpCheck(), payload);
+}
 
 export function revokeUserKey(name: string): Promise<unknown> {
   return request.delete(endpoints.revokeUserKey(name));

@@ -40,6 +40,7 @@ const buildQuery = (params: Record<string, unknown>): string => {
 };
 
 export const health = () => `${BASE_URL}/health`;
+export const governanceDlpCheck = () => `${BASE_URL}/api/governance/dlp/check`;
 export const governanceHealth = () => `${BASE_URL}/api/governance/health`;
 export const user = () => `${BASE_URL}/api/user`;
 
