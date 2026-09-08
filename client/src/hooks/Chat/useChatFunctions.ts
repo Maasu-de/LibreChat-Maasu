@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { v4 } from 'uuid';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
@@ -84,6 +84,9 @@ export default function useChatFunctions({
   const dlpCheckMutation = useGovernanceDlpCheckMutation();
   const [pendingDlpSubmission, setPendingDlpSubmission] = useState<PendingDlpSubmission | null>(
     null,
+  );
+  const activeConversationIdRef = useRef<string | null>(
+    immutableConversation?.conversationId ?? null,
   );
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
@@ -396,16 +399,27 @@ export default function useChatFunctions({
     dlpCheckMutation.mutate(
       { text, model: immutableConversation?.model ?? 'unknown' },
       {
-        onSuccess: (result) =>
-          !result.enabled || result.decision === 'ALLOW'
-            ? send()
-            : setPendingDlpSubmission({
-                result,
-                props: { ...props, text },
-                options,
-                conversationId: targetConversationId,
-              }),
+        onSuccess: (result) => {
+          // The conversation may have changed while this check was in flight; a stale
+          // result must never be sent into, or surfaced as a dialog on, a different one.
+          if (activeConversationIdRef.current !== targetConversationId) {
+            return;
+          }
+          if (!result.enabled || result.decision === 'ALLOW') {
+            send();
+            return;
+          }
+          setPendingDlpSubmission({
+            result,
+            props: { ...props, text },
+            options,
+            conversationId: targetConversationId,
+          });
+        },
         onError: () => {
+          if (activeConversationIdRef.current !== targetConversationId) {
+            return;
+          }
           dlpUnavailable();
           send();
         },
@@ -417,6 +431,7 @@ export default function useChatFunctions({
 
   useEffect(() => {
     const currentConversationId = immutableConversation?.conversationId ?? null;
+    activeConversationIdRef.current = currentConversationId;
     setPendingDlpSubmission((pending) =>
       pending && pending.conversationId !== currentConversationId ? null : pending,
     );
@@ -426,11 +441,15 @@ export default function useChatFunctions({
     if (!pendingDlpSubmission || pendingDlpSubmission.result.decision === 'BLOCK') {
       return;
     }
+    if (pendingDlpSubmission.conversationId !== activeConversationIdRef.current) {
+      setPendingDlpSubmission(null);
+      return;
+    }
     const { result, props, options } = pendingDlpSubmission;
     let { text } = props;
     if (result.decision === 'MASK') {
       const masked = result.maskedPreview?.find((m) => m.location === '/messages/0/content');
-      if (!masked) {
+      if (!masked || masked.text.trim() === '') {
         dlpUnavailable();
         return;
       }
