@@ -28,6 +28,12 @@ export function testGovernanceConnection(): Promise<q.GovernanceConnectionRespon
   return request.get(endpoints.governanceHealth());
 }
 
+export function getGovernanceUsage(
+  params: q.FinanceUsageQueryParams = {},
+): Promise<q.FinanceUsageDashboard> {
+  return request.get(endpoints.governanceUsage(params));
+}
+
 export function revokeAllUserKeys(): Promise<unknown> {
   return request.delete(endpoints.revokeAllUserKeys());
 }

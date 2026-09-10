@@ -32,6 +32,12 @@ export enum SystemRoles {
   USER = 'USER',
 }
 
+export const FINANCES_ROLE = 'finances';
+
+export function hasFinancesRole(role?: string | null): boolean {
+  return typeof role === 'string' && role.toLowerCase() === FINANCES_ROLE;
+}
+
 export const roleSchema = z.object({
   name: z.string(),
   permissions: permissionsSchema,

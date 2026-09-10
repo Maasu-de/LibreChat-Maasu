@@ -7,6 +7,9 @@ const {
   testGovernanceConnection,
 } = require('@librechat/api');
 const { requireJwtAuth } = require('~/server/middleware');
+const { hasFinancesRole } = require('librechat-data-provider');
+const { getGovernanceUsage, testGovernanceConnection } = require('@librechat/api');
+const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 
 const router = express.Router();
 

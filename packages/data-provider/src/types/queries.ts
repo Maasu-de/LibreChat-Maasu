@@ -210,3 +210,32 @@ export type GraphTokenResponse = {
 export interface GovernanceConnectionResponse {
   status: 'connected';
 }
+
+export type FinanceUsageQueryParams = {
+  start_date?: string;
+  end_date?: string;
+};
+
+export type FinanceUsageTotals = {
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+};
+
+export type FinanceUsageBreakdownRow = FinanceUsageTotals & {
+  key: string;
+  label: string;
+};
+
+export type FinanceUsageDashboard = {
+  range: {
+    start_date: string;
+    end_date: string;
+  };
+  totals: FinanceUsageTotals;
+  by_user: FinanceUsageBreakdownRow[];
+  by_team: FinanceUsageBreakdownRow[];
+  by_model: FinanceUsageBreakdownRow[];
+};
