@@ -76,7 +76,14 @@ export default function useChatHelpers(index = 0, paramId?: string) {
 
   const setSubmission = useSetRecoilState(store.submissionByIndex(index));
 
-  const { ask: _ask, regenerate: _regenerate } = useChatFunctions({
+  const {
+    ask: _ask,
+    regenerate: _regenerate,
+    isDlpChecking,
+    pendingDlpSubmission,
+    cancelDlpIntervention,
+    confirmDlpIntervention,
+  } = useChatFunctions({
     index,
     files,
     setFiles,
@@ -229,6 +236,10 @@ export default function useChatHelpers(index = 0, paramId?: string) {
       setFiles,
       filesLoading,
       setFilesLoading,
+      isDlpChecking,
+      pendingDlpSubmission,
+      cancelDlpIntervention,
+      confirmDlpIntervention,
     }),
     [
       newConversation,
@@ -260,6 +271,10 @@ export default function useChatHelpers(index = 0, paramId?: string) {
       setFiles,
       filesLoading,
       setFilesLoading,
+      isDlpChecking,
+      pendingDlpSubmission,
+      cancelDlpIntervention,
+      confirmDlpIntervention,
     ],
   );
 }

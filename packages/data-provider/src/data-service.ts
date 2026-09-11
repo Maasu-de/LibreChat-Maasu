@@ -1,5 +1,6 @@
 import type { AxiosResponse } from 'axios';
 import type { TContextProjectionRequest, TContextUsageEvent } from './types/runs';
+import type { GovernanceDlpCheckRequest, GovernanceDlpCheckResponse } from './types/governance';
 import type { TFileConfig } from './file-config';
 import type * as t from './types';
 import * as permissions from './accessPermissions';
@@ -15,6 +16,16 @@ import * as config from './config';
 import request from './request';
 import * as s from './schemas';
 import * as r from './roles';
+
+export function checkGovernanceDlp(
+  payload: GovernanceDlpCheckRequest,
+): Promise<GovernanceDlpCheckResponse> {
+  return request.post(endpoints.governanceDlpCheck(), payload);
+}
+
+export function testGovernanceConnection(): Promise<q.GovernanceConnectionResponse> {
+  return request.get(endpoints.governanceHealth());
+}
 
 export function revokeUserKey(name: string): Promise<unknown> {
   return request.delete(endpoints.revokeUserKey(name));

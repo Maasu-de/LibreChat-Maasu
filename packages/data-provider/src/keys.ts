@@ -94,6 +94,8 @@ export const DynamicQueryKeys = {
 } as const;
 
 export enum MutationKeys {
+  governanceDlpCheck = 'governanceDlpCheck',
+  testGovernanceConnection = 'testGovernanceConnection',
   createAgentApiKey = 'createAgentApiKey',
   deleteAgentApiKey = 'deleteAgentApiKey',
   fileUpload = 'fileUpload',

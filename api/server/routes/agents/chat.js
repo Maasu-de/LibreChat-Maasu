@@ -6,6 +6,7 @@ const {
   // validateModel,
   validateConvoAccess,
   buildEndpointOption,
+  checkGovernanceDlp,
   canAccessAgentFromBody,
 } = require('~/server/middleware');
 const { initializeClient } = require('~/server/services/Endpoints/agents');
@@ -31,6 +32,7 @@ router.use(checkAgentAccess);
 router.use(checkAgentResourceAccess);
 router.use(validateConvoAccess);
 router.use(buildEndpointOption);
+router.use(checkGovernanceDlp);
 
 const controller = async (req, res, next) => {
   await AgentController(req, res, next, initializeClient, addTitle);

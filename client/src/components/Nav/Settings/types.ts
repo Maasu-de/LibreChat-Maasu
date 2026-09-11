@@ -17,6 +17,7 @@ export type SectionId =
   | 'appearance'
   | 'layout'
   | 'accessibility'
+  | 'governance'
   | 'sending'
   | 'commands'
   | 'messages'
@@ -81,6 +82,7 @@ export const TABS: TabMeta[] = [
       { id: 'appearance', labelKey: 'com_ui_settings_section_appearance' },
       { id: 'layout', labelKey: 'com_ui_settings_section_layout' },
       { id: 'accessibility', labelKey: 'com_ui_settings_section_accessibility' },
+      { id: 'governance', labelKey: 'com_ui_settings_section_governance' },
     ],
   },
   {

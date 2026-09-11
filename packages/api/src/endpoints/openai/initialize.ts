@@ -12,6 +12,11 @@ import {
   checkUserKeyExpiry,
   getAzureCredentials,
 } from '~/utils';
+import {
+  createGovernanceDlpFetch,
+  isGovernanceDlpEnabled,
+  isGovernanceGatewayUrl,
+} from '~/governance/dlp';
 import { validateEndpointURL } from '~/auth';
 import { getOpenAIConfig } from './config';
 
@@ -188,6 +193,22 @@ export async function initializeOpenAI({
   };
 
   const options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
+
+  const dlpBaseUrl = options.configOptions?.baseURL ?? baseURL;
+  if (
+    req.governanceDlpEligible === true &&
+    dlpBaseUrl != null &&
+    isGovernanceDlpEnabled() &&
+    isGovernanceGatewayUrl(dlpBaseUrl)
+  ) {
+    options.configOptions = {
+      ...(options.configOptions ?? {}),
+      fetch: createGovernanceDlpFetch({
+        userId: req.user?.id ?? '',
+        fetch: options.configOptions?.fetch,
+      }),
+    };
+  }
 
   /** Set useLegacyContent for Azure serverless deployments */
   if (isServerless) {

@@ -29,4 +29,6 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   resolvedConversation?: Partial<TConversation> | null;
   /** Passport strategy that populated req.user for this request. */
   authStrategy?: string;
+  /** Set only after the server-side plain-text DLP preflight allows this request. */
+  governanceDlpEligible?: boolean;
 };

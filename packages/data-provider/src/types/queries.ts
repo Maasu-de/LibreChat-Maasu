@@ -243,3 +243,7 @@ export type GraphTokenResponse = {
   expires_in: number;
   scope: string;
 };
+
+export interface GovernanceConnectionResponse {
+  status: 'connected';
+}

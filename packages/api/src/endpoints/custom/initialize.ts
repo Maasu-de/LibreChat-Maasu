@@ -19,6 +19,11 @@ import { extractDefaultParams } from '~/endpoints/openai/llm';
 import { isUserProvided, checkUserKeyExpiry } from '~/utils';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
 import { getScopedTokenConfigKey } from '~/endpoints/keys';
+import {
+  createGovernanceDlpFetch,
+  isGovernanceDlpEnabled,
+  isGovernanceGatewayUrl,
+} from '~/governance/dlp';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
 import { validateEndpointURL } from '~/auth';
@@ -338,6 +343,19 @@ export async function initializeCustom({
       ...clientOptions,
     };
     options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
+    if (
+      req.governanceDlpEligible === true &&
+      isGovernanceDlpEnabled() &&
+      isGovernanceGatewayUrl(baseURL)
+    ) {
+      options.configOptions = {
+        ...(options.configOptions ?? {}),
+        fetch: createGovernanceDlpFetch({
+          userId,
+          fetch: options.configOptions?.fetch,
+        }),
+      };
+    }
     if (options != null) {
       options.useLegacyContent = true;
       options.endpointTokenConfig = endpointTokenConfig;

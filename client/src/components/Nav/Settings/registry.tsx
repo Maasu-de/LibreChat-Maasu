@@ -38,6 +38,7 @@ import Avatar from '../SettingsTabs/Account/Avatar';
 import About from '../SettingsTabs/About/About';
 import ApiKeys from '../SettingsTabs/ApiKeys';
 import MemoryToggle from './MemoryToggle';
+import GovernanceConnectionTest from '../SettingsTabs/General/GovernanceConnectionTest';
 import { TTSEndpoints } from '~/common';
 import store from '~/store';
 
@@ -122,6 +123,15 @@ export const registry: SettingEntry[] = [
       localizationKey: 'com_nav_keep_screen_awake',
       switchId: 'keepScreenAwake',
     }),
+  },
+  // General · Governance
+  {
+    id: 'governanceConnection',
+    tab: GENERAL,
+    section: 'governance',
+    labelKey: 'com_ui_governance_connection_label',
+    keywords: ['governance', 'dlp', 'connection'],
+    Component: GovernanceConnectionTest,
   },
 
   // Chat · Sending

@@ -41,6 +41,7 @@ import SendButton from './SendButton';
 import EditBadges from './EditBadges';
 import BadgeRow from './BadgeRow';
 import Mention from './Mention';
+import DlpInterventionDialog from './DlpInterventionDialog';
 import store from '~/store';
 
 interface ChatFormProps {
@@ -55,6 +56,10 @@ interface ChatFormProps {
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
   newConversation: ConvoGenerator;
   handleStopGenerating: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  pendingDlpSubmission: ReturnType<typeof useChatContext>['pendingDlpSubmission'];
+  cancelDlpIntervention: ReturnType<typeof useChatContext>['cancelDlpIntervention'];
+  confirmDlpIntervention: ReturnType<typeof useChatContext>['confirmDlpIntervention'];
+  isDlpChecking: ReturnType<typeof useChatContext>['isDlpChecking'];
 }
 
 const ChatForm = memo(function ChatForm({
@@ -68,6 +73,10 @@ const ChatForm = memo(function ChatForm({
   setFilesLoading,
   newConversation,
   handleStopGenerating,
+  pendingDlpSubmission,
+  cancelDlpIntervention,
+  confirmDlpIntervention,
+  isDlpChecking,
 }: ChatFormProps) {
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -136,9 +145,16 @@ const ChatForm = memo(function ChatForm({
     [conversation?.assistant_id, endpoint, assistantMap],
   );
   const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant,
-    [requiresKey, invalidAssistant],
+    () => requiresKey || invalidAssistant || isDlpChecking,
+    [requiresKey, invalidAssistant, isDlpChecking],
   );
+
+  const handleCancelDlpIntervention = useCallback(() => {
+    if (pendingDlpSubmission) {
+      methods.setValue('text', pendingDlpSubmission.props.text, { shouldValidate: true });
+    }
+    cancelDlpIntervention();
+  }, [cancelDlpIntervention, methods, pendingDlpSubmission]);
 
   const handleContainerClick = useCallback(() => {
     /** Check if the device is a touchscreen */
@@ -257,6 +273,14 @@ const ChatForm = memo(function ChatForm({
           : 'sm:mb-10',
       )}
     >
+      {pendingDlpSubmission && (
+        <DlpInterventionDialog
+          result={pendingDlpSubmission.result}
+          originalText={pendingDlpSubmission.props.text}
+          onCancel={handleCancelDlpIntervention}
+          onConfirm={confirmDlpIntervention}
+        />
+      )}
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
         {/* Primary composer owns the selection popup so split-view doesn't double it. */}
         {index === 0 && quotesEnabled && <QuoteButton conversationId={conversationId} />}
@@ -438,6 +462,10 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
     setFilesLoading,
     newConversation,
     handleStopGenerating,
+    pendingDlpSubmission,
+    cancelDlpIntervention,
+    confirmDlpIntervention,
+    isDlpChecking,
   } = useChatContext();
 
   /**
@@ -490,6 +518,10 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
       setFilesLoading={setFilesLoading}
       newConversation={stableNewConversation}
       handleStopGenerating={stableHandleStop}
+      pendingDlpSubmission={pendingDlpSubmission}
+      cancelDlpIntervention={cancelDlpIntervention}
+      confirmDlpIntervention={confirmDlpIntervention}
+      isDlpChecking={isDlpChecking}
     />
   );
 }

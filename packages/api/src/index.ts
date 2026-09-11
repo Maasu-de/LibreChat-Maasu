@@ -53,6 +53,8 @@ export * from './projects';
 export * from './skills';
 /* Endpoints */
 export * from './endpoints';
+/* Governance */
+export * from './governance/dlp';
 /* Files */
 export * from './files';
 /* Storage */
