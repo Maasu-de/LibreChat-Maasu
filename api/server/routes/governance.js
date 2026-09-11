@@ -9,7 +9,7 @@ const {
   testGovernanceConnection,
 } = require('@librechat/api');
 const { requireJwtAuth } = require('~/server/middleware');
-const { hasFinancesRole, Permissions, PermissionTypes } = require('librechat-data-provider');
+const { Permissions, PermissionTypes } = require('librechat-data-provider');
 const { getRoleByName } = require('~/models/Role');
 
 const router = express.Router();
@@ -22,7 +22,6 @@ const checkFinanceRead = generateCheckAccess({
   permissionType: PermissionTypes.FINANCE,
   permissions: [Permissions.READ],
   getRoleByName,
-  skipCheck: (req) => hasFinancesRole(req?.user?.role),
 });
 
 router.get('/usage', checkFinanceRead, getGovernanceUsage);

@@ -15,9 +15,6 @@ jest.mock('@librechat/api', () => ({
     body: { type: 'governance_unavailable', message: 'DLP unavailable' },
   }),
   generateCheckAccess: (config) => async (req, res, next) => {
-    if (config.skipCheck?.(req)) {
-      return next();
-    }
     const hasAccess = await mockCheckFinanceRead(config, req);
     if (hasAccess) {
       return next();
@@ -68,16 +65,6 @@ beforeEach(() => {
 });
 
 describe('GET /api/governance/usage', () => {
-  it('allows users with the finances role to read usage', async () => {
-    mockUser = { id: 'user-123', role: 'finances' };
-
-    const response = await request(app).get('/api/governance/usage');
-
-    expect(response.status).toBe(200);
-    expect(mockCheckFinanceRead).not.toHaveBeenCalled();
-    expect(mockGetGovernanceUsage).toHaveBeenCalledTimes(1);
-  });
-
   it('allows users with the finance read grant to read usage', async () => {
     mockUser = { id: 'user-123', role: 'finance-reader' };
     mockCheckFinanceRead.mockResolvedValue(true);

@@ -194,5 +194,5 @@ export const permissionsSchema = z.object({
   [PermissionTypes.FILE_CITATIONS]: fileCitationsPermissionsSchema,
   [PermissionTypes.MCP_SERVERS]: mcpServersPermissionsSchema,
   [PermissionTypes.REMOTE_AGENTS]: remoteAgentsPermissionsSchema,
-  [PermissionTypes.FINANCE]: financePermissionsSchema.default({}),
+  [PermissionTypes.FINANCE]: financePermissionsSchema,
 });

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, Cpu, DollarSign, RefreshCcw, Users } from 'lucide-react';
-import { hasFinancesRole, PermissionTypes, Permissions } from 'librechat-data-provider';
+import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type { FinanceUsageBreakdownRow } from 'librechat-data-provider';
 import { useAuthContext, useHasAccess } from '~/hooks';
@@ -97,14 +97,14 @@ function BreakdownTable({
 
 export default function FinanceDashboard() {
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuthContext();
+  const { isAuthenticated } = useAuthContext();
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(() => dateInputValue(new Date()));
   const hasFinanceReadAccess = useHasAccess({
     permissionType: PermissionTypes.FINANCE,
     permission: Permissions.READ,
   });
-  const hasAccess = hasFinancesRole(user?.role) || hasFinanceReadAccess;
+  const hasAccess = hasFinanceReadAccess;
 
   const params = useMemo(
     () => ({
