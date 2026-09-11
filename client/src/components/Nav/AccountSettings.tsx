@@ -1,8 +1,6 @@
 import { useState, memo, useRef } from 'react';
 import * as Menu from '@ariakit/react/menu';
-import { BarChart3, FileText, LogOut } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { hasFinancesRole } from 'librechat-data-provider';
+import { FileText, LogOut } from 'lucide-react';
 import { LinkIcon, GearIcon, DropdownMenuSeparator, Avatar } from '@librechat/client';
 import { MyFilesModal } from '~/components/Chat/Input/Files/MyFilesModal';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
@@ -12,7 +10,6 @@ import Settings from './Settings';
 
 function AccountSettings() {
   const localize = useLocalize();
-  const navigate = useNavigate();
   const { user, isAuthenticated, logout } = useAuthContext();
   const { data: startupConfig } = useGetStartupConfig();
   const balanceQuery = useGetUserBalance({
@@ -66,12 +63,6 @@ function AccountSettings() {
           <FileText className="icon-md" aria-hidden="true" />
           {localize('com_nav_my_files')}
         </Menu.MenuItem>
-        {hasFinancesRole(user?.role) && (
-          <Menu.MenuItem onClick={() => navigate('/finance')} className="select-item text-sm">
-            <BarChart3 className="icon-md" aria-hidden="true" />
-            Cost dashboard
-          </Menu.MenuItem>
-        )}
         {startupConfig?.helpAndFaqURL !== '/' && (
           <Menu.MenuItem
             onClick={() => window.open(startupConfig?.helpAndFaqURL, '_blank')}

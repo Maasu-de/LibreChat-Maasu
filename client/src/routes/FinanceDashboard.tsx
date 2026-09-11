@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, Cpu, DollarSign, RefreshCcw, Users } from 'lucide-react';
-import { hasFinancesRole } from 'librechat-data-provider';
+import { hasFinancesRole, PermissionTypes, Permissions } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type { FinanceUsageBreakdownRow } from 'librechat-data-provider';
-import { useAuthContext } from '~/hooks';
+import { useAuthContext, useHasAccess } from '~/hooks';
 import { useGovernanceUsageQuery } from '~/data-provider';
 import { cn } from '~/utils';
 
@@ -100,7 +100,11 @@ export default function FinanceDashboard() {
   const { user, isAuthenticated } = useAuthContext();
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(() => dateInputValue(new Date()));
-  const hasAccess = hasFinancesRole(user?.role);
+  const hasFinanceReadAccess = useHasAccess({
+    permissionType: PermissionTypes.FINANCE,
+    permission: Permissions.READ,
+  });
+  const hasAccess = hasFinancesRole(user?.role) || hasFinanceReadAccess;
 
   const params = useMemo(
     () => ({
@@ -119,11 +123,35 @@ export default function FinanceDashboard() {
   }
 
   if (!hasAccess) {
-    return <Navigate to="/c/new" replace={true} />;
+    return (
+      <main className="h-full overflow-y-auto bg-surface-primary-alt">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-8 md:px-6">
+          <button
+            type="button"
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+            onClick={() => navigate('/c/new')}
+            aria-label="Back to chat"
+          >
+            <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <section className="rounded-lg border border-border-light bg-surface-primary p-6 shadow-sm">
+            <h1 className="text-xl font-semibold text-text-primary">Cost and usage</h1>
+            <p className="mt-2 text-sm text-text-secondary">
+              You are not authorized to view financial and usage information.
+            </p>
+          </section>
+        </div>
+      </main>
+    );
   }
 
   const usage = usageQuery.data;
   const totals = usage?.totals;
+  const isEmpty =
+    !usageQuery.isLoading &&
+    !usageQuery.isError &&
+    (totals?.request_count ?? 0) === 0 &&
+    (totals?.total_tokens ?? 0) === 0;
 
   return (
     <main className="h-full overflow-y-auto bg-surface-primary-alt">
@@ -184,7 +212,19 @@ export default function FinanceDashboard() {
           </div>
         ) : null}
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {usageQuery.isLoading && !usage ? (
+          <div className="rounded-lg border border-border-light bg-surface-primary px-4 py-3 text-sm text-text-secondary">
+            Loading cost and usage data...
+          </div>
+        ) : null}
+
+        {isEmpty ? (
+          <div className="rounded-lg border border-border-light bg-surface-primary px-4 py-3 text-sm text-text-secondary">
+            No usage was found for the selected date range.
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <Metric
             label="Estimated cost"
             value={formatCurrency(totals?.cost_usd ?? 0)}
@@ -201,6 +241,12 @@ export default function FinanceDashboard() {
             label="Input tokens"
             value={formatInteger(totals?.input_tokens ?? 0)}
             tone="bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            icon={<Cpu className="h-5 w-5" aria-hidden="true" />}
+          />
+          <Metric
+            label="Output tokens"
+            value={formatInteger(totals?.output_tokens ?? 0)}
+            tone="bg-violet-500/10 text-violet-700 dark:text-violet-300"
             icon={<Cpu className="h-5 w-5" aria-hidden="true" />}
           />
           <Metric

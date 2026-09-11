@@ -11,8 +11,10 @@ import {
 } from 'react';
 import { useRecoilValue } from 'recoil';
 import { motion } from 'framer-motion';
-import { Skeleton, useMediaQuery } from '@librechat/client';
-import { PermissionTypes, Permissions } from 'librechat-data-provider';
+import { Link } from 'react-router-dom';
+import { BarChart3 } from 'lucide-react';
+import { Skeleton, TooltipAnchor, useMediaQuery } from '@librechat/client';
+import { PermissionTypes, Permissions, hasFinancesRole } from 'librechat-data-provider';
 import type { InfiniteQueryObserverResult } from '@tanstack/react-query';
 import type { ConversationListResponse } from 'librechat-data-provider';
 import type { List } from 'react-virtualized';
@@ -75,7 +77,7 @@ const Nav = memo(
     setNavVisible: React.Dispatch<React.SetStateAction<boolean>>;
   }) => {
     const localize = useLocalize();
-    const { isAuthenticated } = useAuthContext();
+    const { user, isAuthenticated } = useAuthContext();
     useTitleGeneration(isAuthenticated);
 
     const isSmallScreen = useMediaQuery('(max-width: 768px)');
@@ -88,6 +90,11 @@ const Nav = memo(
       permissionType: PermissionTypes.BOOKMARKS,
       permission: Permissions.USE,
     });
+    const hasFinanceReadAccess = useHasAccess({
+      permissionType: PermissionTypes.FINANCE,
+      permission: Permissions.READ,
+    });
+    const canViewCostUsage = hasFinancesRole(user?.role) || hasFinanceReadAccess;
 
     const search = useRecoilValue(store.search);
 
@@ -194,9 +201,32 @@ const Nav = memo(
               </Suspense>
             </>
           )}
+          {canViewCostUsage && (
+            <>
+              <div className="mt-1.5" />
+              <TooltipAnchor
+                description="Cost & Usage"
+                render={
+                  <Link
+                    to="/finance"
+                    onClick={itemToggleNav}
+                    aria-label="Cost & Usage"
+                    className={cn(
+                      'flex items-center justify-center',
+                      'size-10 border-none text-text-primary hover:bg-accent hover:text-accent-foreground',
+                      'rounded-full border-none p-2 hover:bg-surface-active-alt md:rounded-xl',
+                      'outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black dark:focus-visible:ring-white',
+                    )}
+                  >
+                    <BarChart3 aria-hidden="true" className="icon-lg text-text-primary" />
+                  </Link>
+                }
+              />
+            </>
+          )}
         </>
       ),
-      [hasAccessToBookmarks, tags],
+      [canViewCostUsage, hasAccessToBookmarks, itemToggleNav, tags],
     );
 
     const [isSearchLoading, setIsSearchLoading] = useState(

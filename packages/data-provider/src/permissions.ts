@@ -60,6 +60,10 @@ export enum PermissionTypes {
    * Type for Remote Agent (API) Permissions
    */
   REMOTE_AGENTS = 'REMOTE_AGENTS',
+  /**
+   * Type for Cost & Usage finance dashboard permissions
+   */
+  FINANCE = 'FINANCE',
 }
 
 /**
@@ -169,6 +173,11 @@ export const remoteAgentsPermissionsSchema = z.object({
 });
 export type TRemoteAgentsPermissions = z.infer<typeof remoteAgentsPermissionsSchema>;
 
+export const financePermissionsSchema = z.object({
+  [Permissions.READ]: z.boolean().default(false),
+});
+export type TFinancePermissions = z.infer<typeof financePermissionsSchema>;
+
 // Define a single permissions schema that holds all permission types.
 export const permissionsSchema = z.object({
   [PermissionTypes.PROMPTS]: promptPermissionsSchema,
@@ -185,4 +194,5 @@ export const permissionsSchema = z.object({
   [PermissionTypes.FILE_CITATIONS]: fileCitationsPermissionsSchema,
   [PermissionTypes.MCP_SERVERS]: mcpServersPermissionsSchema,
   [PermissionTypes.REMOTE_AGENTS]: remoteAgentsPermissionsSchema,
+  [PermissionTypes.FINANCE]: financePermissionsSchema.default({}),
 });
