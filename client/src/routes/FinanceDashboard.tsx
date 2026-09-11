@@ -99,7 +99,7 @@ function BreakdownTable({
 
 export default function FinanceDashboard() {
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuthContext();
+  const { isAuthenticated } = useAuthContext();
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(() => dateInputValue(new Date()));
   const hasAccess = useHasAccess({
