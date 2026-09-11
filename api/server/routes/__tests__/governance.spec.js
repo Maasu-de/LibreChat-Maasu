@@ -2,8 +2,11 @@ const express = require('express');
 const request = require('supertest');
 
 const mockCheckTextSubmission = jest.fn();
+const mockCheckFinanceRead = jest.fn();
+const mockGetGovernanceUsage = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockTestGovernanceConnection = jest.fn();
+let mockUser = { id: 'user-123', role: 'USER' };
 
 jest.mock('@librechat/api', () => ({
   checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
@@ -11,6 +14,17 @@ jest.mock('@librechat/api', () => ({
     status: 503,
     body: { type: 'governance_unavailable', message: 'DLP unavailable' },
   }),
+  generateCheckAccess: (config) => async (req, res, next) => {
+    if (config.skipCheck?.(req)) {
+      return next();
+    }
+    const hasAccess = await mockCheckFinanceRead(config, req);
+    if (hasAccess) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Forbidden: Insufficient permissions' });
+  },
+  getGovernanceUsage: (...args) => mockGetGovernanceUsage(...args),
   isGovernanceDlpEnabled: () => mockIsGovernanceDlpEnabled(),
   testGovernanceConnection: (...args) => mockTestGovernanceConnection(...args),
 }));
@@ -21,9 +35,13 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('~/server/middleware', () => ({
   requireJwtAuth: (req, _res, next) => {
-    req.user = { id: 'user-123' };
+    req.user = mockUser;
     next();
   },
+}));
+
+jest.mock('~/models/Role', () => ({
+  getRoleByName: jest.fn(),
 }));
 
 const governanceRoute = require('../governance');
@@ -33,13 +51,61 @@ app.use(express.json());
 app.use('/api/governance', governanceRoute);
 
 beforeEach(() => {
+  mockUser = { id: 'user-123', role: 'USER' };
   mockCheckTextSubmission.mockReset();
+  mockCheckFinanceRead.mockReset();
+  mockGetGovernanceUsage.mockReset();
   mockIsGovernanceDlpEnabled.mockReset();
   mockTestGovernanceConnection.mockReset();
+  mockCheckFinanceRead.mockResolvedValue(false);
+  mockGetGovernanceUsage.mockImplementation((_req, res) =>
+    res.status(200).json({ totals: { request_count: 0 } }),
+  );
   mockIsGovernanceDlpEnabled.mockReturnValue(true);
   mockTestGovernanceConnection.mockImplementation((_req, res) =>
     res.status(200).json({ status: 'connected' }),
   );
+});
+
+describe('GET /api/governance/usage', () => {
+  it('allows users with the finances role to read usage', async () => {
+    mockUser = { id: 'user-123', role: 'finances' };
+
+    const response = await request(app).get('/api/governance/usage');
+
+    expect(response.status).toBe(200);
+    expect(mockCheckFinanceRead).not.toHaveBeenCalled();
+    expect(mockGetGovernanceUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows users with the finance read grant to read usage', async () => {
+    mockUser = { id: 'user-123', role: 'finance-reader' };
+    mockCheckFinanceRead.mockResolvedValue(true);
+
+    const response = await request(app).get(
+      '/api/governance/usage?start_date=2026-09-01&end_date=2026-09-11',
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockCheckFinanceRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permissionType: 'FINANCE',
+        permissions: ['READ'],
+      }),
+      expect.objectContaining({
+        query: { start_date: '2026-09-01', end_date: '2026-09-11' },
+      }),
+    );
+    expect(mockGetGovernanceUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks users without finance authorization before proxying usage', async () => {
+    const response = await request(app).get('/api/governance/usage');
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ message: 'Forbidden: Insufficient permissions' });
+    expect(mockGetGovernanceUsage).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/governance/health', () => {

@@ -16,6 +16,7 @@ import {
   remoteAgentsPermissionsSchema,
   temporaryChatPermissionsSchema,
   fileCitationsPermissionsSchema,
+  financePermissionsSchema,
 } from './permissions';
 
 /**
@@ -30,6 +31,12 @@ export enum SystemRoles {
    * The default user role
    */
   USER = 'USER',
+}
+
+export const FINANCES_ROLE = 'finances';
+
+export function hasFinancesRole(role?: string | null): boolean {
+  return typeof role === 'string' && role.toLowerCase() === FINANCES_ROLE;
 }
 
 export const roleSchema = z.object({
@@ -103,6 +110,9 @@ const defaultRolesSchema = z.object({
         [Permissions.SHARE]: z.boolean().default(true),
         [Permissions.SHARE_PUBLIC]: z.boolean().default(true),
       }),
+      [PermissionTypes.FINANCE]: financePermissionsSchema.extend({
+        [Permissions.READ]: z.boolean().default(true),
+      }),
     }),
   }),
   [SystemRoles.USER]: roleSchema.extend({
@@ -175,6 +185,9 @@ export const roleDefaults = defaultRolesSchema.parse({
         [Permissions.SHARE]: true,
         [Permissions.SHARE_PUBLIC]: true,
       },
+      [PermissionTypes.FINANCE]: {
+        [Permissions.READ]: true,
+      },
     },
   },
   [SystemRoles.USER]: {
@@ -219,6 +232,9 @@ export const roleDefaults = defaultRolesSchema.parse({
         [Permissions.CREATE]: false,
         [Permissions.SHARE]: false,
         [Permissions.SHARE_PUBLIC]: false,
+      },
+      [PermissionTypes.FINANCE]: {
+        [Permissions.READ]: false,
       },
     },
   },
