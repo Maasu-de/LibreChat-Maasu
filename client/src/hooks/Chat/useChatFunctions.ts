@@ -15,6 +15,7 @@ import {
   parseCompactConvo,
   replaceSpecialVars,
   isAssistantsEndpoint,
+  isEphemeralAgentId,
   getDefaultParamsEndpoint,
 } from 'librechat-data-provider';
 import type {
@@ -386,7 +387,7 @@ export default function useChatFunctions({
       options?.isContinued !== true &&
       options?.isRegenerate !== true &&
       options?.addedConvo == null &&
-      immutableConversation?.agent_id == null &&
+      isEphemeralAgentId(immutableConversation?.agent_id) &&
       immutableConversation?.assistant_id == null &&
       !(files && files.size) &&
       !(options?.overrideFiles && options.overrideFiles.length) &&

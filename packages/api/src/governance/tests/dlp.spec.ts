@@ -374,6 +374,20 @@ describe('isPlainTextSubmission', () => {
     expect(isPlainTextSubmission(plainTextBody())).toBe(true);
   });
 
+  it.each([
+    'AI Governance Gateway__gemini-3.6-flash',
+    'AI Governance Gateway__gemini-3.6-flash___Assistant',
+    'AI Governance Gateway__gemini-3.6-flash___Assistant____1',
+  ])('checks plain-text follow-ups with ephemeral agent ID %s', (agent_id) => {
+    expect(isPlainTextSubmission(plainTextBody({ agent_id }))).toBe(true);
+    expect(
+      isPlainTextSubmission(plainTextBody({ agent_id, ephemeralAgent: { web_search: true } })),
+    ).toBe(false);
+    expect(isPlainTextSubmission(plainTextBody({ agent_id, files: [{ file_id: 'f1' }] }))).toBe(
+      false,
+    );
+  });
+
   const editedContent: TEditedContent = {
     index: 0,
     type: ContentTypes.TEXT,
@@ -387,7 +401,8 @@ describe('isPlainTextSubmission', () => {
     ['a continuation', { isContinued: true }],
     ['a regeneration', { isRegenerate: true }],
     ['an added conversation', { addedConvo: { conversationId: 'c1' } as TConversation }],
-    ['an agent target', { agent_id: 'agent-1' }],
+    ['a saved agent target', { agent_id: 'agent_1' }],
+    ['a saved agent with a conversation index', { agent_id: 'agent_1____1' }],
     ['an assistant target', { assistant_id: 'asst-1' }],
     ['attached files', { files: [{ file_id: 'f1' }] }],
     ['selected tools list', { tools: ['web-browser'] }],
