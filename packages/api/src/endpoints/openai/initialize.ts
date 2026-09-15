@@ -205,6 +205,7 @@ export async function initializeOpenAI({
       ...(options.configOptions ?? {}),
       fetch: createGovernanceDlpFetch({
         userId: req.user?.id ?? '',
+        groupIds: req.governanceGroupIds,
         fetch: options.configOptions?.fetch,
       }),
     };

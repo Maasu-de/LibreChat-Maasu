@@ -4,6 +4,7 @@ const request = require('supertest');
 const mockCheckTextSubmission = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockTestGovernanceConnection = jest.fn();
+const mockGetUserGroups = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
@@ -17,6 +18,10 @@ jest.mock('@librechat/api', () => ({
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn() },
+}));
+
+jest.mock('~/models', () => ({
+  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -36,10 +41,15 @@ beforeEach(() => {
   mockCheckTextSubmission.mockReset();
   mockIsGovernanceDlpEnabled.mockReset();
   mockTestGovernanceConnection.mockReset();
+  mockGetUserGroups.mockReset();
   mockIsGovernanceDlpEnabled.mockReturnValue(true);
   mockTestGovernanceConnection.mockImplementation((_req, res) =>
     res.status(200).json({ status: 'connected' }),
   );
+  mockGetUserGroups.mockResolvedValue([
+    { _id: { toString: () => 'group-1' } },
+    { _id: { toString: () => 'group-2' } },
+  ]);
 });
 
 describe('GET /api/governance/health', () => {
@@ -85,7 +95,11 @@ describe('POST /api/governance/dlp/check', () => {
 
     const response = await request(app)
       .post('/api/governance/dlp/check')
-      .send({ text: 'Discuss Project Acme now', model: 'company-assistant' });
+      .send({
+        text: 'Discuss Project Acme now',
+        model: 'company-assistant',
+        groupIds: ['browser-supplied-group'],
+      });
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
@@ -99,6 +113,7 @@ describe('POST /api/governance/dlp/check', () => {
       text: 'Discuss Project Acme now',
       model: 'company-assistant',
       userId: 'user-123',
+      groupIds: ['group-1', 'group-2'],
     });
   });
 

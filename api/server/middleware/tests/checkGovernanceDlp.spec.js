@@ -5,6 +5,7 @@ const mockCreateDlpBlock = jest.fn();
 const mockIsPlainTextSubmission = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockDenyRequest = jest.fn();
+const mockGetUserGroups = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   getModel: (...args) => mockGetModel(...args),
@@ -17,6 +18,10 @@ jest.mock('@librechat/api', () => ({
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn() },
+}));
+
+jest.mock('~/models', () => ({
+  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 
 jest.mock(
@@ -34,6 +39,10 @@ describe('checkGovernanceDlp', () => {
     mockIsGovernanceDlpEnabled.mockReturnValue(true);
     mockIsPlainTextSubmission.mockReturnValue(true);
     mockGetModel.mockReturnValue('governed-model');
+    mockGetUserGroups.mockResolvedValue([
+      { _id: { toString: () => 'group-1' } },
+      { _id: { toString: () => 'group-2' } },
+    ]);
   });
 
   it('skips the check when the submission is not plain text', async () => {
@@ -53,6 +62,7 @@ describe('checkGovernanceDlp', () => {
       body: {
         text: 'normal text',
         model: 'governed-model',
+        groupIds: ['browser-supplied-group'],
         endpointOption: { model_parameters: { model: 'governed-model' } },
       },
       user: { id: 'user-123' },
@@ -65,8 +75,10 @@ describe('checkGovernanceDlp', () => {
       text: 'normal text',
       model: 'governed-model',
       userId: 'user-123',
+      groupIds: ['group-1', 'group-2'],
     });
     expect(req.governanceDlpEligible).toBe(true);
+    expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
     expect(next).toHaveBeenCalledTimes(1);
     expect(mockDenyRequest).not.toHaveBeenCalled();
   });

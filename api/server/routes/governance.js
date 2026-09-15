@@ -7,6 +7,7 @@ const {
   testGovernanceConnection,
 } = require('@librechat/api');
 const { requireJwtAuth } = require('~/server/middleware');
+const { getUserGroups } = require('~/models');
 
 const router = express.Router();
 
@@ -28,10 +29,12 @@ router.post('/dlp/check', async (req, res) => {
   }
 
   try {
+    const groups = await getUserGroups(req.user.id);
     const result = await checkTextSubmission({
       text,
       model,
       userId: req.user.id,
+      groupIds: groups.map((group) => group._id.toString()),
     });
 
     return res.status(200).json({
