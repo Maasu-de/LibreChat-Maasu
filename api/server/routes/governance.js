@@ -3,16 +3,28 @@ const { logger } = require('@librechat/data-schemas');
 const {
   createDlpFailure,
   checkTextSubmission,
+  generateCheckAccess,
+  getGovernanceUsage,
   isGovernanceDlpEnabled,
   testGovernanceConnection,
 } = require('@librechat/api');
+const { Permissions, PermissionTypes } = require('librechat-data-provider');
 const { requireJwtAuth } = require('~/server/middleware');
+const { getRoleByName } = require('~/models/Role');
 
 const router = express.Router();
 
 router.use(requireJwtAuth);
 
 router.get('/health', testGovernanceConnection);
+
+const checkFinanceRead = generateCheckAccess({
+  permissionType: PermissionTypes.FINANCE,
+  permissions: [Permissions.READ],
+  getRoleByName,
+});
+
+router.get('/usage', checkFinanceRead, getGovernanceUsage);
 
 router.post('/dlp/check', async (req, res) => {
   if (!isGovernanceDlpEnabled()) {
