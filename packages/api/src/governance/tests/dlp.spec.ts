@@ -64,6 +64,7 @@ describe('Governance DLP', () => {
         messages: [{ role: 'user', content: 'normal text' }],
       },
       userId: 'user-123',
+      groupIds: ['group-1', 'group-2'],
       http,
     });
 
@@ -79,6 +80,7 @@ describe('Governance DLP', () => {
         headers: {
           Authorization: 'Bearer server-only-credential',
           'X-LibreChat-User-ID': 'user-123',
+          'X-LibreChat-Group-IDs': '["group-1","group-2"]',
         },
       },
     });
@@ -126,22 +128,24 @@ describe('Governance DLP', () => {
     const upstreamFetch = jest.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => upstreamResponse,
     );
-    const check = jest.fn(
-      async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
-        decision: 'ALLOW',
-        findings: [],
-        dlpToken: 'signed-dlp-token',
-      }),
-    );
+    const check = jest.fn(async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+      decision: 'ALLOW',
+      findings: [],
+      dlpToken: 'signed-dlp-token',
+    }));
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
+      groupIds: ['group-1', 'group-2'],
       fetch: upstreamFetch,
       check,
     });
 
     const result = await governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-LibreChat-Group-IDs': '["browser-group"]',
+      },
       body: JSON.stringify({
         model: 'governed-model',
         messages: [{ role: 'user', content: 'normal text' }],
@@ -155,6 +159,7 @@ describe('Governance DLP', () => {
 
     expect(check).toHaveBeenCalledWith({
       userId: 'user-123',
+      groupIds: ['group-1', 'group-2'],
       request: {
         model: 'governed-model',
         messages: [{ role: 'user', content: 'normal text' }],
@@ -168,6 +173,9 @@ describe('Governance DLP', () => {
     expect(new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers).get('X-LibreChat-User-ID')).toBe(
       'user-123',
     );
+    expect(
+      new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers).get('X-LibreChat-Group-IDs'),
+    ).toBe('["group-1","group-2"]');
     expect(upstreamFetch.mock.calls[0]?.[1]?.body).toBe(
       JSON.stringify({
         model: 'governed-model',
@@ -187,13 +195,11 @@ describe('Governance DLP', () => {
         async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
           upstreamResponse,
       );
-      const check = jest.fn(
-        async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
-          decision,
-          findings: [],
-          dlpToken: 'signed-dlp-token',
-        }),
-      );
+      const check = jest.fn(async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+        decision,
+        findings: [],
+        dlpToken: 'signed-dlp-token',
+      }));
       const governedFetch = createGovernanceDlpFetch({
         userId: 'user-123',
         fetch: upstreamFetch,
@@ -219,12 +225,10 @@ describe('Governance DLP', () => {
 
   it('throws instead of calling the completion endpoint on a BLOCK decision', async () => {
     const upstreamFetch = jest.fn();
-    const check = jest.fn(
-      async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
-        decision: 'BLOCK',
-        findings: [],
-      }),
-    );
+    const check = jest.fn(async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+      decision: 'BLOCK',
+      findings: [],
+    }));
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
       fetch: upstreamFetch,
@@ -248,12 +252,10 @@ describe('Governance DLP', () => {
     'fails closed instead of forwarding a %s completion without a DLP token',
     async (decision) => {
       const upstreamFetch = jest.fn();
-      const check = jest.fn(
-        async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
-          decision,
-          findings: [],
-        }),
-      );
+      const check = jest.fn(async (_params: CheckDlpParams): Promise<DlpCheckResult> => ({
+        decision,
+        findings: [],
+      }));
       const governedFetch = createGovernanceDlpFetch({
         userId: 'user-123',
         fetch: upstreamFetch,

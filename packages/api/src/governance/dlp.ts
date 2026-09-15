@@ -16,6 +16,7 @@ import { isEnabled } from '~/utils/common';
 const DLP_CHECK_PATH = '/api/v1/dlp/check';
 const DLP_TOKEN_HEADER = 'X-DLP-Token';
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
+const LIBRECHAT_GROUPS_HEADER = 'X-LibreChat-Group-IDs';
 const DEFAULT_TIMEOUT_MS = 10000;
 
 const DLP_FAILURE_MESSAGE =
@@ -83,11 +84,13 @@ export type DlpChecker = (params: CheckDlpParams) => Promise<DlpCheckResult>;
 export interface CheckDlpParams {
   request: GovernanceChatCompletionRequest;
   userId: string;
+  groupIds?: string[];
   http?: HttpPoster;
 }
 
 export interface GovernanceFetchParams {
   userId: string;
+  groupIds?: string[];
   fetch?: GovernanceFetch;
   check?: DlpChecker;
 }
@@ -152,6 +155,7 @@ const defaultHttp: HttpPoster = (url, body, config) => axios.post(url, body, con
 export async function checkDlp({
   request,
   userId,
+  groupIds = [],
   http = defaultHttp,
 }: CheckDlpParams): Promise<DlpCheckResult> {
   const { gatewayUrl, serviceCredential } = getDlpConfiguration();
@@ -164,6 +168,7 @@ export async function checkDlp({
         'Content-Type': 'application/json',
         Authorization: `Bearer ${serviceCredential}`,
         'X-LibreChat-User-ID': userId,
+        'X-LibreChat-Group-IDs': JSON.stringify(groupIds),
       },
     });
   } catch {
@@ -244,11 +249,13 @@ export function checkTextSubmission({
   text,
   model,
   userId,
+  groupIds = [],
   http,
 }: {
   text: string;
   model: string;
   userId: string;
+  groupIds?: string[];
   http?: HttpPoster;
 }): Promise<DlpCheckResult> {
   return checkDlp({
@@ -257,6 +264,7 @@ export function checkTextSubmission({
       messages: [{ role: 'user', content: text }],
     },
     userId,
+    groupIds,
     http,
   });
 }
@@ -389,6 +397,7 @@ function withGovernanceRequest(
   init: RequestInit | undefined,
   request: GovernanceChatCompletionRequest,
   userId: string,
+  groupIds: string[],
   dlpToken: string,
 ): RequestInit {
   const requestHeaders =
@@ -396,6 +405,7 @@ function withGovernanceRequest(
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
+  headers.set(LIBRECHAT_GROUPS_HEADER, JSON.stringify(groupIds));
   headers.set(DLP_TOKEN_HEADER, dlpToken);
   return { ...init, body: JSON.stringify(request), headers };
 }
@@ -408,6 +418,7 @@ function withGovernanceRequest(
  */
 export function createGovernanceDlpFetch({
   userId,
+  groupIds = [],
   fetch = globalThis.fetch,
   check = checkDlp,
 }: GovernanceFetchParams): GovernanceFetch {
@@ -426,7 +437,7 @@ export function createGovernanceDlpFetch({
       throw new GovernanceDlpError('dlp_check_unsupported_request');
     }
 
-    const result = await check({ request, userId });
+    const result = await check({ request, userId, groupIds });
     if (result.decision === 'BLOCK') {
       throw new GovernanceDlpError(
         'dlp_check_intervention_required',
@@ -438,6 +449,9 @@ export function createGovernanceDlpFetch({
       throw new GovernanceDlpError('dlp_check_malformed_response');
     }
 
-    return fetch(input, withGovernanceRequest(input, init, request, userId, result.dlpToken));
+    return fetch(
+      input,
+      withGovernanceRequest(input, init, request, userId, groupIds, result.dlpToken),
+    );
   };
 }
