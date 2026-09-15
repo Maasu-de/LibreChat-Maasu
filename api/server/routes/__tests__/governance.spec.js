@@ -6,6 +6,7 @@ const mockCheckFinanceRead = jest.fn();
 const mockGetGovernanceUsage = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockTestGovernanceConnection = jest.fn();
+const mockGetUserGroups = jest.fn();
 let mockUser = { id: 'user-123', role: 'USER' };
 
 jest.mock('@librechat/api', () => ({
@@ -43,6 +44,7 @@ jest.mock('~/server/middleware', () => ({
 jest.mock('~/models', () => ({
   getRoleByName: jest.fn(),
   findUsers: jest.fn(),
+  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 
 jest.mock('~/db/models', () => ({
@@ -62,6 +64,7 @@ beforeEach(() => {
   mockGetGovernanceUsage.mockReset();
   mockIsGovernanceDlpEnabled.mockReset();
   mockTestGovernanceConnection.mockReset();
+  mockGetUserGroups.mockReset();
   mockCheckFinanceRead.mockResolvedValue(false);
   mockGetGovernanceUsage.mockImplementation((_req, res) =>
     res.status(200).json({ totals: { request_count: 0 } }),
@@ -70,6 +73,10 @@ beforeEach(() => {
   mockTestGovernanceConnection.mockImplementation((_req, res) =>
     res.status(200).json({ status: 'connected' }),
   );
+  mockGetUserGroups.mockResolvedValue([
+    { _id: { toString: () => 'group-1' } },
+    { _id: { toString: () => 'group-2' } },
+  ]);
 });
 
 describe('GET /api/governance/usage', () => {
@@ -146,7 +153,11 @@ describe('POST /api/governance/dlp/check', () => {
 
     const response = await request(app)
       .post('/api/governance/dlp/check')
-      .send({ text: 'Discuss Project Acme now', model: 'company-assistant' });
+      .send({
+        text: 'Discuss Project Acme now',
+        model: 'company-assistant',
+        groupIds: ['browser-supplied-group'],
+      });
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
@@ -160,6 +171,7 @@ describe('POST /api/governance/dlp/check', () => {
       text: 'Discuss Project Acme now',
       model: 'company-assistant',
       userId: 'user-123',
+      groupIds: ['group-1', 'group-2'],
     });
   });
 
