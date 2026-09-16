@@ -123,7 +123,9 @@ router.get('/:roleName', async (req, res) => {
     } catch (err) {
       logger.warn(`[GET /roles/:roleName] capability check failed: ${err.message}`);
     }
-    const isOwnRole = req.user?.role === roleName;
+    const isOwnRole =
+      typeof req.user?.role === 'string' &&
+      req.user.role.toLowerCase() === roleName.toLowerCase();
     const isDefaultRole = Object.hasOwn(roleDefaults, roleName);
     if (!hasReadRoles && !isOwnRole && (roleName === SystemRoles.ADMIN || !isDefaultRole)) {
       return res.status(403).send({ message: 'Unauthorized' });
