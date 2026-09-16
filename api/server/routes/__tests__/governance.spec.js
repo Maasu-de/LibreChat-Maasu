@@ -37,7 +37,7 @@ jest.mock('~/server/middleware', () => ({
   },
 }));
 
-jest.mock('~/models/Role', () => ({
+jest.mock('~/models', () => ({
   getRoleByName: jest.fn(),
 }));
 

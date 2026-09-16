@@ -10,7 +10,7 @@ const {
 } = require('@librechat/api');
 const { Permissions, PermissionTypes } = require('librechat-data-provider');
 const { requireJwtAuth } = require('~/server/middleware');
-const { getRoleByName } = require('~/models/Role');
+const { getRoleByName } = require('~/models');
 
 const router = express.Router();
 
