@@ -113,6 +113,8 @@ export const getGovernanceUsage = async (
       headers: {
         Authorization: `Bearer ${getServiceCredential()}`,
         'X-LibreChat-User-ID': String(req.user?.id ?? ''),
+        /** Route is guarded by FINANCE READ permission before reaching this handler */
+        'X-LibreChat-Finance-Authorized': 'true',
       },
     });
 
