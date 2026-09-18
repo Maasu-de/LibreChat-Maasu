@@ -68,6 +68,10 @@ export enum PermissionTypes {
    * Type for Shared Link Permissions
    */
   SHARED_LINKS = 'SHARED_LINKS',
+  /**
+   * Type for Cost & Usage finance dashboard permissions
+   */
+  FINANCE = 'FINANCE',
 }
 
 /**
@@ -92,6 +96,7 @@ export const PERMISSION_TYPE_INTERFACE_FIELDS: Record<PermissionTypes, string> =
   [PermissionTypes.REMOTE_AGENTS]: 'remoteAgents',
   [PermissionTypes.SKILLS]: 'skills',
   [PermissionTypes.SHARED_LINKS]: 'sharedLinks',
+  [PermissionTypes.FINANCE]: 'finance',
 };
 
 /** Set of interface config field names that correspond to role permissions. */
@@ -252,6 +257,11 @@ export const sharedLinksPermissionsSchema = z.object({
 });
 export type TSharedLinksPermissions = z.infer<typeof sharedLinksPermissionsSchema>;
 
+export const financePermissionsSchema = z.object({
+  [Permissions.READ]: z.boolean().default(false),
+});
+export type TFinancePermissions = z.infer<typeof financePermissionsSchema>;
+
 // Define a single permissions schema that holds all permission types.
 export const permissionsSchema = z.object({
   [PermissionTypes.PROMPTS]: promptPermissionsSchema,
@@ -270,4 +280,5 @@ export const permissionsSchema = z.object({
   [PermissionTypes.REMOTE_AGENTS]: remoteAgentsPermissionsSchema,
   [PermissionTypes.SKILLS]: skillPermissionsSchema,
   [PermissionTypes.SHARED_LINKS]: sharedLinksPermissionsSchema,
+  [PermissionTypes.FINANCE]: financePermissionsSchema,
 });
