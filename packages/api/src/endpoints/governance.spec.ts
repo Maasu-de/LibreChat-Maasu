@@ -64,7 +64,7 @@ describe('resolveUsageLabels', () => {
   it('replaces user pseudonyms with the matching LibreChat user name', async () => {
     const result = await resolveUsageLabels(dashboard(), createDeps());
 
-    expect(result.by_user[0]).toMatchObject({ key: USER_PSEUDONYM, label: 'Nikola Test' });
+    expect(result.by_user[0]).toMatchObject({ key: USER_PSEUDONYM, label: 'Nikola Test (665f1)' });
     expect(result.by_user[1]).toMatchObject({
       key: UNKNOWN_PSEUDONYM,
       label: 'sha256:000000000000…',
@@ -77,7 +77,7 @@ describe('resolveUsageLabels', () => {
 
     const result = await resolveUsageLabels(dashboard(), deps);
 
-    expect(result.by_user[0].label).toBe('nikola@example.com');
+    expect(result.by_user[0].label).toBe('nikola@example.com (665f1)');
   });
 
   it('replaces group IDs and external group IDs with group names', async () => {

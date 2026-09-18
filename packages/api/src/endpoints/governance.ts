@@ -140,7 +140,11 @@ const resolveUserLabels = async (
   for (const user of users) {
     const displayName = getUserDisplayName(user);
     if (displayName) {
-      namesByPseudonym.set(pseudonymizeUserId(secret, tenantId, String(user._id)), displayName);
+      const userId = String(user._id);
+      namesByPseudonym.set(
+        pseudonymizeUserId(secret, tenantId, userId),
+        `${displayName} (${userId.slice(0, 5)})`,
+      );
     }
   }
 
