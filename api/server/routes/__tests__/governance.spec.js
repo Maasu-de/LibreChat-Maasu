@@ -21,7 +21,10 @@ jest.mock('@librechat/api', () => ({
     }
     return res.status(403).json({ message: 'Forbidden: Insufficient permissions' });
   },
-  getGovernanceUsage: (...args) => mockGetGovernanceUsage(...args),
+  createGetGovernanceUsage:
+    () =>
+    (...args) =>
+      mockGetGovernanceUsage(...args),
   isGovernanceDlpEnabled: () => mockIsGovernanceDlpEnabled(),
   testGovernanceConnection: (...args) => mockTestGovernanceConnection(...args),
 }));
@@ -39,6 +42,11 @@ jest.mock('~/server/middleware', () => ({
 
 jest.mock('~/models', () => ({
   getRoleByName: jest.fn(),
+  findUsers: jest.fn(),
+}));
+
+jest.mock('~/db/models', () => ({
+  Group: { find: jest.fn() },
 }));
 
 const governanceRoute = require('../governance');

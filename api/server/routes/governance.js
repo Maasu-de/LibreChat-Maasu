@@ -1,16 +1,18 @@
 const express = require('express');
+const { Types } = require('mongoose');
 const { logger } = require('@librechat/data-schemas');
 const {
   createDlpFailure,
   checkTextSubmission,
   generateCheckAccess,
-  getGovernanceUsage,
+  createGetGovernanceUsage,
   isGovernanceDlpEnabled,
   testGovernanceConnection,
 } = require('@librechat/api');
 const { Permissions, PermissionTypes } = require('librechat-data-provider');
 const { requireJwtAuth } = require('~/server/middleware');
-const { getRoleByName } = require('~/models');
+const { getRoleByName, findUsers } = require('~/models');
+const { Group } = require('~/db/models');
 
 const router = express.Router();
 
@@ -24,7 +26,19 @@ const checkFinanceRead = generateCheckAccess({
   getRoleByName,
 });
 
-router.get('/usage', checkFinanceRead, getGovernanceUsage);
+/** Usage group IDs may be LibreChat group `_id`s or external (`idOnTheSource`) IDs */
+const findGroups = (ids) =>
+  Group.find(
+    {
+      $or: [
+        { _id: { $in: ids.filter((id) => Types.ObjectId.isValid(id)) } },
+        { idOnTheSource: { $in: ids } },
+      ],
+    },
+    { name: 1, idOnTheSource: 1 },
+  ).lean();
+
+router.get('/usage', checkFinanceRead, createGetGovernanceUsage({ findUsers, findGroups }));
 
 router.post('/dlp/check', async (req, res) => {
   if (!isGovernanceDlpEnabled()) {
