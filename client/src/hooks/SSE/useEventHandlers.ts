@@ -12,6 +12,7 @@ import {
   tMessageSchema,
   tConvoUpdateSchema,
   isAssistantsEndpoint,
+  dataService,
 } from 'librechat-data-provider';
 import type {
   TMessage,
@@ -68,6 +69,22 @@ type TTitleEvent = {
 
 const hasRealTitle = (title?: string | null): title is string =>
   title != null && title !== '' && title !== 'New Chat';
+
+const MAX_FIRST_QUESTION_TITLE_LENGTH = 60;
+
+export const getFirstQuestionTitle = (text?: string | null): string | undefined => {
+  const question = text?.replace(/\s+/g, ' ').trim();
+  if (!question) {
+    return undefined;
+  }
+
+  const characters = [...question];
+  if (characters.length <= MAX_FIRST_QUESTION_TITLE_LENGTH) {
+    return question;
+  }
+
+  return characters.slice(0, MAX_FIRST_QUESTION_TITLE_LENGTH - 3).join('').trimEnd() + '...';
+};
 
 /** Skill caches refreshed when a chat turn authors a skill via `create_file`/`edit_file`. */
 const SKILL_QUERY_KEYS = [
@@ -240,12 +257,22 @@ export const getConvoTitle = ({
   queryClient,
   currentTitle,
   conversationId,
+  firstQuestion,
 }: {
   parentId?: string | null;
   queryClient: ReturnType<typeof useQueryClient>;
   currentTitle?: string | null;
   conversationId?: string | null;
+  firstQuestion?: string | null;
 }): string | null | undefined => {
+  const firstQuestionTitle =
+    parentId === Constants.NO_PARENT && !hasRealTitle(currentTitle)
+      ? getFirstQuestionTitle(firstQuestion)
+      : undefined;
+  if (firstQuestionTitle) {
+    return firstQuestionTitle;
+  }
+
   if (
     parentId !== Constants.NO_PARENT &&
     (currentTitle?.toLowerCase().includes('new chat') ?? false)
@@ -465,6 +492,7 @@ export default function useEventHandlers({
             queryClient,
             conversationId,
             currentTitle: prevState?.title,
+            firstQuestion: requestMessage.text,
           });
           update = tConvoUpdateSchema.parse({
             ...prevState,
@@ -547,6 +575,7 @@ export default function useEventHandlers({
             queryClient,
             conversationId,
             currentTitle: prevState?.title,
+            firstQuestion: userMessage.text,
           });
           update = tConvoUpdateSchema.parse({
             ...prevState,
@@ -565,6 +594,18 @@ export default function useEventHandlers({
           if (update.chatProjectId) {
             queryClient.invalidateQueries([QueryKeys.projects]);
             queryClient.invalidateQueries([QueryKeys.project, update.chatProjectId]);
+          }
+          if (
+            parentMessageId === Constants.NO_PARENT &&
+            update.conversationId &&
+            hasRealTitle(update.title)
+          ) {
+            void dataService
+              .updateConversation({
+                conversationId: update.conversationId,
+                title: update.title,
+              })
+              .catch((error) => logger.error('Error saving first-question conversation title', error));
           }
         }
       } else if (setConversation) {
