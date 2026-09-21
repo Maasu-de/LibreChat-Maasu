@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ErrorTypes } from 'librechat-data-provider';
+import { ErrorTypes, isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
   TEndpointOption,
@@ -207,7 +207,7 @@ export function hasSelectedTools(ephemeralAgent?: TEphemeralAgent | null): boole
   );
 }
 
-/** True when the submission is a first-turn plain-text message with no tools, files, or edits. */
+/** True for a plain-text message, including follow-ups using an ephemeral agent ID. */
 export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
   return (
     typeof body?.text === 'string' &&
@@ -216,7 +216,8 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
     body.isContinued !== true &&
     body.isRegenerate !== true &&
     body.addedConvo == null &&
-    body.agent_id == null &&
+    (body.agent_id == null ||
+      (typeof body.agent_id === 'string' && isEphemeralAgentId(body.agent_id))) &&
     body.assistant_id == null &&
     (body.files == null || (Array.isArray(body.files) && body.files.length === 0)) &&
     (body.tools == null || (Array.isArray(body.tools) && body.tools.length === 0)) &&
