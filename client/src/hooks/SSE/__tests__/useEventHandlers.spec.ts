@@ -2,10 +2,29 @@ import { Constants } from 'librechat-data-provider';
 import type { EventSubmission, TMessage } from 'librechat-data-provider';
 import {
   buildCreatedInitialResponse,
+  getFirstQuestionTitle,
   getExistingConversationAbortMessages,
   isInitialNewConversationSubmission,
   mergeRegenerateFinalMessages,
 } from '~/hooks/SSE/useEventHandlers';
+
+describe('getFirstQuestionTitle', () => {
+  it('normalizes the first question into a concise title', () => {
+    expect(getFirstQuestionTitle('  How do I prepare\nfor the tax filing?  ')).toBe(
+      'How do I prepare for the tax filing?',
+    );
+  });
+
+  it('truncates long first questions without cutting a Unicode code point', () => {
+    const question = `${'😀'.repeat(59)} a detailed follow-up`;
+
+    expect(getFirstQuestionTitle(question)).toBe(`${'😀'.repeat(57)}...`);
+  });
+
+  it('keeps New Chat when the first question is empty', () => {
+    expect(getFirstQuestionTitle('   ')).toBeUndefined();
+  });
+});
 
 describe('buildCreatedInitialResponse', () => {
   const userMessage = {
