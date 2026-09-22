@@ -1,6 +1,6 @@
 const express = require('express');
 const { logger } = require('@librechat/data-schemas');
-const { isEnabled, getBalanceConfig } = require('@librechat/api');
+const { isEnabled, getBalanceConfig, isGovernancePilotEnabled } = require('@librechat/api');
 const { Constants, CacheKeys, defaultSocialLogins } = require('librechat-data-provider');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getAppConfig } = require('~/server/services/Config/app');
@@ -24,7 +24,10 @@ const openidReuseTokens = isEnabled(process.env.OPENID_REUSE_TOKENS);
 router.get('/', async function (req, res) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
 
-  const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
+  const startupConfigKey = isGovernancePilotEnabled()
+    ? `${CacheKeys.STARTUP_CONFIG}:governed-pilot`
+    : CacheKeys.STARTUP_CONFIG;
+  const cachedStartupConfig = await cache.get(startupConfigKey);
   if (cachedStartupConfig) {
     res.send(cachedStartupConfig);
     return;
@@ -60,6 +63,7 @@ router.get('/', async function (req, res) {
     const payload = {
       appTitle: process.env.APP_TITLE || 'LibreChat',
       governanceDlpEnabled: isEnabled(process.env.GOVERNANCE_DLP_ENABLED),
+      governancePilotEnabled: isGovernancePilotEnabled(),
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
       discordLoginEnabled: !!process.env.DISCORD_CLIENT_ID && !!process.env.DISCORD_CLIENT_SECRET,
       facebookLoginEnabled:
@@ -146,7 +150,7 @@ router.get('/', async function (req, res) {
       payload.customFooter = process.env.CUSTOM_FOOTER;
     }
 
-    await cache.set(CacheKeys.STARTUP_CONFIG, payload);
+    await cache.set(startupConfigKey, payload);
     return res.status(200).send(payload);
   } catch (err) {
     logger.error('Error in startup config', err);

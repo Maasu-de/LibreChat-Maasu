@@ -15,6 +15,7 @@ import {
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
 } from '~/governance/dlp';
+import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from '~/governance/pilot';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
 import { validateEndpointURL } from '~/auth';
@@ -91,6 +92,15 @@ export async function initializeCustom({
 
   if (CUSTOM_BASE_URL.match(envVarRegex)) {
     throw new Error(`Missing Base URL for ${endpoint}.`);
+  }
+
+  if (
+    isGovernancePilotEnabled() &&
+    (endpoint !== GOVERNANCE_ENDPOINT ||
+      !isGovernanceGatewayUrl(CUSTOM_BASE_URL) ||
+      CUSTOM_API_KEY !== process.env.LIBRECHAT_SERVICE_CREDENTIAL)
+  ) {
+    throw new Error('Governed pilot only permits the configured Governance Gateway.');
   }
 
   const userProvidesKey = isUserProvided(CUSTOM_API_KEY);
@@ -176,7 +186,7 @@ export async function initializeCustom({
 
   const options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
   if (
-    req.governanceDlpEligible === true &&
+    (isGovernancePilotEnabled() || req.governanceDlpEligible === true) &&
     baseURL != null &&
     isGovernanceDlpEnabled() &&
     isGovernanceGatewayUrl(baseURL)

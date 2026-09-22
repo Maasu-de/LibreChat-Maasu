@@ -4,6 +4,7 @@ const { logger } = require('@librechat/data-schemas');
 const {
   countTokens,
   getBalanceConfig,
+  assertGovernancePilotHistory,
   buildMessageFiles,
   extractFileContext,
   encodeAndFormatAudios,
@@ -910,6 +911,7 @@ class BaseClient {
     logger.debug('[BaseClient] Loading history:', { conversationId, parentMessageId });
 
     const messages = (await getMessages({ conversationId })) ?? [];
+    assertGovernancePilotHistory(messages);
 
     if (messages.length === 0) {
       return [];

@@ -117,3 +117,64 @@ describe('initializeCustom – SSRF guard wiring', () => {
     expect(mockGetOpenAIConfig).not.toHaveBeenCalled();
   });
 });
+
+describe('initializeCustom – governed pilot destination', () => {
+  const keys = [
+    'GOVERNANCE_PILOT_ENABLED',
+    'GOVERNANCE_DLP_ENABLED',
+    'GOVERNANCE_API_BASE_URL',
+    'LIBRECHAT_SERVICE_CREDENTIAL',
+  ] as const;
+  const previousEnvironment = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_DLP_ENABLED = 'true';
+    process.env.GOVERNANCE_API_BASE_URL = 'https://gateway.example/v1';
+    process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'pilot-service-key';
+  });
+
+  afterAll(() => {
+    for (const key of keys) {
+      const value = previousEnvironment[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it('installs final-message DLP even without the preflight eligibility flag', async () => {
+    const params = createParams({
+      apiKey: 'pilot-service-key',
+      baseURL: 'https://gateway.example/v1',
+    });
+    params.endpoint = 'AI Governance Gateway';
+    const result = await initializeCustom(params);
+    expect(result.configOptions?.fetch).toEqual(expect.any(Function));
+    expect(params.db.getUserKeyValues).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { apiKey: 'pilot-service-key', baseURL: 'https://provider.example/v1' },
+    { apiKey: 'user_provided', baseURL: 'https://gateway.example/v1' },
+    { apiKey: 'pilot-service-key', baseURL: 'user_provided' },
+  ])('rejects stale or administratively changed credentials/URLs: %j', async (override) => {
+    const params = createParams(override);
+    params.endpoint = 'AI Governance Gateway';
+    await expect(initializeCustom(params)).rejects.toThrow('only permits');
+    expect(mockGetOpenAIConfig).not.toHaveBeenCalled();
+    expect(params.db.getUserKeyValues).not.toHaveBeenCalled();
+  });
+
+  it('rejects another named endpoint even if it points at the gateway', async () => {
+    const params = createParams({
+      apiKey: 'pilot-service-key',
+      baseURL: 'https://gateway.example/v1',
+    });
+    await expect(initializeCustom(params)).rejects.toThrow('only permits');
+    expect(mockGetOpenAIConfig).not.toHaveBeenCalled();
+  });
+});

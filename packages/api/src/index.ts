@@ -37,6 +37,7 @@ export * from './prompts';
 export * from './endpoints';
 /* Governance */
 export * from './governance/dlp';
+export * from './governance/pilot';
 /* Files */
 export * from './files';
 /* Tools */

@@ -14,6 +14,7 @@ import type {
 } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
 import DlpInterventionDialog from '~/components/Chat/Input/DlpInterventionDialog';
+import { ephemeralAgentByConvoId } from '~/store/agents';
 import useChatFunctions from '../useChatFunctions';
 
 jest.mock('~/hooks', () => ({
@@ -92,15 +93,31 @@ function Chat({
   );
 }
 
-function renderChat(conversation: TConversation) {
+function renderChat(conversation: TConversation, governedPilot = false) {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  queryClient.setQueryData([QueryKeys.startupConfig], { governanceDlpEnabled: true });
+  queryClient.setQueryData([QueryKeys.startupConfig], {
+    governanceDlpEnabled: true,
+    governancePilotEnabled: governedPilot,
+  });
   queryClient.setQueryData([QueryKeys.endpoints], { [endpoint]: { type: EModelEndpoint.custom } });
   const view = render(<Chat conversation={conversation} />, {
     wrapper: ({ children }) => (
       <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <QueryClientProvider client={queryClient}>
-          <RecoilRoot>{children}</RecoilRoot>
+          <RecoilRoot
+            initializeState={({ set }) => {
+              if (governedPilot) {
+                set(ephemeralAgentByConvoId(conversation.conversationId ?? 'new'), {
+                  web_search: true,
+                  execute_code: true,
+                  artifacts: 'default',
+                  mcp: ['saved-server'],
+                });
+              }
+            }}
+          >
+            {children}
+          </RecoilRoot>
         </QueryClientProvider>
       </MemoryRouter>
     ),
@@ -201,4 +218,17 @@ it('keeps checking after hi, permits repeated clean follow-ups and blocks a late
   expect(setSubmission).toHaveBeenCalledTimes(3);
   expect(setMessages).toHaveBeenCalledTimes(3);
   queryClient.clear();
+});
+
+describe('governed pilot submissions', () => {
+  it('omits persisted tool selections and preserves plain-text DLP', async () => {
+    renderChat(savedConversation, true);
+    send('Hello');
+    await waitFor(() => expect(setSubmission).toHaveBeenCalledTimes(1));
+    expect(axios.post).toHaveBeenCalled();
+    expect(setSubmission.mock.calls[0][0]).toMatchObject({
+      ephemeralAgent: undefined,
+      userMessage: { text: 'Hello' },
+    });
+  });
 });

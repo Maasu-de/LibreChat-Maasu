@@ -1,4 +1,4 @@
-const { loadCustomEndpointsConfig } = require('@librechat/api');
+const { loadCustomEndpointsConfig, filterGovernanceEndpoints } = require('@librechat/api');
 const {
   CacheKeys,
   EModelEndpoint,
@@ -22,7 +22,7 @@ async function getEndpointsConfig(req) {
     if (cachedEndpointsConfig.gptPlugins) {
       await cache.delete(CacheKeys.ENDPOINT_CONFIG);
     } else {
-      return cachedEndpointsConfig;
+      return filterGovernanceEndpoints(cachedEndpointsConfig);
     }
   }
 
@@ -109,7 +109,7 @@ async function getEndpointsConfig(req) {
     };
   }
 
-  const endpointsConfig = orderEndpointsConfig(mergedConfig);
+  const endpointsConfig = filterGovernanceEndpoints(orderEndpointsConfig(mergedConfig));
 
   await cache.set(CacheKeys.ENDPOINT_CONFIG, endpointsConfig);
   return endpointsConfig;

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRecoilState } from 'recoil';
 import { useToastContext } from '@librechat/client';
-import { useSpeechToTextMutation } from '~/data-provider';
+import { useGetStartupConfig, useSpeechToTextMutation } from '~/data-provider';
 import useGetAudioSettings from './useGetAudioSettings';
 import store from '~/store';
 
@@ -11,7 +11,9 @@ const useSpeechToTextExternal = (
 ) => {
   const { showToast } = useToastContext();
   const { speechToTextEndpoint } = useGetAudioSettings();
-  const isExternalSTTEnabled = speechToTextEndpoint === 'external';
+  const { data: startupConfig } = useGetStartupConfig();
+  const isExternalSTTEnabled =
+    startupConfig?.governancePilotEnabled !== true && speechToTextEndpoint === 'external';
   const audioStream = useRef<MediaStream | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -163,6 +165,9 @@ const useSpeechToTextExternal = (
   };
 
   const startRecording = async () => {
+    if (!isExternalSTTEnabled) {
+      return;
+    }
     if (isRequestBeingMade) {
       showToast({ message: 'A request is already being made. Please wait.', status: 'warning' });
       return;
@@ -269,7 +274,7 @@ const useSpeechToTextExternal = (
       window.removeEventListener('keydown', handleKeyDown);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isListening]);
+  }, [isListening, isExternalSTTEnabled]);
 
   return {
     isListening,

@@ -1,3 +1,4 @@
+const { applyGovernancePilotConfig, isGovernancePilotEnabled } = require('@librechat/api');
 const { CacheKeys } = require('librechat-data-provider');
 const { logger, AppService } = require('@librechat/data-schemas');
 const { loadAndFormatTools } = require('~/server/services/start/tools');
@@ -6,11 +7,11 @@ const { setCachedTools } = require('./getCachedTools');
 const getLogStores = require('~/cache/getLogStores');
 const paths = require('~/config/paths');
 
-const BASE_CONFIG_KEY = '_BASE_';
+const BASE_CONFIG_KEY = isGovernancePilotEnabled() ? '_GOVERNED_PILOT_' : '_BASE_';
 
 const loadBaseConfig = async () => {
   /** @type {TCustomConfig} */
-  const config = (await loadCustomConfig()) ?? {};
+  const config = applyGovernancePilotConfig((await loadCustomConfig()) ?? {});
   /** @type {Record<string, FunctionTool>} */
   const systemTools = loadAndFormatTools({
     adminFilter: config.filteredTools,

@@ -8,8 +8,11 @@ import { RevokeKeys } from './RevokeKeys';
 import { ClearChats } from './ClearChats';
 import SharedLinks from './SharedLinks';
 import { useHasAccess } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 
 function Data() {
+  const { data: startupConfig } = useGetStartupConfig();
+  const governed = startupConfig?.governancePilotEnabled === true;
   const dataTabRef = useRef(null);
   const [confirmClearConvos, setConfirmClearConvos] = useState(false);
   useOnClickOutside(dataTabRef, () => confirmClearConvos && setConfirmClearConvos(false), []);
@@ -20,20 +23,24 @@ function Data() {
 
   return (
     <div className="flex flex-col gap-3 p-1 text-sm text-text-primary">
-      <div className="pb-3">
-        <ImportConversations />
-      </div>
+      {!governed && (
+        <div className="pb-3">
+          <ImportConversations />
+        </div>
+      )}
       <div className="pb-3">
         <SharedLinks />
       </div>
-      {hasAccessToApiKeys && (
+      {!governed && hasAccessToApiKeys && (
         <div className="pb-3">
           <AgentApiKeys />
         </div>
       )}
-      <div className="pb-3">
-        <RevokeKeys />
-      </div>
+      {!governed && (
+        <div className="pb-3">
+          <RevokeKeys />
+        </div>
+      )}
       <div className="pb-3">
         <DeleteCache />
       </div>

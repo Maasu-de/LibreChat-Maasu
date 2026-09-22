@@ -1,10 +1,11 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRecoilState } from 'recoil';
 import { useToastContext } from '@librechat/client';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { useGetCustomConfigSpeechQuery } from 'librechat-data-provider/react-query';
 import useGetAudioSettings from './useGetAudioSettings';
 import { useLocalize } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import store from '~/store';
 
 const useSpeechToTextBrowser = (
@@ -14,7 +15,9 @@ const useSpeechToTextBrowser = (
   const localize = useLocalize();
   const { showToast } = useToastContext();
   const { speechToTextEndpoint } = useGetAudioSettings();
-  const isBrowserSTTEnabled = speechToTextEndpoint === 'browser';
+  const { data: startupConfig } = useGetStartupConfig();
+  const isBrowserSTTEnabled =
+    startupConfig?.governancePilotEnabled !== true && speechToTextEndpoint === 'browser';
   const { data: speechConfig } = useGetCustomConfigSpeechQuery({ enabled: true });
   const sttExternal = Boolean(speechConfig?.sttExternal);
 
@@ -73,7 +76,10 @@ const useSpeechToTextBrowser = (
     };
   }, [setText, onTranscriptionComplete, resetTranscript, finalTranscript, autoSendText]);
 
-  const toggleListening = () => {
+  const toggleListening = useCallback(() => {
+    if (!isBrowserSTTEnabled) {
+      return;
+    }
     if (!browserSupportsSpeechRecognition) {
       showToast({
         message: sttExternal
@@ -100,18 +106,28 @@ const useSpeechToTextBrowser = (
         continuous: autoTranscribeAudio,
       });
     }
-  };
+  }, [
+    isBrowserSTTEnabled,
+    browserSupportsSpeechRecognition,
+    showToast,
+    sttExternal,
+    localize,
+    isMicrophoneAvailable,
+    isListening,
+    languageSTT,
+    autoTranscribeAudio,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.shiftKey && e.altKey && e.code === 'KeyL' && !isBrowserSTTEnabled) {
+      if (e.shiftKey && e.altKey && e.code === 'KeyL' && isBrowserSTTEnabled) {
         toggleListening();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isBrowserSTTEnabled, toggleListening]);
 
   return {
     isListening,

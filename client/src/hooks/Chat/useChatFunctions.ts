@@ -350,7 +350,7 @@ export default function useChatFunctions({
       isRegenerate,
       initialResponse,
       isTemporary,
-      ephemeralAgent,
+      ephemeralAgent: startupConfig?.governancePilotEnabled ? undefined : ephemeralAgent,
       editedContent,
       addedConvo,
     };
@@ -381,7 +381,9 @@ export default function useChatFunctions({
     const targetConversationId =
       props.conversationId ?? immutableConversation?.conversationId ?? null;
     const startupConfig = queryClient.getQueryData<TStartupConfig>([QueryKeys.startupConfig]);
-    const ephemeralAgent = getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
+    const ephemeralAgent = startupConfig?.governancePilotEnabled
+      ? undefined
+      : getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
     const isPlainTextSubmission =
       options?.editedContent == null &&
       options?.isContinued !== true &&

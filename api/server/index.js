@@ -12,6 +12,8 @@ const { logger } = require('@librechat/data-schemas');
 const mongoSanitize = require('express-mongo-sanitize');
 const {
   isEnabled,
+  enforceGovernancePilot,
+  assertGovernancePilotEnvironment,
   apiNotFound,
   ErrorController,
   memoryDiagnostics,
@@ -45,6 +47,7 @@ const trusted_proxy = Number(TRUST_PROXY) || 1; /* trust first proxy by default 
 const app = express();
 
 const startServer = async () => {
+  assertGovernancePilotEnvironment();
   if (typeof Bun !== 'undefined') {
     axios.defaults.headers.common['Accept-Encoding'] = 'gzip';
   }
@@ -135,6 +138,7 @@ const startServer = async () => {
 
   app.use('/oauth', routes.oauth);
   /* API Endpoints */
+  app.use('/api', enforceGovernancePilot);
   app.use('/api/auth', routes.auth);
   app.use('/api/admin', routes.adminAuth);
   app.use('/api/actions', routes.actions);
