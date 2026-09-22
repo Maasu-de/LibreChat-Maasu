@@ -11,6 +11,7 @@ const adminUsers = require('./admin/users');
 const adminAuditLog = require('./admin/audit');
 const endpoints = require('./endpoints');
 const governance = require('./governance');
+const governanceGroups = require('./governanceGroups');
 const staticRoute = require('./static');
 const messages = require('./messages');
 const memories = require('./memories');
@@ -73,6 +74,7 @@ module.exports = {
   messages,
   memories,
   governance,
+  governanceGroups,
   endpoints,
   assistants,
   categories,
