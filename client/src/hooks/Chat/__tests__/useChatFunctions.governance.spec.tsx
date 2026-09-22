@@ -2,9 +2,14 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { RecoilRoot } from 'recoil';
 import { MemoryRouter } from 'react-router-dom';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EModelEndpoint, QueryKeys, encodeEphemeralAgentId } from 'librechat-data-provider';
+import {
+  ContentTypes,
+  EModelEndpoint,
+  QueryKeys,
+  encodeEphemeralAgentId,
+} from 'librechat-data-provider';
 import type {
   TMessage,
   TSubmission,
@@ -14,6 +19,7 @@ import type {
 } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
 import DlpInterventionDialog from '~/components/Chat/Input/DlpInterventionDialog';
+import useEventHandlers from '~/hooks/SSE/useEventHandlers';
 import useChatFunctions from '../useChatFunctions';
 
 jest.mock('~/hooks', () => ({
@@ -30,9 +36,16 @@ jest.mock('~/hooks/Files/useSetFilesToDelete', () => () => jest.fn());
 jest.mock('~/hooks/Conversations/useGetSender', () => () => () => 'AI');
 jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: () => undefined }));
 jest.mock('~/utils', () => ({
+  ...jest.requireActual('~/utils'),
   logger: { log: jest.fn(), dir: jest.fn() },
   cn: jest.requireActual('~/utils/cn').default,
 }));
+
+jest.mock('~/hooks/AuthContext', () => ({
+  useAuthContext: () => ({ user: { id: 'user-1' }, token: 'test-token' }),
+}));
+jest.mock('~/hooks/Agents', () => ({ useApplyAgentTemplate: () => jest.fn() }));
+jest.mock('~/Providers', () => ({ useLiveAnnouncer: () => ({ announcePolite: jest.fn() }) }));
 jest.mock('@librechat/client', () => ({
   ...jest.requireActual('@librechat/client'),
   useToastContext: () => ({ showToast: jest.fn() }),
@@ -201,4 +214,98 @@ it('keeps checking after hi, permits repeated clean follow-ups and blocks a late
   expect(setSubmission).toHaveBeenCalledTimes(3);
   expect(setMessages).toHaveBeenCalledTimes(3);
   queryClient.clear();
+});
+
+it('characterization: completion error retains the user message and the follow-up parent chain', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  queryClient.setQueryData([QueryKeys.startupConfig], { governanceDlpEnabled: true });
+  queryClient.setQueryData([QueryKeys.endpoints], { [endpoint]: { type: EModelEndpoint.custom } });
+  jest.spyOn(axios, 'post').mockResolvedValue({
+    data: { enabled: true, decision: 'ALLOW', findings: [] },
+  });
+
+  const { result, unmount } = renderHook(
+    () => {
+      const [messages, updateMessages] = useState<TMessage[]>([]);
+      const [submission, updateSubmission] = useState<TSubmission | null>(null);
+      const [conversation, updateConversation] = useState<TConversation | null>(savedConversation);
+      const [isSubmitting, updateIsSubmitting] = useState(false);
+      const [, updateShowStopButton] = useState(false);
+      const { ask } = useChatFunctions({
+        conversation,
+        getMessages: () => messages,
+        setMessages: updateMessages,
+        setSubmission: updateSubmission,
+        isSubmitting,
+        latestMessage: messages.at(-1) ?? null,
+      });
+      const { finalHandler } = useEventHandlers({
+        getMessages: () => messages,
+        setMessages: updateMessages,
+        setConversation: updateConversation,
+        setIsSubmitting: updateIsSubmitting,
+        setShowStopButton: updateShowStopButton,
+        setCompleted: jest.fn(),
+      });
+      return { ask, messages, submission, finalHandler };
+    },
+    {
+      wrapper: ({ children }) => (
+        <MemoryRouter
+          initialEntries={['/c/conversation-1']}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <QueryClientProvider client={queryClient}>
+            <RecoilRoot>{children}</RecoilRoot>
+          </QueryClientProvider>
+        </MemoryRouter>
+      ),
+    },
+  );
+
+  try {
+    act(() => result.current.ask({ text: iban }));
+    await waitFor(() => expect(result.current.submission?.userMessage.text).toBe(iban));
+    const first = result.current.submission;
+    if (!first?.initialResponse) {
+      throw new Error('Expected the first submitted message and response placeholder');
+    }
+    const responseMessage: TMessage = {
+      ...first.initialResponse,
+      messageId: 'completion-rejected-response',
+      conversationId: savedConversation.conversationId,
+      parentMessageId: first.userMessage.messageId,
+      text: '',
+      content: [{ type: ContentTypes.ERROR, error: '403 governance_blocked' }],
+    };
+    act(() => {
+      result.current.finalHandler(
+        {
+          final: true,
+          conversation: savedConversation,
+          requestMessage: first.userMessage,
+          responseMessage,
+        },
+        { ...first, initialResponse: first.initialResponse },
+      );
+    });
+    expect(result.current.messages).toEqual([first.userMessage, responseMessage]);
+    expect(
+      queryClient.getQueryData([QueryKeys.messages, savedConversation.conversationId]),
+    ).toEqual(result.current.messages);
+
+    act(() => result.current.ask({ text: 'Tell me a short story.' }));
+    await waitFor(() =>
+      expect(result.current.submission?.userMessage.text).toBe('Tell me a short story.'),
+    );
+    expect(result.current.submission?.conversation.conversationId).toBe(
+      savedConversation.conversationId,
+    );
+    expect(result.current.submission?.userMessage.parentMessageId).toBe(responseMessage.messageId);
+    expect(result.current.submission?.messages).toEqual([first.userMessage, responseMessage]);
+    expect(axios.post).toHaveBeenCalledTimes(2);
+  } finally {
+    unmount();
+    queryClient.clear();
+  }
 });
