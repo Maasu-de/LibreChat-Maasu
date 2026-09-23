@@ -490,6 +490,7 @@
   "com_finance_table_output": "Output",
   "com_finance_table_requests": "Requests",
   "com_finance_table_total": "Total",
+  "com_finance_team_overlap_description": "Each request is fully attributed to every team the user belonged to at request time. Team rows overlap and must not be summed for tenant totals.",
   "com_finance_title": "Cost and usage",
   "com_finance_unauthorized": "You do not have permission to view financial usage information.",
   "com_finance_usage_by_model": "Usage by model",

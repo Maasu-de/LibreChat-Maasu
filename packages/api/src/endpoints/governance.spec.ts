@@ -33,6 +33,7 @@ const dashboard = (overrides: Partial<FinanceUsageDashboard> = {}): FinanceUsage
   },
   by_user: [row(USER_PSEUDONYM), row(UNKNOWN_PSEUDONYM)],
   by_team: [row('665f1c2e9b1e8a0087654321'), row('entra-group-1'), row('missing-group')],
+  by_team_aggregation: 'overlapping_full_attribution',
   by_model: [row('gemini-3.6-flash')],
   ...overrides,
 });

@@ -31,4 +31,6 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   authStrategy?: string;
   /** Set only after the server-side plain-text DLP preflight allows this request. */
   governanceDlpEligible?: boolean;
+  /** Request-time LibreChat group membership resolved by the DLP preflight. */
+  governanceGroupIds?: string[];
 };

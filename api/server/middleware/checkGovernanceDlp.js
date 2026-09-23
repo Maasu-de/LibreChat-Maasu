@@ -8,6 +8,7 @@ const {
   isGovernanceDlpEnabled,
 } = require('@librechat/api');
 const denyRequest = require('./denyRequest');
+const { getUserGroups } = require('~/models');
 
 /** Thin Express adapter for the server-side Governance DLP preflight. */
 async function checkGovernanceDlp(req, res, next) {
@@ -16,10 +17,13 @@ async function checkGovernanceDlp(req, res, next) {
   }
 
   try {
+    const groups = await getUserGroups(req.user.id);
+    const groupIds = [...new Set(groups.map((group) => String(group._id)))];
     const result = await checkTextSubmission({
       text: req.body.text,
       model: getModel(req.body),
       userId: req.user.id,
+      groupIds,
     });
 
     if (result.decision === 'BLOCK') {
@@ -27,6 +31,7 @@ async function checkGovernanceDlp(req, res, next) {
     }
 
     req.governanceDlpEligible = true;
+    req.governanceGroupIds = groupIds;
     return next();
   } catch (error) {
     logger.error('[GovernanceDlp] preflight failed', {
