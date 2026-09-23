@@ -45,6 +45,8 @@ describe('pilot HTTP boundary', () => {
   it.each([
     {},
     { agent_id: Constants.EPHEMERAL_AGENT_ID },
+    { disableStreaming: false },
+    { endpointOption: { modelOptions: { disableStreaming: false } } },
     { files: [], tools: [], ephemeralAgent: { web_search: false, mcp: [] } },
     { conversationId: 'existing', parentMessageId: 'reply', isRegenerate: false },
   ])('allows ordinary text chat and follow-ups: %j', async (extra) => {
@@ -104,6 +106,9 @@ describe('pilot HTTP boundary', () => {
     { addedConvo: { model: 'other' } },
     { editedContent: { text: 'edited' } },
     { useResponsesApi: true },
+    { disableStreaming: true },
+    { model_parameters: { disableStreaming: true } },
+    { endpointOption: { modelOptions: { disableStreaming: true } } },
     { model_parameters: { useResponsesApi: true } },
     { endpointOption: { modelOptions: { useResponsesApi: true } } },
     { endpointOption: { endpoint: 'external' } },
@@ -314,6 +319,9 @@ describe('pilot outbound boundary', () => {
   it.each([
     ['https://external.test/v1/chat/completions', valid],
     ['http://gateway.test/v1/responses', valid],
+    ['http://gateway.test:8080/v1/chat/completions', valid],
+    ['http://gateway.test/v2/chat/completions', valid],
+    ['http://gateway.test/v1/chat/completions?extra=true', valid],
     ['http://gateway.test/v1/models', valid],
     ['http://gateway.test/v1/chat/completions', { ...valid, stream: false }],
     ['http://gateway.test/v1/chat/completions', { ...valid, tools: [{ type: 'function' }] }],
@@ -329,7 +337,13 @@ describe('pilot outbound boundary', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
   });
-  it('preserves the streaming response and forwards a signed token for the exact text body', async () => {
+  it.each([
+    ['http://gateway.test/v1', 'http://gateway.test/v1/chat/completions'],
+    ['HTTP://GATEWAY.TEST/v1/', 'http://gateway.test/v1/chat/completions'],
+    ['http://gateway.test:80/v1', 'http://gateway.test/v1/chat/completions'],
+    ['HTTPS://GATEWAY.TEST:443/v1///', 'https://gateway.test/v1/chat/completions'],
+  ])('preserves streaming and the signed body with gateway URL %s', async (base, destination) => {
+    process.env.GOVERNANCE_API_BASE_URL = base;
     const upstream = new Response('data: [DONE]\n\n', {
       headers: { 'Content-Type': 'text/event-stream' },
     });
@@ -348,7 +362,7 @@ describe('pilot outbound boundary', () => {
       },
     });
     expect(
-      await governed('http://gateway.test/v1/chat/completions', {
+      await governed(destination, {
         method: 'POST',
         body: JSON.stringify(valid),
       }),

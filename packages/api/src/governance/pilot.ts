@@ -22,6 +22,7 @@ const restrictedFields = new Set([
   'editedMessageId',
   'overrideParentMessageId',
   'useResponsesApi',
+  'disableStreaming',
   'web_search',
   'file_search',
   'execute_code',

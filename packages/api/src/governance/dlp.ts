@@ -424,7 +424,7 @@ export function createGovernanceDlpFetch({
     if (isGovernancePilotEnabled()) {
       const base = process.env.GOVERNANCE_API_BASE_URL?.replace(/\/+$/, '');
       const destination = new URL(getRequestUrl(input));
-      if (!base || destination.href !== `${base}/chat/completions`) {
+      if (!base || destination.href !== new URL(`${base}/chat/completions`).href) {
         throw new GovernanceDlpError('dlp_check_unsupported_request');
       }
     }
