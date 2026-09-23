@@ -1,10 +1,11 @@
+const { isGovernancePilotEnabled } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { loadDefaultModels, loadConfigModels } = require('~/server/services/Config');
 
 const getModelsConfig = (req) => loadModels(req);
 
 async function loadModels(req) {
-  const defaultModelsConfig = await loadDefaultModels(req);
+  const defaultModelsConfig = isGovernancePilotEnabled() ? {} : await loadDefaultModels(req);
   const customModelsConfig = await loadConfigModels(req);
   return { ...defaultModelsConfig, ...customModelsConfig };
 }

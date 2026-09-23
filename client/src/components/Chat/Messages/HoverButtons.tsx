@@ -3,6 +3,7 @@ import { useRecoilState } from 'recoil';
 import { EditIcon, Clipboard, CheckMark, ContinueIcon, RegenerateIcon } from '@librechat/client';
 import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider';
 import { useGenerationsByLatest, useLocalize } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { Fork } from '~/components/Conversations';
 import MessageAudio from './MessageAudio';
 import Feedback from './Feedback';
@@ -130,6 +131,8 @@ const HoverButtons = ({
   const localize = useLocalize();
   const [isCopied, setIsCopied] = useState(false);
   const [TextToSpeech] = useRecoilState<boolean>(store.textToSpeech);
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
 
   const endpoint = useMemo(() => {
     if (!conversation) {
@@ -139,6 +142,7 @@ const HoverButtons = ({
   }, [conversation]);
 
   const generationCapabilities = useGenerationsByLatest({
+    governancePilot,
     isEditing,
     isSubmitting,
     error: message.error,
@@ -192,7 +196,7 @@ const HoverButtons = ({
   return (
     <div className="group visible flex justify-center gap-0.5 self-end focus-within:outline-none lg:justify-start">
       {/* Text to Speech */}
-      {TextToSpeech && (
+      {!governancePilot && TextToSpeech && (
         <MessageAudio
           index={index}
           isLast={isLast}

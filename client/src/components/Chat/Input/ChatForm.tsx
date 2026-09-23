@@ -23,6 +23,7 @@ import {
 } from '~/Providers';
 import PendingManualSkillsChips from './PendingManualSkillsChips';
 import { cn, getModelSpec, removeFocusRings } from '~/utils';
+import DlpInterventionDialog from './DlpInterventionDialog';
 import { useGetStartupConfig } from '~/data-provider';
 import { mainTextareaId, BadgeItem } from '~/common';
 import PendingQuoteChips from './PendingQuoteChips';
@@ -41,7 +42,6 @@ import SendButton from './SendButton';
 import EditBadges from './EditBadges';
 import BadgeRow from './BadgeRow';
 import Mention from './Mention';
-import DlpInterventionDialog from './DlpInterventionDialog';
 import store from '~/store';
 
 interface ChatFormProps {
@@ -112,6 +112,7 @@ const ChatForm = memo(function ChatForm({
   } = useAddedChatContext();
   const assistantMap = useAssistantsMapContext();
   const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
 
   const endpoint = useMemo(
     () => conversation?.endpointType ?? conversation?.endpoint,
@@ -301,12 +302,14 @@ const ChatForm = memo(function ChatForm({
             textAreaRef={textAreaRef}
           />
           <PromptsCommand index={index} textAreaRef={textAreaRef} submitPrompt={submitPrompt} />
-          <SkillsCommand
-            index={index}
-            textAreaRef={textAreaRef}
-            conversationId={conversationId}
-            agentId={conversation?.agent_id}
-          />
+          {!governancePilot && (
+            <SkillsCommand
+              index={index}
+              textAreaRef={textAreaRef}
+              conversationId={conversationId}
+              agentId={conversation?.agent_id}
+            />
+          )}
           <div
             onClick={handleContainerClick}
             className={cn(
@@ -318,15 +321,17 @@ const ChatForm = memo(function ChatForm({
             )}
           >
             <TextareaHeader addedConvo={addedConvo} setAddedConvo={setAddedConvo} />
-            <PendingManualSkillsChips conversationId={conversationId} />
+            {!governancePilot && <PendingManualSkillsChips conversationId={conversationId} />}
             {quotesEnabled && <PendingQuoteChips conversationId={conversationId} />}
             {/* WIP */}
-            <EditBadges
-              isEditingChatBadges={isEditingBadges}
-              handleCancelBadges={handleCancelBadges}
-              handleSaveBadges={handleSaveBadges}
-              setBadges={setBadges}
-            />
+            {!governancePilot && (
+              <EditBadges
+                isEditingChatBadges={isEditingBadges}
+                handleCancelBadges={handleCancelBadges}
+                handleSaveBadges={handleSaveBadges}
+                setBadges={setBadges}
+              />
+            )}
             <FileFormChat
               conversation={conversation}
               files={files}
@@ -399,24 +404,26 @@ const ChatForm = memo(function ChatForm({
                   setFilesLoading={setFilesLoading}
                 />
               </div>
-              <BadgeRow
-                showEphemeralBadges={
-                  !!endpoint &&
-                  !hideBadgeRow &&
-                  !isAgentsEndpoint(endpoint) &&
-                  !isAssistantsEndpoint(endpoint)
-                }
-                isSubmitting={isSubmitting}
-                conversationId={conversationId}
-                specName={conversation?.spec}
-                onChange={setBadges}
-                isInChat={
-                  Array.isArray(conversation?.messages) && conversation.messages.length >= 1
-                }
-              />
+              {!governancePilot && (
+                <BadgeRow
+                  showEphemeralBadges={
+                    !!endpoint &&
+                    !hideBadgeRow &&
+                    !isAgentsEndpoint(endpoint) &&
+                    !isAssistantsEndpoint(endpoint)
+                  }
+                  isSubmitting={isSubmitting}
+                  conversationId={conversationId}
+                  specName={conversation?.spec}
+                  onChange={setBadges}
+                  isInChat={
+                    Array.isArray(conversation?.messages) && conversation.messages.length >= 1
+                  }
+                />
+              )}
               <div className="mx-auto flex" />
               <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
-              {SpeechToText && (
+              {!governancePilot && SpeechToText && (
                 <AudioRecorder
                   methods={methods}
                   ask={submitMessage}
@@ -438,7 +445,7 @@ const ChatForm = memo(function ChatForm({
                 )}
               </div>
             </div>
-            {TextToSpeech && automaticPlayback && <StreamAudio index={index} />}
+            {!governancePilot && TextToSpeech && automaticPlayback && <StreamAudio index={index} />}
           </div>
         </div>
       </div>

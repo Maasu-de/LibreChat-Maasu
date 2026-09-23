@@ -1,3 +1,4 @@
+import { SettingsTabValues } from 'librechat-data-provider';
 import type { SettingEntry, SettingsContextValue } from './types';
 
 export function normalize(value: string): string {
@@ -31,7 +32,10 @@ export function filterSettings(
 ): SearchResult[] {
   const results: SearchResult[] = [];
   for (const entry of entries) {
-    if (entry.show && !entry.show(ctx)) {
+    if (
+      (ctx.governancePilot && entry.tab === SettingsTabValues.SPEECH) ||
+      (entry.show && !entry.show(ctx))
+    ) {
       continue;
     }
     const label = localize(entry.labelKey);

@@ -15,6 +15,7 @@ import {
   AutoSendTextSelector,
   DecibelSelector,
 } from '../SettingsTabs/Speech/STT';
+import GovernanceConnectionTest from '../SettingsTabs/General/GovernanceConnectionTest';
 import DisplayUsernameMessages from '../SettingsTabs/Account/DisplayUsernameMessages';
 import ConversationModeSwitch from '../SettingsTabs/Speech/ConversationModeSwitch';
 import EnableTwoFactorItem from '../SettingsTabs/Account/TwoFactorAuthentication';
@@ -38,7 +39,6 @@ import Avatar from '../SettingsTabs/Account/Avatar';
 import About from '../SettingsTabs/About/About';
 import ApiKeys from '../SettingsTabs/ApiKeys';
 import MemoryToggle from './MemoryToggle';
-import GovernanceConnectionTest from '../SettingsTabs/General/GovernanceConnectionTest';
 import { TTSEndpoints } from '~/common';
 import store from '~/store';
 
@@ -464,6 +464,7 @@ export const registry: SettingEntry[] = [
   // Data controls · Your data
   {
     id: 'importConversations',
+    show: (ctx) => !ctx.governancePilot,
     tab: DATA,
     section: 'data',
     labelKey: 'com_ui_settings_label_import',

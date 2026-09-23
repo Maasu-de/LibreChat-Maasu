@@ -7,6 +7,7 @@ import {
 } from '@librechat/data-schemas';
 import type { AppConfig, IConfig } from '@librechat/data-schemas';
 import type { Types } from 'mongoose';
+import { restrictGovernanceAppConfig } from '~/governance/config';
 
 const BASE_CONFIG_KEY = '_BASE_';
 
@@ -206,7 +207,7 @@ export function createAppConfigService(deps: AppConfigServiceDeps): {
         return baseConfig;
       }
 
-      const merged = mergeConfigOverrides(baseConfig, configs);
+      const merged = restrictGovernanceAppConfig(mergeConfigOverrides(baseConfig, configs));
       await cache.set(cacheKey, merged, overrideCacheTtl);
       return merged;
     } catch (error) {

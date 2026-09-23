@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { SettingsTabValues } from 'librechat-data-provider';
 import type { SettingsContextValue, SettingsTab, SettingEntry } from './types';
 import { filterSettings } from './search';
 import { useLocalize } from '~/hooks';
@@ -13,7 +14,10 @@ interface ContentProps {
 }
 
 function visible(entry: SettingEntry, ctx: SettingsContextValue): boolean {
-  return !entry.show || entry.show(ctx);
+  return (
+    !(ctx.governancePilot && entry.tab === SettingsTabValues.SPEECH) &&
+    (!entry.show || entry.show(ctx))
+  );
 }
 
 export default function Content({ activeTab, query, ctx }: ContentProps) {

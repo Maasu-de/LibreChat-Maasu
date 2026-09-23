@@ -1,5 +1,8 @@
 import { isValidElementType } from 'react-is';
+import { SettingsTabValues } from 'librechat-data-provider';
+import type { SettingsContextValue } from '../types';
 import en from '~/locales/en/translation.json';
+import { filterSettings } from '../search';
 import { registry } from '../registry';
 import { TABS } from '../types';
 
@@ -30,4 +33,26 @@ describe('settings registry', () => {
       expect(isValidElementType(entry.Component)).toBe(true);
     }
   });
+});
+
+it('omits speech and conversation import from pilot settings, including search results', () => {
+  const ctx: SettingsContextValue = {
+    governancePilot: true,
+    balanceEnabled: false,
+    hasAnyPersonalizationFeature: false,
+    hasMemoryOptOut: false,
+    hasRemoteAgents: false,
+    hasUserProvidedEndpoints: false,
+    hasMultiConvo: false,
+    hasPrompts: true,
+    isLocalProvider: false,
+    twoFactorEnabled: false,
+    allowAccountDeletion: false,
+    aboutEnabled: true,
+    engineTTS: 'browser',
+  };
+  expect(TABS.find((tab) => tab.id === SettingsTabValues.SPEECH)?.show?.(ctx)).toBe(false);
+  const entries = filterSettings(registry, '', ctx, (key) => key).map((result) => result.entry);
+  expect(entries.some((entry) => entry.tab === SettingsTabValues.SPEECH)).toBe(false);
+  expect(entries.some((entry) => entry.id === 'importConversations')).toBe(false);
 });

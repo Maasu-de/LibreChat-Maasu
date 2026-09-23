@@ -5,14 +5,15 @@ import { Code, Play, RefreshCw, X } from 'lucide-react';
 import { useSetRecoilState, useResetRecoilState } from 'recoil';
 import { Button, Spinner, useMediaQuery, Radio } from '@librechat/client';
 import type { SandpackPreviewRef } from '@codesandbox/sandpack-react';
+import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
+import { isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
+import { useGetStartupConfig } from '~/data-provider';
 import DownloadArtifact from './DownloadArtifact';
 import ArtifactVersion from './ArtifactVersion';
 import ArtifactTabs from './ArtifactTabs';
-import { isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
-import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
@@ -21,6 +22,7 @@ const MAX_BLUR_AMOUNT = 32;
 const MAX_BACKDROP_OPACITY = 0.3;
 
 export default function Artifacts() {
+  const { data: startupConfig } = useGetStartupConfig();
   const localize = useLocalize();
   const { isMutating } = useMutationState();
   const { isSharedConvo } = useShareContext();
@@ -205,6 +207,8 @@ export default function Artifacts() {
     blurAmount > 0
       ? (Math.min(blurAmount, MAX_BLUR_AMOUNT) / MAX_BLUR_AMOUNT) * MAX_BACKDROP_OPACITY
       : 0;
+
+  if (startupConfig?.governancePilotEnabled) return null;
 
   return (
     <Tabs.Root value={displayedTab} onValueChange={setActiveTab} asChild>

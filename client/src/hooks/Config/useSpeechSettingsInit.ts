@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useRecoilState, useSetRecoilState } from 'recoil';
 import { useGetCustomConfigSpeechQuery } from 'librechat-data-provider/react-query';
+import { useGetStartupConfig } from '~/data-provider';
 import { TTSEndpoints } from '~/common';
 import { logger } from '~/utils';
 import store from '~/store';
@@ -13,6 +14,8 @@ const VALID_TTS_ENGINES: string[] = [TTSEndpoints.browser, TTSEndpoints.external
  */
 export default function useSpeechSettingsInit(isAuthenticated: boolean) {
   const { data } = useGetCustomConfigSpeechQuery({ enabled: isAuthenticated });
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
   const [engineTTS, setEngineTTS] = useRecoilState<string>(store.engineTTS);
 
   const setters = useRef({
@@ -35,6 +38,13 @@ export default function useSpeechSettingsInit(isAuthenticated: boolean) {
   }).current;
 
   useEffect(() => {
+    if (governancePilot) {
+      setters.conversationMode(false);
+      setters.speechToText(false);
+      setters.textToSpeech(false);
+      setters.automaticPlayback(false);
+      return;
+    }
     if (!isAuthenticated || !data || data.message === 'not_found') return;
 
     logger.log('Initializing speech settings from config:', data);
@@ -50,7 +60,7 @@ export default function useSpeechSettingsInit(isAuthenticated: boolean) {
         setter(value as any);
       }
     });
-  }, [isAuthenticated, data, setters]);
+  }, [isAuthenticated, data, setters, governancePilot]);
 
   useEffect(() => {
     if (VALID_TTS_ENGINES.includes(engineTTS)) return;

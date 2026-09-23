@@ -1,6 +1,12 @@
 const { CacheKeys } = require('librechat-data-provider');
 const { AppService, logger } = require('@librechat/data-schemas');
-const { createAppConfigService, clearMcpConfigCache } = require('@librechat/api');
+const {
+  createAppConfigService,
+  clearMcpConfigCache,
+  restrictGovernanceConfig,
+  restrictGovernanceAppConfig,
+  isGovernancePilotEnabled,
+} = require('@librechat/api');
 const { setCachedTools, invalidateCachedTools } = require('./getCachedTools');
 const { loadAndFormatTools } = require('~/server/services/start/tools');
 const loadCustomConfig = require('./loadCustomConfig');
@@ -10,14 +16,16 @@ const db = require('~/models');
 
 const loadBaseConfig = async () => {
   /** @type {TCustomConfig} */
-  const config = (await loadCustomConfig()) ?? {};
+  const config = restrictGovernanceConfig((await loadCustomConfig()) ?? {});
   /** @type {Record<string, FunctionTool>} */
-  const systemTools = loadAndFormatTools({
-    adminFilter: config.filteredTools,
-    adminIncluded: config.includedTools,
-    directory: paths.structuredTools,
-  });
-  return AppService({ config, paths, systemTools });
+  const systemTools = isGovernancePilotEnabled()
+    ? {}
+    : loadAndFormatTools({
+        adminFilter: config.filteredTools,
+        adminIncluded: config.includedTools,
+        directory: paths.structuredTools,
+      });
+  return restrictGovernanceAppConfig(await AppService({ config, paths, systemTools }));
 };
 
 const { getAppConfig, clearAppConfigCache, clearOverrideCache } = createAppConfigService({

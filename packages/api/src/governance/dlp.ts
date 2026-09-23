@@ -11,6 +11,7 @@ import type {
   GovernanceMaskedContent,
 } from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHECK_PATH = '/api/v1/dlp/check';
@@ -342,6 +343,7 @@ function isTextMessage(value: unknown): value is GovernanceChatMessage {
   const message = value as { role?: unknown; content?: unknown };
   return (
     typeof message.role === 'string' &&
+    (!isGovernancePilotEnabled() || ['system', 'user', 'assistant'].includes(message.role)) &&
     typeof message.content === 'string' &&
     Object.keys(message).every((key) => key === 'role' || key === 'content')
   );
@@ -366,6 +368,13 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     temperature?: unknown;
   };
   if (
+    (isGovernancePilotEnabled() &&
+      Object.entries(value).some(
+        ([key, field]) =>
+          ['tools', 'tool_choice', 'functions', 'function_call', 'modalities', 'audio'].includes(
+            key,
+          ) && field != null,
+      )) ||
     typeof request.model !== 'string' ||
     !Array.isArray(request.messages) ||
     !request.messages.every(isTextMessage) ||
@@ -412,6 +421,13 @@ export function createGovernanceDlpFetch({
   check = checkDlp,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
+    if (isGovernancePilotEnabled()) {
+      const base = process.env.GOVERNANCE_API_BASE_URL?.replace(/\/+$/, '');
+      const destination = new URL(getRequestUrl(input));
+      if (!base || destination.href !== `${base}/chat/completions`) {
+        throw new GovernanceDlpError('dlp_check_unsupported_request');
+      }
+    }
     if (isResponsesApiUrl(input)) {
       throw new GovernanceDlpError('dlp_check_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
     }
@@ -422,7 +438,7 @@ export function createGovernanceDlpFetch({
 
     const body = await getRequestBody(input, init);
     const request = body ? parseChatCompletionRequest(body) : undefined;
-    if (!request) {
+    if (!request || (isGovernancePilotEnabled() && request.stream !== true)) {
       throw new GovernanceDlpError('dlp_check_unsupported_request');
     }
 

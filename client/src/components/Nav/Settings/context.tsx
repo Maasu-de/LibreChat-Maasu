@@ -26,6 +26,7 @@ export function useSettingsContext(): SettingsContextValue {
     permission: Permissions.USE,
   });
 
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
   const balanceEnabled = startupConfig?.balance?.enabled === true;
   const isLocalProvider = user?.provider === 'local';
   const twoFactorEnabled = user?.twoFactorEnabled === true;
@@ -39,6 +40,7 @@ export function useSettingsContext(): SettingsContextValue {
 
   return useMemo(
     () => ({
+      governancePilot,
       balanceEnabled,
       hasAnyPersonalizationFeature,
       hasMemoryOptOut,
@@ -53,6 +55,7 @@ export function useSettingsContext(): SettingsContextValue {
       engineTTS,
     }),
     [
+      governancePilot,
       balanceEnabled,
       hasAnyPersonalizationFeature,
       hasMemoryOptOut,

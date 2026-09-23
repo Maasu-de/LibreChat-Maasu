@@ -1,6 +1,7 @@
+import { AxiosHeaders } from 'axios';
 import { ErrorTypes, ContentTypes } from 'librechat-data-provider';
-import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
+import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import {
   getModel,
   checkDlp,
@@ -49,6 +50,9 @@ describe('Governance DLP', () => {
       calls.push({ url, body, config });
       return {
         status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
         data: {
           action: 'ALLOW',
           policy_version: 7,
@@ -278,6 +282,9 @@ describe('Governance DLP', () => {
     const http: HttpPoster = async () =>
       ({
         status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
         data: {
           action: 'ALLOW',
           findings: [],

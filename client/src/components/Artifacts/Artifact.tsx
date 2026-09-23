@@ -7,6 +7,7 @@ import type { Pluggable } from 'unified';
 import type { Artifact } from '~/common';
 import { useMessageContext, useArtifactContext } from '~/Providers';
 import { logger, extractContent, isArtifactRoute } from '~/utils';
+import { useGetStartupConfig } from '~/data-provider';
 import { artifactsState } from '~/store/artifacts';
 import ArtifactButton from './ArtifactButton';
 
@@ -47,6 +48,8 @@ export function Artifact({
   node: unknown;
 }) {
   const location = useLocation();
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
   const { messageId } = useMessageContext();
   const { getNextIndex, resetCounter } = useArtifactContext();
   const artifactIndex = useRef(getNextIndex(false)).current;
@@ -61,6 +64,7 @@ export function Artifact({
   );
 
   const updateArtifact = useCallback(() => {
+    if (governancePilot) return;
     const content = extractContent(props.children);
     logger.log('artifacts', 'updateArtifact: content.length', content.length);
 
@@ -109,6 +113,7 @@ export function Artifact({
       setArtifact(currentArtifact);
     });
   }, [
+    governancePilot,
     props.type,
     props.title,
     setArtifacts,
@@ -124,5 +129,6 @@ export function Artifact({
     updateArtifact();
   }, [updateArtifact, resetCounter]);
 
+  if (governancePilot) return <pre>{extractContent(props.children)}</pre>;
   return <ArtifactButton artifact={artifact} />;
 }

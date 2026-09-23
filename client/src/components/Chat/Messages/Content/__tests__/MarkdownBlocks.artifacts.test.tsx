@@ -3,8 +3,10 @@ import { RecoilRoot } from 'recoil';
 import ReactMarkdown from 'react-markdown';
 import { MemoryRouter } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { getRemarkPlugins, getRehypePlugins, getMarkdownComponents } from '../markdownConfig';
 import { MessageContext, ArtifactProvider, CodeBlockProvider } from '~/Providers';
+import { startupConfigKey } from '~/data-provider/Endpoints/queries';
 import Markdown from '../Markdown';
 
 /**
@@ -29,15 +31,23 @@ jest.mock('~/components/Artifacts/ArtifactButton', () => ({
 const artifact = (id: string, title: string) =>
   `:::artifact{identifier="${id}" type="text/markdown" title="${title}"}\nhello ${id}\n:::`;
 
-const wrap = (ui: React.ReactNode) => (
-  <MemoryRouter>
-    <RecoilRoot>
-      <MessageContext.Provider value={{ messageId: 'm1', isExpanded: true }}>
-        {ui}
-      </MessageContext.Provider>
-    </RecoilRoot>
-  </MemoryRouter>
-);
+const wrap = (ui: React.ReactNode, governancePilotEnabled = false) => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, cacheTime: 0 } },
+  });
+  queryClient.setQueryData(startupConfigKey(false), { governancePilotEnabled });
+  return (
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <RecoilRoot>
+          <MessageContext.Provider value={{ messageId: 'm1', isExpanded: true }}>
+            {ui}
+          </MessageContext.Provider>
+        </RecoilRoot>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+};
 
 /** The previous whole-message renderer: one ReactMarkdown under one ArtifactProvider. */
 const OldMarkdown = ({ content }: { content: string }) => (
@@ -114,4 +124,10 @@ describe('MarkdownBlocks artifact-index parity (e2e)', () => {
 
     expect(await readArtifacts()).toEqual([{ idx: '0', id: 'a' }]);
   });
+});
+
+it('renders artifact content as inert text in the governed pilot', () => {
+  render(wrap(<Markdown content={artifact('a', 'A')} isLatestMessage={false} />, true));
+  expect(screen.getByText('hello a').closest('pre')).toBeInTheDocument();
+  expect(screen.queryByTestId('art')).not.toBeInTheDocument();
 });
