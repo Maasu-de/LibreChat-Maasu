@@ -30,6 +30,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
   ) => Promise<IGroup[]>;
   findGroupsByMemberId: (
     userId: string | Types.ObjectId,
+    projection?: Record<string, 0 | 1>,
     session?: ClientSession,
   ) => Promise<IGroup[]>;
   createGroup: (groupData: Partial<IGroup>, session?: ClientSession) => Promise<IGroup>;
@@ -64,7 +65,11 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
     update: Record<string, unknown>,
     options?: { session?: ClientSession },
   ) => Promise<import('mongoose').UpdateWriteOpResult>;
-  getUserGroups: (userId: string | Types.ObjectId, session?: ClientSession) => Promise<IGroup[]>;
+  getUserGroups: (
+    userId: string | Types.ObjectId,
+    projection?: Record<string, 0 | 1>,
+    session?: ClientSession,
+  ) => Promise<IGroup[]>;
   getUserPrincipals: (
     params: {
       userId: string | Types.ObjectId;
@@ -119,6 +124,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
   /**
    * Find a group by its ID
    * @param groupId - The group ID
+   * @param projection - Optional projection of fields to return
    * @param projection - Optional projection of fields to return
    * @param session - Optional MongoDB session for transactions
    * @returns The group document or null if not found
@@ -220,6 +226,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
    */
   async function findGroupsByMemberId(
     userId: string | Types.ObjectId,
+    projection: Record<string, 0 | 1> = {},
     session?: ClientSession,
   ): Promise<IGroup[]> {
     const User = mongoose.models.User as Model<IUser>;
@@ -237,7 +244,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
 
     const userIdOnTheSource = user.idOnTheSource || userId.toString();
 
-    const query = Group.find({ memberIds: userIdOnTheSource });
+    const query = Group.find({ memberIds: userIdOnTheSource }, projection);
     if (session) {
       query.session(session);
     }
@@ -247,6 +254,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
   /**
    * Create a new group
    * @param groupData - Group data including name, source, and optional idOnTheSource
+   * @param projection - Optional projection of fields to return
    * @param session - Optional MongoDB session for transactions
    * @returns The created group
    */
@@ -364,9 +372,10 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
    */
   async function getUserGroups(
     userId: string | Types.ObjectId,
+    projection: Record<string, 0 | 1> = {},
     session?: ClientSession,
   ): Promise<IGroup[]> {
-    return await findGroupsByMemberId(userId, session);
+    return await findGroupsByMemberId(userId, projection, session);
   }
 
   /**
@@ -424,7 +433,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
       principals.push({ principalType: PrincipalType.ROLE, principalId: userRole });
     }
 
-    const userGroups = await getUserGroups(userId, session);
+    const userGroups = await getUserGroups(userId, {}, session);
     if (userGroups && userGroups.length > 0) {
       userGroups.forEach((group) => {
         principals.push({ principalType: PrincipalType.GROUP, principalId: group._id });

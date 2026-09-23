@@ -9,6 +9,7 @@ import {
   getDlpSideCallFetch,
   isPlainTextSubmission,
   createRequestDlpFetch,
+  createGovernanceAttributionFetch,
   isGovernanceGatewayUrl,
   getRetryableDlpReviewId,
   createGovernanceDlpFetch,
@@ -113,6 +114,28 @@ describe('Governance DLP', () => {
       new Headers(init?.headers).get('X-LibreChat-Group-IDs'),
     );
     expect(groupHeaders).toEqual(['["group-1","group-2"]', '["group-1","group-2"]', '[]']);
+  });
+
+  it('adds group attribution without applying the DLP request-shape restrictions', async () => {
+    const upstreamFetch = jest.fn(async () => new Response('ok'));
+    const req = {
+      user: { id: 'user-123' },
+      governanceGroupIds: ['group-1', 'group-2'],
+    } as unknown as ServerRequest;
+
+    await createGovernanceAttributionFetch(req, upstreamFetch)(
+      'http://governance.test/api/v1/dlp/chat/completions',
+      {
+        method: 'POST',
+        headers: { 'X-Existing-Header': 'kept' },
+        body: JSON.stringify({ model: 'governed-model', tools: [{ type: 'function' }] }),
+      },
+    );
+
+    const headers = new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('X-LibreChat-User-ID')).toBe('user-123');
+    expect(headers.get('X-LibreChat-Group-IDs')).toBe('["group-1","group-2"]');
+    expect(headers.get('X-Existing-Header')).toBe('kept');
   });
 
   it('rejects an unsupported request to the DLP completions API instead of forwarding it', async () => {

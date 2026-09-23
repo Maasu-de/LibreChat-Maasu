@@ -15,6 +15,7 @@ import type {
   AnthropicModelOptions,
 } from '~/types';
 import {
+  createGovernanceAttributionFetch,
   createRequestDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
@@ -357,14 +358,15 @@ export async function initializeCustom({
       ...clientOptions,
     };
     options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
-    if (
-      (isGovernancePilotEnabled() || req.governanceDlpEligible === true) &&
-      isGovernanceDlpEnabled() &&
-      isGovernanceGatewayUrl(baseURL)
-    ) {
+    if (isGovernanceGatewayUrl(baseURL)) {
+      const attributedFetch = createGovernanceAttributionFetch(req, options.configOptions?.fetch);
       options.configOptions = {
         ...(options.configOptions ?? {}),
-        fetch: createRequestDlpFetch(req, options.configOptions?.fetch, dlpApproval),
+        fetch:
+          (isGovernancePilotEnabled() || req.governanceDlpEligible === true) &&
+          isGovernanceDlpEnabled()
+            ? createRequestDlpFetch(req, attributedFetch, dlpApproval)
+            : attributedFetch,
       };
     }
     if (options != null) {

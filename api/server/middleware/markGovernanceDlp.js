@@ -12,15 +12,12 @@ const GROUP_LOOKUP_FAILURE_MESSAGE =
 
 /**
  * Marks plain-text sends for the governed DLP flow. The completion call itself asks the
- * Governance Backend for the user's approval, so no separate check runs here. A governed send
- * also carries the user's group IDs, resolved here on the server so the browser cannot choose
- * which group-scoped policy overrides apply; without them the send is refused.
+ * Governance Backend for the user's approval, so no separate check runs here. Every send also
+ * carries the user's group IDs, resolved here on the server so the browser cannot choose which
+ * group-scoped policy overrides apply or usage attribution; without them the send is refused.
  */
 async function markGovernanceDlp(req, res, next) {
   req.governanceDlpEligible = isGovernanceDlpEnabled() && isPlainTextSubmission(req.body);
-  if (!req.governanceDlpEligible && !isGovernancePilotEnabled()) {
-    return next();
-  }
 
   try {
     req.governanceGroupIds = await getUserGroupIds(req.user.id);

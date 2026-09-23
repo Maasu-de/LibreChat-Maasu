@@ -173,6 +173,21 @@ describe('userGroup methods', () => {
       const groups = await methods.findGroupsByMemberId(user._id);
       expect(groups).toHaveLength(1);
     });
+
+    it('supports an ID-only projection for request-time group resolution', async () => {
+      const user = await createTestUser({ idOnTheSource: 'user-ext-1' });
+      await Group.create({
+        name: 'Large Group',
+        source: 'local',
+        description: 'This must not be returned with an ID-only lookup.',
+        memberIds: ['user-ext-1', 'many-other-members'],
+      });
+
+      const groups = await methods.findGroupsByMemberId(user._id, { _id: 1 });
+
+      expect(groups).toHaveLength(1);
+      expect(groups[0]).toEqual({ _id: expect.any(Types.ObjectId) });
+    });
   });
 
   describe('createGroup', () => {
