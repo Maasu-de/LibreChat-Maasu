@@ -35,7 +35,7 @@ describe('settings registry', () => {
   });
 });
 
-it('omits speech and conversation import from pilot settings, including search results', () => {
+it('omits speech, avatar uploads, and conversation import from pilot settings, including search results', () => {
   const ctx: SettingsContextValue = {
     governancePilot: true,
     balanceEnabled: false,
@@ -55,4 +55,9 @@ it('omits speech and conversation import from pilot settings, including search r
   const entries = filterSettings(registry, '', ctx, (key) => key).map((result) => result.entry);
   expect(entries.some((entry) => entry.tab === SettingsTabValues.SPEECH)).toBe(false);
   expect(entries.some((entry) => entry.id === 'importConversations')).toBe(false);
+  expect(entries.some((entry) => entry.id === 'avatar')).toBe(false);
+  expect(registry.find((entry) => entry.id === 'avatar')?.show?.(ctx)).toBe(false);
+  expect(
+    registry.find((entry) => entry.id === 'avatar')?.show?.({ ...ctx, governancePilot: false }),
+  ).toBe(true);
 });

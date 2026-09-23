@@ -1461,7 +1461,7 @@ export type TSharedLinkStartupInterface = Pick<
 export type TSharedLinkStartupConfig = Pick<TStartupConfig, 'appTitle'> &
   Pick<
     Partial<TStartupConfig>,
-    'analyticsGtmId' | 'bundlerURL' | 'customFooter' | 'staticBundlerURL'
+    'analyticsGtmId' | 'bundlerURL' | 'customFooter' | 'staticBundlerURL' | 'governancePilotEnabled'
   > & {
     interface?: TSharedLinkStartupInterface;
   };

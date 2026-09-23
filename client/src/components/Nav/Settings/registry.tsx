@@ -524,6 +524,7 @@ export const registry: SettingEntry[] = [
     tab: ACCOUNT,
     section: 'profile',
     labelKey: 'com_ui_settings_label_avatar',
+    show: (ctx) => !ctx.governancePilot,
     Component: Avatar,
   },
   // Account · Security
