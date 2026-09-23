@@ -6,6 +6,7 @@ const mockCheckFinanceRead = jest.fn();
 const mockGetGovernanceUsage = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockTestGovernanceConnection = jest.fn();
+const mockGetUserGroups = jest.fn();
 let mockUser = { id: 'user-123', role: 'USER' };
 
 jest.mock('@librechat/api', () => ({
@@ -43,6 +44,7 @@ jest.mock('~/server/middleware', () => ({
 jest.mock('~/models', () => ({
   getRoleByName: jest.fn(),
   findUsers: jest.fn(),
+  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 
 jest.mock('~/db/models', () => ({
@@ -62,6 +64,8 @@ beforeEach(() => {
   mockGetGovernanceUsage.mockReset();
   mockIsGovernanceDlpEnabled.mockReset();
   mockTestGovernanceConnection.mockReset();
+  mockGetUserGroups.mockReset();
+  mockGetUserGroups.mockResolvedValue([]);
   mockCheckFinanceRead.mockResolvedValue(false);
   mockGetGovernanceUsage.mockImplementation((_req, res) =>
     res.status(200).json({ totals: { request_count: 0 } }),
@@ -127,6 +131,7 @@ describe('POST /api/governance/dlp/check', () => {
   });
 
   it('returns safe finding and preview data without exposing the DLP token', async () => {
+    mockGetUserGroups.mockResolvedValue([{ _id: 'group-a' }]);
     mockCheckTextSubmission.mockResolvedValue({
       decision: 'MASK',
       policyVersion: 4,
@@ -160,6 +165,7 @@ describe('POST /api/governance/dlp/check', () => {
       text: 'Discuss Project Acme now',
       model: 'company-assistant',
       userId: 'user-123',
+      groupIds: ['group-a'],
     });
   });
 
