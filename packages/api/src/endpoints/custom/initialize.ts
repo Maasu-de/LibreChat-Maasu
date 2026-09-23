@@ -352,6 +352,7 @@ export async function initializeCustom({
         ...(options.configOptions ?? {}),
         fetch: createGovernanceDlpFetch({
           userId,
+          groupIds: req.governanceGroupIds ?? [],
           fetch: options.configOptions?.fetch,
         }),
       };

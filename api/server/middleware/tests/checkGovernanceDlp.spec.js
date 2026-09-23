@@ -5,6 +5,7 @@ const mockCreateDlpBlock = jest.fn();
 const mockIsPlainTextSubmission = jest.fn();
 const mockIsGovernanceDlpEnabled = jest.fn();
 const mockDenyRequest = jest.fn();
+const mockGetUserGroups = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   getModel: (...args) => mockGetModel(...args),
@@ -17,6 +18,10 @@ jest.mock('@librechat/api', () => ({
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn() },
+}));
+
+jest.mock('~/models', () => ({
+  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 
 jest.mock(
@@ -34,6 +39,7 @@ describe('checkGovernanceDlp', () => {
     mockIsGovernanceDlpEnabled.mockReturnValue(true);
     mockIsPlainTextSubmission.mockReturnValue(true);
     mockGetModel.mockReturnValue('governed-model');
+    mockGetUserGroups.mockResolvedValue([]);
   });
 
   it('skips the check when the submission is not plain text', async () => {
@@ -49,6 +55,11 @@ describe('checkGovernanceDlp', () => {
 
   it('allows a normal plain-text submission to continue only after an ALLOW check', async () => {
     mockCheckTextSubmission.mockResolvedValue({ decision: 'ALLOW', findings: [] });
+    mockGetUserGroups.mockResolvedValue([
+      { _id: 'group-a' },
+      { _id: 'group-b' },
+      { _id: 'group-a' },
+    ]);
     const req = {
       body: {
         text: 'normal text',
@@ -65,8 +76,10 @@ describe('checkGovernanceDlp', () => {
       text: 'normal text',
       model: 'governed-model',
       userId: 'user-123',
+      groupIds: ['group-a', 'group-b'],
     });
     expect(req.governanceDlpEligible).toBe(true);
+    expect(req.governanceGroupIds).toEqual(['group-a', 'group-b']);
     expect(next).toHaveBeenCalledTimes(1);
     expect(mockDenyRequest).not.toHaveBeenCalled();
   });
@@ -147,5 +160,20 @@ describe('checkGovernanceDlp', () => {
 
     expect(mockDenyRequest).toHaveBeenCalledWith(req, res, body);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('resolves membership independently for each request', async () => {
+    mockCheckTextSubmission.mockResolvedValue({ decision: 'ALLOW', findings: [] });
+    mockGetUserGroups
+      .mockResolvedValueOnce([{ _id: 'group-a' }])
+      .mockResolvedValueOnce([{ _id: 'group-b' }]);
+    const first = { body: { text: 'first' }, user: { id: 'user-123' } };
+    const second = { body: { text: 'second' }, user: { id: 'user-123' } };
+
+    await checkGovernanceDlp(first, {}, jest.fn());
+    await checkGovernanceDlp(second, {}, jest.fn());
+
+    expect(mockCheckTextSubmission.mock.calls[0][0].groupIds).toEqual(['group-a']);
+    expect(mockCheckTextSubmission.mock.calls[1][0].groupIds).toEqual(['group-b']);
   });
 });
