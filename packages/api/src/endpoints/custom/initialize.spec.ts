@@ -702,3 +702,57 @@ describe('initializeCustom – native Anthropic provider', () => {
     expect(options.provider).toBeUndefined();
   });
 });
+
+describe('governed pilot custom client', () => {
+  const originalEnv = { ...process.env };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_DLP_ENABLED = 'true';
+    process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
+    process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'pilot-credential';
+  });
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  function pilotParams() {
+    return {
+      ...createParams({
+        apiKey: '${LIBRECHAT_SERVICE_CREDENTIAL}',
+        baseURL: '${GOVERNANCE_API_BASE_URL}',
+      }),
+      endpoint: 'AI Governance Gateway',
+    };
+  }
+
+  it('always installs final DLP enforcement, even without the eligible marker', async () => {
+    const params = pilotParams();
+    expect(params.req.governanceDlpEligible).toBeUndefined();
+    const result = await initializeCustom(params);
+    expect(result.configOptions?.fetch).toEqual(expect.any(Function));
+    expect(params.db.getUserKeyValues).not.toHaveBeenCalled();
+  });
+
+  it('rejects alternate provider names and Responses API options', async () => {
+    const params = pilotParams();
+    await expect(initializeCustom({ ...params, endpoint: 'external' })).rejects.toThrow(
+      /Unsupported governed/,
+    );
+    await expect(
+      initializeCustom({ ...params, model_parameters: { useResponsesApi: true } }),
+    ).rejects.toThrow(/Unsupported governed/);
+    expect(mockGetOpenAIConfig).not.toHaveBeenCalled();
+  });
+
+  it('rejects overridden destinations and credentials before client initialization', async () => {
+    const params = pilotParams();
+    mockGetCustomEndpointConfig.mockReturnValue({
+      apiKey: 'pilot-credential',
+      baseURL: 'https://external.test/v1',
+      models: {},
+    });
+    await expect(initializeCustom(params)).rejects.toThrow(/Unsupported governed/);
+    expect(mockGetOpenAIConfig).not.toHaveBeenCalled();
+  });
+});

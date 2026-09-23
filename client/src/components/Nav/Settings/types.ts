@@ -35,6 +35,7 @@ export type SectionId =
   | 'about';
 
 export interface SettingsContextValue {
+  governancePilot?: boolean;
   balanceEnabled: boolean;
   hasAnyPersonalizationFeature: boolean;
   hasMemoryOptOut: boolean;
@@ -99,6 +100,7 @@ export const TABS: TabMeta[] = [
   },
   {
     id: SettingsTabValues.SPEECH,
+    show: (ctx) => !ctx.governancePilot,
     labelKey: 'com_nav_setting_speech',
     icon: createElement(SpeechIcon, { className: 'icon-sm' }),
     sections: [

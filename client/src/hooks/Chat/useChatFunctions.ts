@@ -38,13 +38,13 @@ import {
 } from '~/utils';
 import useFocusRegeneratedResponse from '~/hooks/Chat/useFocusRegeneratedResponse';
 import useSetFilesToDelete from '~/hooks/Files/useSetFilesToDelete';
-import useGetSender from '~/hooks/Conversations/useGetSender';
-import store, { useGetEphemeralAgent } from '~/store';
-import { startupConfigKey } from '~/data-provider';
-import useUserKey from '~/hooks/Input/useUserKey';
 import { hasSelectedEphemeralTools } from '~/hooks/Chat/governance';
 import { useGovernanceDlpCheckMutation } from '~/data-provider';
+import useGetSender from '~/hooks/Conversations/useGetSender';
+import store, { useGetEphemeralAgent } from '~/store';
 import { useAuthContext, useLocalize } from '~/hooks';
+import { startupConfigKey } from '~/data-provider';
+import useUserKey from '~/hooks/Input/useUserKey';
 
 type PendingDlpSubmission = {
   result: GovernanceDlpResult;
@@ -493,7 +493,10 @@ export default function useChatFunctions({
        * off the message so there's no Recoil state to clean up. Runtime
        * skill resolution reads the top-level `manualSkills` payload field.
        */
-      manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
+      manualSkills:
+        !startupConfig?.governancePilotEnabled && manualSkills.length > 0
+          ? manualSkills
+          : undefined,
       /**
        * Quoted excerpts the user referenced this turn. Persisted on the
        * message (backend echoes it back on `req.body.quotes`) so `MessageQuotes`
@@ -558,7 +561,10 @@ export default function useChatFunctions({
        * spreads) and drops out naturally at `finalHandler` when the
        * server-backed `responseMessage` replacement takes over.
        */
-      manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
+      manualSkills:
+        !startupConfig?.governancePilotEnabled && manualSkills.length > 0
+          ? manualSkills
+          : undefined,
     };
 
     if (isAssistantsEndpoint(endpoint)) {
@@ -638,10 +644,13 @@ export default function useChatFunctions({
       isRegenerate,
       initialResponse,
       isTemporary,
-      ephemeralAgent,
+      ephemeralAgent: startupConfig?.governancePilotEnabled ? undefined : ephemeralAgent,
       editedContent,
       addedConvo,
-      manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
+      manualSkills:
+        !startupConfig?.governancePilotEnabled && manualSkills.length > 0
+          ? manualSkills
+          : undefined,
     };
 
     if (isRegenerate) {
@@ -668,7 +677,9 @@ export default function useChatFunctions({
     const targetConversationId =
       props.conversationId ?? immutableConversation?.conversationId ?? null;
     const startupConfig = queryClient.getQueryData<TStartupConfig>(startupConfigKey(true));
-    const ephemeralAgent = getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
+    const ephemeralAgent = startupConfig?.governancePilotEnabled
+      ? undefined
+      : getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
     const isPlainTextSubmission =
       options?.editedContent == null &&
       options?.isContinued !== true &&

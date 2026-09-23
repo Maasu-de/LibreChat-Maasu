@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import type { FinanceUsageBreakdownRow, FinanceUsageDashboard } from 'librechat-data-provider';
 import type { GovernanceUsageDeps } from './governance';
 import { resolveUsageLabels } from './governance';
@@ -73,7 +74,9 @@ describe('resolveUsageLabels', () => {
 
   it('falls back to username or email when the user has no name', async () => {
     const deps = createDeps();
-    deps.findUsers.mockResolvedValue([{ _id: USER_ID, email: 'nikola@example.com' }]);
+    deps.findUsers.mockResolvedValue([
+      { _id: new Types.ObjectId(USER_ID), email: 'nikola@example.com' },
+    ]);
 
     const result = await resolveUsageLabels(dashboard(), deps);
 

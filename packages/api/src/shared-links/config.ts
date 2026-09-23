@@ -41,6 +41,7 @@ export function buildSharedLinkStartupPayload(
 ): TSharedLinkStartupConfig {
   const payload: TSharedLinkStartupConfig = {
     appTitle: env.APP_TITLE || 'LibreChat',
+    governancePilotEnabled: isEnabled(env.GOVERNANCE_PILOT_ENABLED),
   };
 
   if (typeof env.ANALYTICS_GTM_ID === 'string') {

@@ -1,6 +1,7 @@
 import { EModelEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
 
 type TUseGenerations = {
+  governancePilot?: boolean;
   error?: boolean;
   endpoint?: string;
   messageId?: string;
@@ -13,6 +14,7 @@ type TUseGenerations = {
 };
 
 export default function useGenerationsByLatest({
+  governancePilot = false,
   error = false,
   endpoint,
   messageId,
@@ -69,9 +71,9 @@ export default function useGenerationsByLatest({
 
   return {
     forkingSupported,
-    continueSupported,
-    regenerateEnabled,
-    isEditableEndpoint,
-    hideEditButton,
+    continueSupported: !governancePilot && continueSupported,
+    regenerateEnabled: !governancePilot && regenerateEnabled,
+    isEditableEndpoint: !governancePilot && isEditableEndpoint,
+    hideEditButton: governancePilot || hideEditButton,
   };
 }

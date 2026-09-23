@@ -1361,6 +1361,7 @@ export type StartupConfigContext = 'share';
 export type TStartupConfig = {
   appTitle: string;
   governanceDlpEnabled?: boolean;
+  governancePilotEnabled?: boolean;
   socialLogins?: string[];
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
@@ -1460,7 +1461,7 @@ export type TSharedLinkStartupInterface = Pick<
 export type TSharedLinkStartupConfig = Pick<TStartupConfig, 'appTitle'> &
   Pick<
     Partial<TStartupConfig>,
-    'analyticsGtmId' | 'bundlerURL' | 'customFooter' | 'staticBundlerURL'
+    'analyticsGtmId' | 'bundlerURL' | 'customFooter' | 'staticBundlerURL' | 'governancePilotEnabled'
   > & {
     interface?: TSharedLinkStartupInterface;
   };
