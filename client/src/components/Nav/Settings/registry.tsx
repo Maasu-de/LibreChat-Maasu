@@ -500,6 +500,7 @@ export const registry: SettingEntry[] = [
     tab: DATA,
     section: 'apiKeys',
     labelKey: 'com_ui_settings_label_revoke_keys',
+    show: (ctx) => !ctx.governancePilot,
     Component: RevokeKeys,
   },
   // Data controls · Danger zone
