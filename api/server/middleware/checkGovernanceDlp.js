@@ -7,7 +7,7 @@ const {
   isPlainTextSubmission,
   isGovernanceDlpEnabled,
 } = require('@librechat/api');
-const { getUserGroups } = require('~/models');
+const { getUserGroupIds } = require('~/server/services/governanceGroups');
 const denyRequest = require('./denyRequest');
 
 /** Thin Express adapter for the server-side Governance DLP preflight. */
@@ -17,8 +17,7 @@ async function checkGovernanceDlp(req, res, next) {
   }
 
   try {
-    const groups = await getUserGroups(req.user.id);
-    const groupIds = groups.map((group) => group._id.toString());
+    const groupIds = await getUserGroupIds(req.user.id);
     const result = await checkTextSubmission({
       text: req.body.text,
       model: getModel(req.body),
