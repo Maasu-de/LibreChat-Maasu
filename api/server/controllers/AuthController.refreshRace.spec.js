@@ -39,8 +39,11 @@ describe('refreshController - concurrent refresh with same token (OBSERVATIONAL)
   let mongoServer;
   let User, Session;
   let createSession;
+  let nodeEnv;
 
   beforeAll(async () => {
+    // Backend CI sets NODE_ENV=CI, which makes refreshController skip the session lookup under test.
+    nodeEnv = jest.replaceProperty(process.env, 'NODE_ENV', 'test');
     mongoServer = await MongoMemoryServer.create();
     await mongoose.connect(mongoServer.getUri());
     ({ User, Session } = require('~/db/models'));
@@ -48,6 +51,7 @@ describe('refreshController - concurrent refresh with same token (OBSERVATIONAL)
   });
 
   afterAll(async () => {
+    nodeEnv.restore();
     await mongoose.disconnect();
     await mongoServer.stop();
   });
@@ -112,7 +116,7 @@ describe('refreshController - concurrent refresh with same token (OBSERVATIONAL)
       // eslint-disable-next-line no-console
       console.log(`RACE OUTCOME run ${run}:`, JSON.stringify(outcome));
 
-      // Pins the behavior actually observed (see file header) — not the original
+      // Pins the behavior actually observed (see file header), not the original
       // "one call fails ungracefully" hypothesis, which this reproduction did not confirm.
       expect(outcome.call1.statusCode).toBe(200);
       expect(outcome.call2.statusCode).toBe(200);
