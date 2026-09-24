@@ -11,10 +11,16 @@ const {
 } = require('@librechat/api');
 const { Permissions, PermissionTypes } = require('librechat-data-provider');
 const { requireJwtAuth } = require('~/server/middleware');
-const { getRoleByName, findUsers, getUserGroups } = require('~/models');
+const { getRoleByName, findUsers } = require('~/models');
+const { getUserGroupIds } = require('~/server/services/governanceGroups');
 const { Group } = require('~/db/models');
+const governanceGroups = require('./governanceGroups');
 
 const router = express.Router();
+
+// The Governance Admin server authenticates with its own Keycloak token, not a
+// LibreChat session, so this route is mounted before requireJwtAuth.
+router.use('/groups', governanceGroups);
 
 router.use(requireJwtAuth);
 
@@ -54,12 +60,11 @@ router.post('/dlp/check', async (req, res) => {
   }
 
   try {
-    const groups = await getUserGroups(req.user.id);
     const result = await checkTextSubmission({
       text,
       model,
       userId: req.user.id,
-      groupIds: groups.map((group) => group._id.toString()),
+      groupIds: await getUserGroupIds(req.user.id),
     });
 
     return res.status(200).json({

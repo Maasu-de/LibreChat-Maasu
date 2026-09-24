@@ -257,8 +257,6 @@ const startServer = async () => {
   app.use('/api/skills', routes.skills);
   app.use('/api/categories', routes.categories);
   app.use('/api/endpoints', routes.endpoints);
-  // Registered first: the governance router below requires a user session.
-  app.use('/api/governance/groups', routes.governanceGroups);
   app.use('/api/governance', routes.governance);
   app.use('/api/balance', routes.balance);
   app.use('/api/models', routes.models);
