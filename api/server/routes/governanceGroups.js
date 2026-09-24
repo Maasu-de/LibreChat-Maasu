@@ -8,31 +8,15 @@ const router = express.Router();
 const PAGE_SIZE = 200;
 
 let jwksClient;
-let jwksClientIssuer;
 
 function getJwksClient(issuer) {
-  if (!jwksClient || jwksClientIssuer !== issuer) {
-    jwksClient = jwksRsa({
-      jwksUri: `${issuer}/protocol/openid-connect/certs`,
-      cache: true,
-      cacheMaxAge: 5 * 60 * 1000,
-      rateLimit: true,
-    });
-    jwksClientIssuer = issuer;
-  }
-  return jwksClient;
-}
-
-function getSigningKey(client, kid) {
-  return new Promise((resolve, reject) => {
-    client.getSigningKey(kid, (error, key) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(key.getPublicKey());
-    });
+  jwksClient ??= jwksRsa({
+    jwksUri: `${issuer}/protocol/openid-connect/certs`,
+    cache: true,
+    cacheMaxAge: 5 * 60 * 1000,
+    rateLimit: true,
   });
+  return jwksClient;
 }
 
 function hasAdminRole(claims, adminRole) {
@@ -69,8 +53,12 @@ async function requireGovernanceAdminToken(req, res, next) {
 
   let claims;
   try {
-    const signingKey = await getSigningKey(getJwksClient(issuer), kid);
-    claims = jwt.verify(token, signingKey, { algorithms: ['RS256'], issuer, audience });
+    const signingKey = await getJwksClient(issuer).getSigningKey(kid);
+    claims = jwt.verify(token, signingKey.getPublicKey(), {
+      algorithms: ['RS256'],
+      issuer,
+      audience,
+    });
   } catch (error) {
     logger.warn('[GovernanceGroups] Access token verification failed', {
       message: error?.message,
@@ -99,11 +87,7 @@ router.get('/', requireGovernanceAdminToken, async (_req, res) => {
     }
 
     return res.status(200).json({
-      groups: groups.map((group) => ({
-        id: group._id.toString(),
-        name: group.name,
-        source: group.source,
-      })),
+      groups: groups.map((group) => ({ id: group._id.toString(), name: group.name })),
     });
   } catch (error) {
     logger.error('[GovernanceGroups] Group lookup failed', { message: error?.message });

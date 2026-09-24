@@ -2,9 +2,7 @@ const express = require('express');
 const request = require('supertest');
 
 const mockListGroups = jest.fn();
-const mockGetSigningKey = jest.fn((_kid, callback) =>
-  callback(null, { getPublicKey: () => 'test-public-key' }),
-);
+const mockGetSigningKey = jest.fn();
 const mockDecode = jest.fn(() => ({ header: { kid: 'test-kid' } }));
 const mockVerify = jest.fn(() => ({
   typ: 'Bearer',
@@ -19,7 +17,9 @@ jest.mock('~/models', () => ({
   listGroups: (...args) => mockListGroups(...args),
 }));
 
-jest.mock('jwks-rsa', () => jest.fn(() => ({ getSigningKey: (...args) => mockGetSigningKey(...args) })));
+jest.mock('jwks-rsa', () =>
+  jest.fn(() => ({ getSigningKey: (...args) => mockGetSigningKey(...args) })),
+);
 
 jest.mock('jsonwebtoken', () => ({
   decode: (...args) => mockDecode(...args),
@@ -35,13 +35,11 @@ const ISSUER = 'http://keycloak:8080/realms/ai-governance';
 const CLIENT_ID = 'governance-web';
 const ADMIN_ROLE = 'governance-admin';
 const TOKEN = 'test-admin-token';
-const group = (id, name, source = 'local') => ({ _id: { toString: () => id }, name, source });
+const group = (id, name) => ({ _id: { toString: () => id }, name, source: 'local' });
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetSigningKey.mockImplementation((_kid, callback) =>
-    callback(null, { getPublicKey: () => 'test-public-key' }),
-  );
+  mockGetSigningKey.mockResolvedValue({ getPublicKey: () => 'test-public-key' });
   mockDecode.mockReturnValue({ header: { kid: 'test-kid' } });
   mockVerify.mockReturnValue({ typ: 'Bearer', realm_access: { roles: [ADMIN_ROLE] } });
   process.env.OPENID_ISSUER = ISSUER;
@@ -66,8 +64,8 @@ describe('GET /api/governance/groups', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       groups: [
-        { id: 'a1', name: 'Engineering', source: 'local' },
-        { id: 'b2', name: 'HR', source: 'local' },
+        { id: 'a1', name: 'Engineering' },
+        { id: 'b2', name: 'HR' },
       ],
     });
     expect(mockVerify).toHaveBeenCalledWith(TOKEN, 'test-public-key', {
@@ -78,7 +76,9 @@ describe('GET /api/governance/groups', () => {
   });
 
   it('follows pagination until a short page', async () => {
-    const fullPage = Array.from({ length: 200 }, (_, index) => group(`g${index}`, `Group ${index}`));
+    const fullPage = Array.from({ length: 200 }, (_, index) =>
+      group(`g${index}`, `Group ${index}`),
+    );
     mockListGroups.mockResolvedValueOnce(fullPage).mockResolvedValueOnce([group('last', 'Last')]);
 
     const response = await request(app)
