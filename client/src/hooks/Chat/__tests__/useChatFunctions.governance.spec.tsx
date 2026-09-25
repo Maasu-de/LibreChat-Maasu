@@ -30,14 +30,26 @@ jest.mock('~/hooks', () => ({
 jest.mock('~/data-provider', () => ({
   useGovernanceDlpCheckMutation: jest.requireActual('~/data-provider/Governance/mutations')
     .useGovernanceDlpCheckMutation,
+  startupConfigKey: jest.requireActual('~/data-provider/Endpoints/queries').startupConfigKey,
 }));
+
+const { startupConfigKey } = jest.requireActual('~/data-provider/Endpoints/queries');
+
+/** governed-v0.8.4 reads [QueryKeys.startupConfig]; governed-v0.8.7 reads startupConfigKey(true). */
+function seedStartupConfig(queryClient: QueryClient) {
+  const config = { governanceDlpEnabled: true };
+  queryClient.setQueryData([QueryKeys.startupConfig], config);
+  if (startupConfigKey) {
+    queryClient.setQueryData(startupConfigKey(true), config);
+  }
+}
 
 jest.mock('~/hooks/Files/useSetFilesToDelete', () => () => jest.fn());
 jest.mock('~/hooks/Conversations/useGetSender', () => () => () => 'AI');
 jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: () => undefined }));
 jest.mock('~/utils', () => ({
   ...jest.requireActual('~/utils'),
-  logger: { log: jest.fn(), dir: jest.fn() },
+  logger: { log: jest.fn(), dir: jest.fn(), warn: jest.fn() },
   cn: jest.requireActual('~/utils/cn').default,
 }));
 
@@ -107,7 +119,7 @@ function Chat({
 
 function renderChat(conversation: TConversation) {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  queryClient.setQueryData([QueryKeys.startupConfig], { governanceDlpEnabled: true });
+  seedStartupConfig(queryClient);
   queryClient.setQueryData([QueryKeys.endpoints], { [endpoint]: { type: EModelEndpoint.custom } });
   const view = render(<Chat conversation={conversation} />, {
     wrapper: ({ children }) => (
@@ -176,10 +188,12 @@ it('keeps checking after hi, permits repeated clean follow-ups and blocks a late
   send('hi');
   await waitFor(() => expect(setSubmission).toHaveBeenCalledTimes(1));
 
+  // A server-saved reply has timestamps; without them the placeholder still counts as pending.
   const history = setMessages.mock.calls[0][0].map((message) => ({
     ...message,
     conversationId: savedConversation.conversationId,
     text: message.isCreatedByUser ? message.text : 'Hello',
+    createdAt: new Date().toISOString(),
   }));
   rerender(<Chat conversation={savedConversation} history={history} />);
   send(iban);
@@ -204,6 +218,7 @@ it('keeps checking after hi, permits repeated clean follow-ups and blocks a late
     const completedHistory = setMessages.mock.calls.at(-1)![0].map((message) => ({
       ...message,
       text: message.isCreatedByUser ? message.text : 'OK',
+      createdAt: new Date().toISOString(),
     }));
     rerender(<Chat conversation={savedConversation} history={completedHistory} />);
   }
@@ -218,7 +233,7 @@ it('keeps checking after hi, permits repeated clean follow-ups and blocks a late
 
 it('characterization: completion error retains the user message and the follow-up parent chain', async () => {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  queryClient.setQueryData([QueryKeys.startupConfig], { governanceDlpEnabled: true });
+  seedStartupConfig(queryClient);
   queryClient.setQueryData([QueryKeys.endpoints], { [endpoint]: { type: EModelEndpoint.custom } });
   jest.spyOn(axios, 'post').mockResolvedValue({
     data: { enabled: true, decision: 'ALLOW', findings: [] },
@@ -270,6 +285,7 @@ it('characterization: completion error retains the user message and the follow-u
     if (!first?.initialResponse) {
       throw new Error('Expected the first submitted message and response placeholder');
     }
+    const initialResponse = first.initialResponse;
     const responseMessage: TMessage = {
       ...first.initialResponse,
       messageId: 'completion-rejected-response',
@@ -286,7 +302,7 @@ it('characterization: completion error retains the user message and the follow-u
           requestMessage: first.userMessage,
           responseMessage,
         },
-        { ...first, initialResponse: first.initialResponse },
+        { ...first, initialResponse },
       );
     });
     expect(result.current.messages).toEqual([first.userMessage, responseMessage]);

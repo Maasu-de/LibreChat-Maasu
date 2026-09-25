@@ -1,4 +1,3 @@
-/** Run Jest with NODE_OPTIONS=--experimental-vm-modules for the real tokenizer's ESM encoding. */
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
 const mongoose = require('mongoose');
@@ -35,7 +34,12 @@ describe('characterization: completion-level governance rejection retains histor
   let completionCount;
 
   beforeAll(async () => {
-    await Tokenizer.initEncoding('o200k_base');
+    // The real encoding is loaded via dynamic import(), which CI's Jest cannot run without
+    // --experimental-vm-modules; token counts don't affect these assertions.
+    jest.spyOn(Tokenizer, 'initEncoding').mockResolvedValue(undefined);
+    jest
+      .spyOn(Tokenizer, 'getTokenCount')
+      .mockImplementation((text = '') => Math.ceil(String(text).length / 4));
     mongoServer = await MongoMemoryServer.create();
     await mongoose.connect(mongoServer.getUri());
     MCPServersRegistry.createInstance(mongoose);
