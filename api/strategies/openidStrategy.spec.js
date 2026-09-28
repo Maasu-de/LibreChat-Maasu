@@ -249,6 +249,7 @@ describe('setupOpenId', () => {
     delete process.env.PROXY;
     delete process.env.OPENID_USE_PKCE;
     delete process.env.OPENID_GENERATE_NONCE;
+    delete process.env.GOVERNANCE_PILOT_ENABLED;
     delete process.env.OPENID_ROLE_SYNC_ENABLED;
     delete process.env.OPENID_ROLE_SYNC_API_ENABLED;
     delete process.env.OPENID_ROLE_SYNC_SOURCE;
@@ -279,10 +280,32 @@ describe('setupOpenId', () => {
 
     resizeAvatar.mockResolvedValue(Buffer.from('safe avatar'));
 
-    // Call the setup function and capture the verify callback for the regular 'openid' strategy
-    // (not 'openidAdmin' which requires existing users)
+    // Call the setup function and capture the verify callback for the regular 'openid' strategy.
     await setupOpenId();
     verifyCallback = require('openid-client/passport').__getVerifyCallbackByName('openid');
+  });
+
+  describe('admin first sign-in', () => {
+    const validateAdmin = (tokenset) =>
+      new Promise((resolve, reject) => {
+        const callback = require('openid-client/passport').__getVerifyCallbackByName('openidAdmin');
+        callback(tokenset, (err, user) => (err ? reject(err) : resolve(user)));
+      });
+
+    it('provisions a new admin user in the governed pilot', async () => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      await setupOpenId();
+
+      const user = await validateAdmin(tokenset);
+
+      expect(createUser).toHaveBeenCalledTimes(1);
+      expect(user).toMatchObject({ email: 'test@example.com', role: 'ADMIN' });
+    });
+
+    it('still requires an existing user outside the governed pilot', async () => {
+      await expect(validateAdmin(tokenset)).rejects.toThrow('User does not exist');
+      expect(createUser).not.toHaveBeenCalled();
+    });
   });
 
   describe('clientMetadata construction in setupOpenId', () => {
