@@ -135,8 +135,13 @@ function UnifiedSidebar() {
   const logo = (
     <div className="flex h-28 flex-shrink-0 items-center justify-center bg-surface-primary-alt p-2">
       <img
+        src="assets/logo-light.svg?v=2"
+        alt={localize('com_ui_logo', { 0: 'Maasu' })}
+        className="dark:hidden h-full max-w-full object-contain"
+      />
+      <img
         src="assets/logo.svg?v=2"
-        className="h-full max-w-full object-contain"
+        className="hidden dark:block h-full max-w-full object-contain"
         alt={localize('com_ui_logo', { 0: 'Maasu' })}
       />
     </div>
