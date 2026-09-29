@@ -180,21 +180,28 @@ describe('pilot HTTP boundary', () => {
 });
 
 describe('saved history boundary', () => {
+  function historyApp(getMessages: Parameters<typeof createGovernanceHistoryGuard>[0]) {
+    const server = express();
+    server.use(express.json());
+    server.use((req, _res, next) => {
+      Object.assign(req, { user: { id: 'user-1' } });
+      next();
+    });
+    server.use(createGovernanceHistoryGuard(getMessages));
+    server.use((_req, res) => {
+      res.sendStatus(204);
+    });
+    return server;
+  }
+
   it.each([{ content: [{ type: 'text', text: 'Saved text' }] }, { text: 'Saved text' }])(
     'preserves text-only history: %j',
-    async (messages) => {
-      const server = express();
-      server.use(express.json());
-      server.use((req, _res, next) => {
-        Object.assign(req, { user: { id: 'user-1' } });
-        next();
-      });
-      server.use(createGovernanceHistoryGuard(async () => [messages]));
-      server.use((_req, res) => {
-        res.sendStatus(204);
-      });
+    async (content) => {
+      const message = { messageId: 'root', parentMessageId: null, ...content };
       await expect(
-        request(server).post('/').send({ conversationId: 'existing' }),
+        request(historyApp(async () => [message]))
+          .post('/')
+          .send({ conversationId: 'existing', parentMessageId: 'root' }),
       ).resolves.toMatchObject({ status: 204 });
     },
   );
@@ -205,26 +212,66 @@ describe('saved history boundary', () => {
     { content: [{ type: 'tool_call', tool_call: { name: 'web' } }] },
     { content: [{ type: 'image_url' }] },
     { content: [null] },
-  ])('rejects historical files/tool content before initialization: %j', async (message) => {
-    const server = express();
-    server.use(express.json());
-    server.use((req, _res, next) => {
-      Object.assign(req, { user: { id: 'user-1' } });
-      next();
-    });
-    server.use(
-      createGovernanceHistoryGuard(async (filter) => {
-        expect(filter).toEqual({ conversationId: 'existing', user: 'user-1' });
-        return [message];
-      }),
-    );
-    server.use((_req, res) => {
-      res.sendStatus(204);
+  ])('rejects historical files/tool content before initialization: %j', async (content) => {
+    const message = { messageId: 'root', parentMessageId: null, ...content };
+    const server = historyApp(async (filter, select) => {
+      expect(filter).toEqual({ conversationId: 'existing', user: 'user-1' });
+      expect(select).toBe('messageId parentMessageId text content files attachments');
+      return [message];
     });
     await expect(
-      request(server).post('/').send({ conversationId: 'existing' }),
+      request(server).post('/').send({ conversationId: 'existing', parentMessageId: 'root' }),
     ).resolves.toMatchObject({ status: 403 });
   });
+
+  it('allows a clean branch when a sibling contains unsupported content', async () => {
+    const messages = [
+      { messageId: 'root', parentMessageId: null, text: 'Start' },
+      { messageId: 'clean', parentMessageId: 'root', text: 'Text only' },
+      { messageId: 'file-branch', parentMessageId: 'root', files: [{ file_id: 'f' }] },
+    ];
+    const server = historyApp(async () => messages);
+    await expect(
+      request(server).post('/').send({ conversationId: 'existing', parentMessageId: 'clean' }),
+    ).resolves.toMatchObject({ status: 204 });
+    await expect(
+      request(server)
+        .post('/')
+        .send({ conversationId: 'existing', parentMessageId: 'file-branch' }),
+    ).resolves.toMatchObject({ status: 403 });
+  });
+
+  it('rejects unsupported content on a selected ancestor', async () => {
+    const messages = [
+      { messageId: 'root', parentMessageId: null, files: [{ file_id: 'f' }] },
+      { messageId: 'child', parentMessageId: 'root', text: 'Text only' },
+    ];
+    await expect(
+      request(historyApp(async () => messages))
+        .post('/')
+        .send({ conversationId: 'existing', parentMessageId: 'child' }),
+    ).resolves.toMatchObject({ status: 403 });
+  });
+
+  it.each([
+    { parentMessageId: 'missing', messages: [] },
+    {
+      parentMessageId: 'loop-a',
+      messages: [
+        { messageId: 'loop-a', parentMessageId: 'loop-b' },
+        { messageId: 'loop-b', parentMessageId: 'loop-a' },
+      ],
+    },
+  ])(
+    'rejects an incomplete or cyclic selected branch: %j',
+    async ({ parentMessageId, messages }) => {
+      await expect(
+        request(historyApp(async () => messages))
+          .post('/')
+          .send({ conversationId: 'existing', parentMessageId }),
+      ).resolves.toMatchObject({ status: 403 });
+    },
+  );
 });
 
 describe('pilot configuration', () => {

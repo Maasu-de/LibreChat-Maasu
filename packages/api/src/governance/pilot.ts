@@ -1,4 +1,4 @@
-import { isEphemeralAgentId } from 'librechat-data-provider';
+import { Constants, isEphemeralAgentId } from 'librechat-data-provider';
 import type { IUser, IMessage } from '@librechat/data-schemas';
 import type { RequestHandler, Response } from 'express';
 import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from './mode';
@@ -147,19 +147,45 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
   next();
 };
 
-type HistoryMessage = Pick<IMessage, 'text' | 'content' | 'files' | 'attachments'>;
+type HistoryMessage = Pick<
+  IMessage,
+  'messageId' | 'parentMessageId' | 'text' | 'content' | 'files' | 'attachments'
+>;
 
-export function isGovernanceTextHistory(messages: HistoryMessage[]): boolean {
-  return messages.every(
-    (message) =>
-      !message.files?.length &&
-      !message.attachments?.length &&
-      (!message.content?.length ||
-        message.content.every(
-          (part) =>
-            part != null && typeof part === 'object' && 'type' in part && part.type === 'text',
-        )),
+function isGovernanceTextMessage(message: HistoryMessage): boolean {
+  return (
+    !message.files?.length &&
+    !message.attachments?.length &&
+    (!message.content?.length ||
+      message.content.every(
+        (part) =>
+          part != null && typeof part === 'object' && 'type' in part && part.type === 'text',
+      ))
   );
+}
+
+export function isGovernanceTextHistory(
+  messages: HistoryMessage[],
+  parentMessageId?: string | null,
+): boolean {
+  if (!parentMessageId || parentMessageId === Constants.NO_PARENT) {
+    return true;
+  }
+  const byId = new Map(messages.map((message) => [message.messageId, message]));
+  const visited = new Set<string>();
+  let currentId: string | null | undefined = parentMessageId;
+  while (currentId && currentId !== Constants.NO_PARENT) {
+    if (visited.has(currentId)) {
+      return false;
+    }
+    const message = byId.get(currentId);
+    if (!message || !isGovernanceTextMessage(message)) {
+      return false;
+    }
+    visited.add(currentId);
+    currentId = message.parentMessageId;
+  }
+  return true;
 }
 
 /** Check saved content before initialization can reload files or retrieve tool resources. */
@@ -181,9 +207,9 @@ export function createGovernanceHistoryGuard(
     try {
       const messages = await getMessages(
         { conversationId: req.body.conversationId, user: (req.user as IUser).id },
-        'text content files attachments',
+        'messageId parentMessageId text content files attachments',
       );
-      if (!isGovernanceTextHistory(messages)) {
+      if (!isGovernanceTextHistory(messages, req.body.parentMessageId)) {
         deny(res);
         return;
       }
