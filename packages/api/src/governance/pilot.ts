@@ -131,6 +131,7 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     /^\/(agents|assistants|actions|keys|api-keys|mcp|memories|skills|presets|chat)(\/|$)/.test(
       path,
     ) ||
+    (/^\/user\/(plugins|settings\/skills\/active)$/.test(path) && !readOnly) ||
     (/^\/admin\/(config|skills)(\/|$)/.test(path) && !readOnly) ||
     (/^\/files(\/|$)/.test(path) && !readOnly) ||
     (/^\/files\/speech(\/|$)/.test(path) && path !== '/files/speech/config') ||

@@ -3,6 +3,28 @@ import type { AppConfig } from '@librechat/data-schemas';
 import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
 
+function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']) {
+  const disabled = { use: false, create: false, share: false, public: false };
+  return {
+    ...interfaceConfig,
+    modelSelect: true,
+    parameters: false,
+    presets: false,
+    multiConvo: false,
+    agents: false,
+    remoteAgents: disabled,
+    mcpServers: disabled,
+    marketplace: { use: false },
+    skills: false,
+    memories: false,
+    runCode: false,
+    webSearch: false,
+    fileSearch: false,
+    fileCitations: false,
+    defaultPinnedTools: [],
+  };
+}
+
 export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partial<TCustomConfig> {
   if (!isGovernancePilotEnabled()) {
     return config;
@@ -25,7 +47,6 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
   if (!isEnabled(process.env.GOVERNANCE_DLP_ENABLED) || isEnabled(process.env.OPENAI_MODERATION)) {
     throw new Error('Governed pilot requires DLP and forbids external moderation');
   }
-  const disabled = { use: false, create: false, share: false, public: false };
   return {
     ...config,
     endpoints: {
@@ -41,24 +62,7 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
       ],
       agents: { capabilities: [], allowedProviders: [GOVERNANCE_ENDPOINT] },
     },
-    interface: {
-      ...config.interface,
-      modelSelect: true,
-      parameters: false,
-      presets: false,
-      multiConvo: false,
-      agents: false,
-      remoteAgents: disabled,
-      mcpServers: disabled,
-      marketplace: { use: false },
-      skills: false,
-      memories: false,
-      runCode: false,
-      webSearch: false,
-      fileSearch: false,
-      fileCitations: false,
-      defaultPinnedTools: [],
-    },
+    interface: restrictGovernanceInterface(config.interface),
     fileConfig: {
       endpoints: { default: { disabled: true }, [GOVERNANCE_ENDPOINT]: { disabled: true } },
     },
@@ -92,7 +96,7 @@ export function restrictGovernanceAppConfig(app: AppConfig): AppConfig {
     ...app,
     config,
     endpoints: config.endpoints as AppConfig['endpoints'],
-    interfaceConfig: config.interface,
+    interfaceConfig: restrictGovernanceInterface(app.interfaceConfig),
     fileConfig: config.fileConfig as AppConfig['fileConfig'],
     speech: config.speech,
     availableTools: {},

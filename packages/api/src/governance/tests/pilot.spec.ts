@@ -75,6 +75,8 @@ describe('pilot HTTP boundary', () => {
     '/api/memories',
     '/api/skills',
     '/api/presets',
+    '/api/user/plugins',
+    '/api/user/settings/skills/active',
     '/api/convos/import',
     '/api/messages/artifact/message',
     '/api/messages/conversation',
@@ -130,12 +132,21 @@ describe('pilot HTTP boundary', () => {
     '/api/files/config',
     '/api/files/speech/config',
     '/api/admin/config',
+    '/api/user/plugins',
+    '/api/user/settings/skills/active',
     '/api/agents/chat/active',
     '/api/agents/chat/stream/job',
     '/api/agents/chat/status/convo',
   ])('preserves read-only history, config, and stream controls: %s', async (path) => {
     await expect(request(app()).get(path)).resolves.toMatchObject({ status: 204 });
   });
+
+  it.each(['/api/user/terms/accept', '/api/user/settings/favorites'])(
+    'preserves ordinary account mutations: %s',
+    async (path) => {
+      await expect(request(app()).post(path).send({})).resolves.toMatchObject({ status: 204 });
+    },
+  );
 
   it('allows stream abort and manual renaming', async () => {
     await expect(
@@ -257,16 +268,33 @@ describe('pilot configuration', () => {
 
   it('overrides derived admin configuration and preserves unrelated settings', () => {
     const base: AppConfig = {
-      config: {},
+      config: {
+        interface: {
+          contextUsage: true,
+          privacyPolicy: { externalUrl: 'https://old.example/privacy' },
+        },
+      },
       fileStrategy: FileSources.local,
       imageOutputType: 'png',
-      interfaceConfig: { agents: true, modelSelect: false },
+      interfaceConfig: {
+        agents: true,
+        modelSelect: false,
+        contextUsage: false,
+        privacyPolicy: { externalUrl: 'https://example.com/privacy' },
+        termsOfService: { externalUrl: 'https://example.com/terms' },
+      },
       endpoints: { openAI: { titleConvo: true } },
       registration: { socialLogins: ['openid'] },
     };
     const result = restrictGovernanceAppConfig(base);
     expect(result.endpoints?.openAI).toBeUndefined();
-    expect(result.interfaceConfig?.modelSelect).toBe(true);
+    expect(result.interfaceConfig).toMatchObject({
+      agents: false,
+      modelSelect: true,
+      contextUsage: false,
+      privacyPolicy: { externalUrl: 'https://example.com/privacy' },
+      termsOfService: { externalUrl: 'https://example.com/terms' },
+    });
     expect(result.registration).toEqual(base.registration);
     expect(base.endpoints?.openAI).toBeDefined();
   });
