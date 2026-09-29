@@ -15,7 +15,7 @@ import type {
   AnthropicModelOptions,
 } from '~/types';
 import {
-  createGovernanceDlpFetch,
+  createRequestDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
 } from '~/governance/dlp';
@@ -363,10 +363,7 @@ export async function initializeCustom({
     ) {
       options.configOptions = {
         ...(options.configOptions ?? {}),
-        fetch: createGovernanceDlpFetch({
-          userId,
-          fetch: options.configOptions?.fetch,
-        }),
+        fetch: createRequestDlpFetch(req, options.configOptions?.fetch),
       };
     }
     if (options != null) {

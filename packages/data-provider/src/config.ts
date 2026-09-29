@@ -2204,6 +2204,10 @@ export enum CacheKeys {
    */
   PENDING_REQ = 'PENDING_REQ',
   /**
+   * Key for Governance DLP reviews awaiting the user's approval
+   */
+  GOVERNANCE_DLP_REVIEWS = 'GOVERNANCE_DLP_REVIEWS',
+  /**
    * Key for s3 check intervals per user
    */
   S3_EXPIRY_INTERVAL = 'S3_EXPIRY_INTERVAL',

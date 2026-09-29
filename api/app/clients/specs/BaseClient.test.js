@@ -1038,6 +1038,34 @@ describe('BaseClient', () => {
       expect(calls[0][0].isCreatedByUser).toBe(true); // First call should be for user message
       expect(calls[1][0].isCreatedByUser).toBe(false); // Second call should be for response message
     });
+
+    test('saves a governed user message only once the model call returns', async () => {
+      TestClient.options.req = { body: {}, governanceDlpEligible: true };
+      TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({});
+      const sendCompletion = TestClient.sendCompletion.bind(TestClient);
+      const savesDuringCompletion = [];
+      TestClient.sendCompletion = async (...args) => {
+        savesDuringCompletion.push(TestClient.saveMessageToDatabase.mock.calls.length);
+        return sendCompletion(...args);
+      };
+
+      await TestClient.sendMessage('Hello, world!');
+
+      expect(savesDuringCompletion).toEqual([0]);
+      const calls = TestClient.saveMessageToDatabase.mock.calls;
+      expect(calls.map(([message]) => message.isCreatedByUser)).toEqual([true, false]);
+    });
+
+    test('saves nothing when a governed model call ends in a DLP review', async () => {
+      TestClient.options.req = { body: {}, governanceDlpEligible: true };
+      TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({});
+      TestClient.sendCompletion = jest.fn().mockRejectedValue(new Error('review required'));
+
+      await expect(TestClient.sendMessage('My IBAN is DE89370400440532013000')).rejects.toThrow(
+        'review required',
+      );
+      expect(TestClient.saveMessageToDatabase).not.toHaveBeenCalled();
+    });
   });
 
   describe('recordTokenUsage model assignment', () => {
