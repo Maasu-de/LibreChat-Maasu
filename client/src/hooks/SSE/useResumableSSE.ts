@@ -440,6 +440,7 @@ export default function useResumableSSE(
   const [streamId, setStreamId] = useState<string | null>(null);
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
+  const setDlpReview = useSetRecoilState(store.dlpReviewByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
 
   const sseRef = useRef<SSE | null>(null);
@@ -543,6 +544,13 @@ export default function useResumableSSE(
             }
             try {
               finalHandler(data, currentSubmission as EventSubmission);
+              if (data.dlpReview != null) {
+                setDlpReview({
+                  result: data.dlpReview,
+                  text: data.requestMessage?.text ?? userMessage.text,
+                  conversationId: currentSubmission.conversation?.conversationId ?? null,
+                });
+              }
               finalizeUsage(data, { ...currentSubmission, userMessage });
             } catch (error) {
               console.error('[ResumableSSE] Error in finalHandler:', error);
@@ -1072,6 +1080,7 @@ export default function useResumableSSE(
       setAbortScroll,
       setActiveRunId,
       setShowStopButton,
+      setDlpReview,
       finalHandler,
       createdHandler,
       attachmentHandler,

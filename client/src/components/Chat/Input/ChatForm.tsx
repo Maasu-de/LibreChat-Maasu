@@ -59,7 +59,6 @@ interface ChatFormProps {
   pendingDlpSubmission: ReturnType<typeof useChatContext>['pendingDlpSubmission'];
   cancelDlpIntervention: ReturnType<typeof useChatContext>['cancelDlpIntervention'];
   confirmDlpIntervention: ReturnType<typeof useChatContext>['confirmDlpIntervention'];
-  isDlpChecking: ReturnType<typeof useChatContext>['isDlpChecking'];
 }
 
 const ChatForm = memo(function ChatForm({
@@ -76,7 +75,6 @@ const ChatForm = memo(function ChatForm({
   pendingDlpSubmission,
   cancelDlpIntervention,
   confirmDlpIntervention,
-  isDlpChecking,
 }: ChatFormProps) {
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -145,16 +143,21 @@ const ChatForm = memo(function ChatForm({
     [conversation?.assistant_id, endpoint, assistantMap],
   );
   const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant || isDlpChecking,
-    [requiresKey, invalidAssistant, isDlpChecking],
+    () => requiresKey || invalidAssistant,
+    [requiresKey, invalidAssistant],
   );
 
   const handleCancelDlpIntervention = useCallback(() => {
     if (pendingDlpSubmission) {
-      methods.setValue('text', pendingDlpSubmission.props.text, { shouldValidate: true });
+      methods.setValue('text', pendingDlpSubmission.text, { shouldValidate: true });
     }
     cancelDlpIntervention();
   }, [cancelDlpIntervention, methods, pendingDlpSubmission]);
+
+  const handleConfirmDlpIntervention = useCallback(() => {
+    confirmDlpIntervention();
+    methods.reset();
+  }, [confirmDlpIntervention, methods]);
 
   const handleContainerClick = useCallback(() => {
     /** Check if the device is a touchscreen */
@@ -276,9 +279,9 @@ const ChatForm = memo(function ChatForm({
       {pendingDlpSubmission && (
         <DlpInterventionDialog
           result={pendingDlpSubmission.result}
-          originalText={pendingDlpSubmission.props.text}
+          originalText={pendingDlpSubmission.text}
           onCancel={handleCancelDlpIntervention}
-          onConfirm={confirmDlpIntervention}
+          onConfirm={handleConfirmDlpIntervention}
         />
       )}
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
@@ -465,7 +468,6 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
     pendingDlpSubmission,
     cancelDlpIntervention,
     confirmDlpIntervention,
-    isDlpChecking,
   } = useChatContext();
 
   /**
@@ -521,7 +523,6 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
       pendingDlpSubmission={pendingDlpSubmission}
       cancelDlpIntervention={cancelDlpIntervention}
       confirmDlpIntervention={confirmDlpIntervention}
-      isDlpChecking={isDlpChecking}
     />
   );
 }

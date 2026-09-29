@@ -79,7 +79,6 @@ export default function useChatHelpers(index = 0, paramId?: string) {
   const {
     ask: _ask,
     regenerate: _regenerate,
-    isDlpChecking,
     pendingDlpSubmission,
     cancelDlpIntervention,
     confirmDlpIntervention,
@@ -236,7 +235,6 @@ export default function useChatHelpers(index = 0, paramId?: string) {
       setFiles,
       filesLoading,
       setFilesLoading,
-      isDlpChecking,
       pendingDlpSubmission,
       cancelDlpIntervention,
       confirmDlpIntervention,
@@ -271,7 +269,6 @@ export default function useChatHelpers(index = 0, paramId?: string) {
       setFiles,
       filesLoading,
       setFilesLoading,
-      isDlpChecking,
       pendingDlpSubmission,
       cancelDlpIntervention,
       confirmDlpIntervention,
