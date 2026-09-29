@@ -537,6 +537,7 @@ class BaseClient {
     const appConfig = this.options.req?.config;
     /** @type {Promise<TMessage>} */
     let userMessagePromise;
+    let saveUserMessage = null;
     const { user, head, isEdited, conversationId, responseMessageId, saveOptions, userMessage } =
       await this.handleStartMethods(message, opts);
 
@@ -652,17 +653,24 @@ class BaseClient {
           userMessage.alwaysAppliedSkills = names;
         }
       }
-      userMessagePromise = this.saveMessageToDatabase(userMessage, saveOptions, user).catch(
-        (err) => {
-          logger.error('[BaseClient] Failed to save user message:', err);
-          return {};
-        },
-      );
-      this.savedMessageIds.add(userMessage.messageId);
-      if (typeof opts?.getReqData === 'function') {
-        opts.getReqData({
-          userMessagePromise,
-        });
+      saveUserMessage = () => {
+        userMessagePromise = this.saveMessageToDatabase(userMessage, saveOptions, user).catch(
+          (err) => {
+            logger.error('[BaseClient] Failed to save user message:', err);
+            return {};
+          },
+        );
+        this.savedMessageIds.add(userMessage.messageId);
+        if (typeof opts?.getReqData === 'function') {
+          opts.getReqData({
+            userMessagePromise,
+          });
+        }
+      };
+      /** A governed turn can end in a DLP review, so its text is only saved once the model ran. */
+      if (this.options.req?.governanceDlpEligible !== true) {
+        saveUserMessage();
+        saveUserMessage = null;
       }
     }
 
@@ -696,6 +704,7 @@ class BaseClient {
     }
 
     const { completion, metadata } = await this.sendCompletion(payload, opts);
+    saveUserMessage?.();
     if (this.abortController) {
       this.abortController.requestCompleted = true;
     }

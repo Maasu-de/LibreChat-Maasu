@@ -1,3 +1,5 @@
+import type { GovernanceDlpReview } from 'librechat-data-provider';
+
 /** SSE streaming event (on_run_step, on_message_delta, etc.) */
 export type StreamEvent = {
   event: string;
@@ -47,6 +49,8 @@ export type FinalEvent = {
   runMessages?: FinalMessageFields[];
   /** Top-level event error (abort-during-completion edge case) */
   error?: { message: string };
+  /** DLP review that ended the turn before the model was called */
+  dlpReview?: GovernanceDlpReview;
 };
 
 export type ServerSentEvent = StreamEvent | CreatedEvent | FinalEvent;

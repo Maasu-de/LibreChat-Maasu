@@ -4,6 +4,7 @@ const {
   sendEvent,
   getViolationInfo,
   buildMessageFiles,
+  createReviewEvent,
   getReferencedQuotes,
   resolveTitleTiming,
   GenerationJobManager,
@@ -695,7 +696,13 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         // Check if this was an abort (not a real error)
         const wasAborted = job.abortController.signal.aborted || error.message?.includes('abort');
 
-        if (wasAborted) {
+        if (req.governanceDlpReview) {
+          await GenerationJobManager.emitDone(
+            streamId,
+            createReviewEvent(req.governanceDlpReview, userMessage),
+          );
+          GenerationJobManager.completeJob(streamId);
+        } else if (wasAborted) {
           logger.debug(`[ResumableAgentController] Generation aborted for ${streamId}`);
           // abortJob already handled emitDone and completeJob
         } else {

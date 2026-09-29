@@ -1489,6 +1489,9 @@ class AgentClient extends BaseClient {
         });
       }
     } catch (err) {
+      if (this.options.req?.governanceDlpReview) {
+        throw err;
+      }
       if (abortController.signal.aborted) {
         logger.debug(
           '[api/server/controllers/agents/client.js #sendCompletion] Operation aborted by user',

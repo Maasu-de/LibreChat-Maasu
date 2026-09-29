@@ -4,13 +4,24 @@ import type {
   TPayload,
   TEndpointOption,
   TEphemeralAgent,
-  AgentModelParameters,
   GovernanceDecision,
   GovernanceDlpResult,
   GovernanceFinding,
+  GovernanceDlpReview,
   GovernanceMaskedContent,
 } from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
+import type { GatewayReview, ReviewStore } from './review';
+import type { ServerRequest } from '~/types/http';
+import {
+  maskText,
+  readReview,
+  reviewTtl,
+  getReviewStore,
+  toClientReview,
+  findSubmittedText,
+  findingsInSubmittedText,
+} from './review';
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHECK_PATH = '/api/v1/dlp/check';
@@ -25,6 +36,9 @@ const DLP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
 const DLP_BLOCKED_MESSAGE =
   "This message was blocked by your organization's data loss prevention policy. No content was sent to the model.";
+const DLP_REVIEW_PENDING_MESSAGE = 'This message needs your review before it is sent to the model.';
+const DLP_APPROVAL_INVALID_MESSAGE =
+  'The approval for this message is no longer valid. Please send the message again.';
 const DLP_UNSUPPORTED_MESSAGE =
   'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
 
@@ -45,6 +59,10 @@ export interface GovernanceChatCompletionRequest {
   messages: GovernanceChatMessage[];
   stream?: boolean;
   temperature?: number;
+  /** `/api/v1/dlp` only: return a review instead of calling the model when DLP finds anything. */
+  require_user_approval?: boolean;
+  /** `/api/v1/dlp` only: approval token of the stage 1 review being completed. */
+  dlp_token?: string;
 }
 
 export interface DlpCheckResult extends GovernanceDlpResult {
@@ -93,6 +111,13 @@ export interface GovernanceFetchParams {
   userId: string;
   fetch?: GovernanceFetch;
   check?: DlpChecker;
+  /** The user's submitted text, which reviews and approvals are bound to. */
+  text?: string;
+  /** Review the user approved; its stored request is sent instead of the rebuilt one. */
+  reviewId?: string;
+  /** Receives a review the user has to decide on. The model call then ends without a completion. */
+  onReview?: (review: GovernanceDlpReview) => void;
+  reviews?: ReviewStore;
 }
 
 export class GovernanceDlpError extends Error {
@@ -228,42 +253,6 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
   );
 }
 
-function readModel(params?: Partial<AgentModelParameters>): string | undefined {
-  return params?.model;
-}
-
-/** Resolves the model name for the DLP check from the endpoint option, then the raw body. */
-export function getModel(body: GovernanceSubmissionBody): string {
-  return (
-    readModel(body.endpointOption?.model_parameters) ??
-    readModel(body.endpointOption?.modelOptions) ??
-    (typeof body.model === 'string' ? body.model : undefined) ??
-    'unknown'
-  );
-}
-
-/** Checks the plain text submitted through LibreChat's normal message form. */
-export function checkTextSubmission({
-  text,
-  model,
-  userId,
-  http,
-}: {
-  text: string;
-  model: string;
-  userId: string;
-  http?: HttpPoster;
-}): Promise<DlpCheckResult> {
-  return checkDlp({
-    request: {
-      model,
-      messages: [{ role: 'user', content: text }],
-    },
-    userId,
-    http,
-  });
-}
-
 /** Formats a BLOCK decision for the shared SSE deny path. Only BLOCK denies a completion. */
 export function createDlpBlock(result: DlpCheckResult): DlpBlock {
   if (result.decision !== 'BLOCK') {
@@ -279,19 +268,6 @@ export function createDlpBlock(result: DlpCheckResult): DlpBlock {
       message: DLP_BLOCKED_MESSAGE,
       policy_version: result.policyVersion,
       findings: result.findings,
-    },
-  };
-}
-
-export function createDlpFailure(): {
-  status: number;
-  body: { type: ErrorTypes; message: string };
-} {
-  return {
-    status: 503,
-    body: {
-      type: ErrorTypes.GOVERNANCE_UNAVAILABLE,
-      message: DLP_FAILURE_MESSAGE,
     },
   };
 }
@@ -410,17 +386,127 @@ function withGovernanceRequest(
   return { ...init, body: JSON.stringify(request), headers };
 }
 
+/** A 400 ends the model call without the SDK retrying it, as it would a thrown fetch error. */
+function governanceErrorResponse(code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: { message, type: 'governance_review', code } }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+interface ApprovalParams {
+  input: RequestInfo | URL;
+  init?: RequestInit;
+  request: GovernanceChatCompletionRequest;
+  userId: string;
+  text: string;
+  reviewId?: string;
+  onReview: (review: GovernanceDlpReview) => void;
+  fetch: GovernanceFetch;
+  reviews: ReviewStore;
+}
+
+function withApproval(
+  { input, init, request, userId }: ApprovalParams,
+  messages: GovernanceChatMessage[],
+  dlpToken?: string,
+): RequestInit {
+  const approval: GovernanceChatCompletionRequest = {
+    ...request,
+    messages,
+    require_user_approval: true,
+    ...(dlpToken !== undefined ? { dlp_token: dlpToken } : {}),
+  };
+  return withGovernanceRequest(input, init, approval, userId);
+}
+
+/**
+ * Handles a stage 1 review. Findings outside the submitted text were approved in earlier turns,
+ * so such a review is completed at once. Otherwise the review is stored for the user's approval
+ * and handed to `onReview`, and the model call ends.
+ */
+async function handleReview(params: ApprovalParams, review: GatewayReview): Promise<Response> {
+  const decision = normalizeDecision(review.action);
+  const submitted = findSubmittedText(params.request.messages, params.text);
+  if (!submitted) {
+    return governanceErrorResponse('dlp_check_unsupported_request', DLP_FAILURE_MESSAGE);
+  }
+
+  const findings = findingsInSubmittedText(review.findings ?? [], submitted);
+  if (decision === 'BLOCK') {
+    params.onReview(toClientReview(review, decision, findings));
+    return governanceErrorResponse('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
+  }
+
+  const { messages, dlp_token: dlpToken } = review;
+  if (!messages || !dlpToken) {
+    return governanceErrorResponse('dlp_check_malformed_response', DLP_FAILURE_MESSAGE);
+  }
+  if (findings.length === 0) {
+    return params.fetch(params.input, withApproval(params, messages, dlpToken));
+  }
+
+  const approvedText = maskText(params.text, findings);
+  if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
+    return governanceErrorResponse('dlp_check_malformed_response', DLP_FAILURE_MESSAGE);
+  }
+
+  await params.reviews.set(
+    review.review_id,
+    {
+      userId: params.userId,
+      model: params.request.model,
+      text: approvedText,
+      messages,
+      dlpToken,
+    },
+    reviewTtl(review.expires_at),
+  );
+  params.onReview(toClientReview(review, decision, findings, approvedText));
+  return governanceErrorResponse('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
+}
+
+/** Sends the approved stage 2 request, or stage 1 with `require_user_approval`. */
+async function sendForApproval(params: ApprovalParams): Promise<Response> {
+  const { input, request, userId, text, reviewId, reviews } = params;
+  if (reviewId !== undefined) {
+    const stored = await reviews.get(reviewId);
+    if (
+      !stored ||
+      stored.userId !== userId ||
+      stored.model !== request.model ||
+      stored.text !== text
+    ) {
+      return governanceErrorResponse('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
+    }
+    return params.fetch(input, withApproval(params, stored.messages, stored.dlpToken));
+  }
+
+  const stage1 = await params.fetch(input, withApproval(params, request.messages));
+  const { review, response } = await readReview(stage1);
+  if (!review) {
+    return response;
+  }
+  await response.body?.cancel();
+  return handleReview(params, review);
+}
+
 /**
  * Reduces a governed completion to the allow-listed text request before it is streamed to the
  * Governance Backend, leaving the response stream untouched. The `/api/v1/dlp` endpoint enforces
- * DLP on that request itself. The `/v1` endpoint first needs an exact check, whose token is bound
- * to the final message list. A governed completion sent through an unsupported request shape
- * (currently the Responses API) is rejected here rather than forwarded without a scan or token.
+ * DLP on that request itself and, with `onReview`, pauses for the user's approval. The `/v1`
+ * endpoint first needs an exact check, whose token is bound to the final message list. A governed
+ * completion sent through an unsupported request shape (currently the Responses API) is rejected
+ * here rather than forwarded without a scan or token.
  */
 export function createGovernanceDlpFetch({
   userId,
   fetch = globalThis.fetch,
   check = checkDlp,
+  text = '',
+  reviewId,
+  onReview,
+  reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
     if (isResponsesApiUrl(input)) {
@@ -438,7 +524,20 @@ export function createGovernanceDlpFetch({
     }
 
     if (isDlpChatCompletionsUrl(input)) {
-      return fetch(input, withGovernanceRequest(input, init, request, userId));
+      if (!onReview) {
+        return fetch(input, withGovernanceRequest(input, init, request, userId));
+      }
+      return sendForApproval({
+        input,
+        init,
+        request,
+        userId,
+        text,
+        reviewId,
+        onReview,
+        fetch,
+        reviews: reviews ?? getReviewStore(),
+      });
     }
 
     const result = await check({ request, userId });
@@ -455,4 +554,21 @@ export function createGovernanceDlpFetch({
 
     return fetch(input, withGovernanceRequest(input, init, request, userId, result.dlpToken));
   };
+}
+
+/** The governed fetch for one chat request. A review the user has to decide on is set on `req`. */
+export function createRequestDlpFetch(
+  req: ServerRequest,
+  fetch?: GovernanceFetch,
+): GovernanceFetch {
+  const { text, dlpReviewId } = req.body ?? {};
+  return createGovernanceDlpFetch({
+    userId: req.user?.id ?? '',
+    fetch,
+    text: typeof text === 'string' ? text : '',
+    reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
+    onReview: (review) => {
+      req.governanceDlpReview = review;
+    },
+  });
 }

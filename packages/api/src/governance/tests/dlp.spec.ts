@@ -2,7 +2,6 @@ import { ErrorTypes, ContentTypes } from 'librechat-data-provider';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
 import {
-  getModel,
   checkDlp,
   createDlpBlock,
   hasSelectedTools,
@@ -498,34 +497,5 @@ describe('isPlainTextSubmission', () => {
 
   it('ignores empty file and tool arrays', () => {
     expect(isPlainTextSubmission(plainTextBody({ files: [], tools: [] }))).toBe(true);
-  });
-});
-
-describe('getModel', () => {
-  it('prefers the resolved endpoint model parameters', () => {
-    const body = plainTextBody({
-      model: 'raw-model',
-      endpointOption: {
-        model_parameters: { model: 'param-model' },
-        modelOptions: { model: 'option-model' },
-      },
-    });
-    expect(getModel(body)).toBe('param-model');
-  });
-
-  it('falls back to modelOptions, then the raw body model', () => {
-    expect(
-      getModel(
-        plainTextBody({
-          model: 'raw-model',
-          endpointOption: { modelOptions: { model: 'option-model' } },
-        }),
-      ),
-    ).toBe('option-model');
-    expect(getModel(plainTextBody({ model: 'raw-model' }))).toBe('raw-model');
-  });
-
-  it('returns "unknown" when no model is present', () => {
-    expect(getModel(plainTextBody())).toBe('unknown');
   });
 });

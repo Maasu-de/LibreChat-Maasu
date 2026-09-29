@@ -55,6 +55,7 @@ export * from './skills';
 export * from './endpoints';
 /* Governance */
 export * from './governance/dlp';
+export { createReviewEvent } from './governance/review';
 /* Files */
 export * from './files';
 /* Storage */

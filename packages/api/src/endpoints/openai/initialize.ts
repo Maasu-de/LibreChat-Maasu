@@ -13,7 +13,7 @@ import {
   getAzureCredentials,
 } from '~/utils';
 import {
-  createGovernanceDlpFetch,
+  createRequestDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
 } from '~/governance/dlp';
@@ -203,10 +203,7 @@ export async function initializeOpenAI({
   ) {
     options.configOptions = {
       ...(options.configOptions ?? {}),
-      fetch: createGovernanceDlpFetch({
-        userId: req.user?.id ?? '',
-        fetch: options.configOptions?.fetch,
-      }),
+      fetch: createRequestDlpFetch(req, options.configOptions?.fetch),
     };
   }
 
