@@ -1,22 +1,15 @@
 import React, { useState } from 'react';
-import axios from 'axios';
-import { RecoilRoot } from 'recoil';
+import { RecoilRoot, useSetRecoilState } from 'recoil';
 import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { EModelEndpoint, QueryKeys, encodeEphemeralAgentId } from 'librechat-data-provider';
-import type {
-  TMessage,
-  TSubmission,
-  TConversation,
-  GovernanceDlpCheckRequest,
-  GovernanceDlpCheckResponse,
-} from 'librechat-data-provider';
+import type { TMessage, TSubmission, TConversation } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
+import type { TPendingDlpReview } from '~/common';
 import DlpInterventionDialog from '~/components/Chat/Input/DlpInterventionDialog';
-import { startupConfigKey } from '~/data-provider/Endpoints/queries';
-import { ephemeralAgentByConvoId } from '~/store/agents';
 import useChatFunctions from '../useChatFunctions';
+import store from '~/store';
 
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: { id: 'user-1' } }),
@@ -24,9 +17,7 @@ jest.mock('~/hooks', () => ({
 }));
 
 jest.mock('~/data-provider', () => ({
-  startupConfigKey: jest.requireActual('~/data-provider/Endpoints/queries').startupConfigKey,
-  useGovernanceDlpCheckMutation: jest.requireActual('~/data-provider/Governance/mutations')
-    .useGovernanceDlpCheckMutation,
+  startupConfigKey: (loggedIn: boolean) => ['startupConfig', loggedIn],
 }));
 
 jest.mock('~/hooks/Files/useSetFilesToDelete', () => () => jest.fn());
@@ -35,16 +26,12 @@ jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: () => undefined 
 jest.mock('~/utils', () => ({
   ...jest.requireActual('~/utils'),
   logger: { log: jest.fn(), dir: jest.fn(), warn: jest.fn() },
-  cn: jest.requireActual('~/utils/cn').default,
-}));
-jest.mock('@librechat/client', () => ({
-  ...jest.requireActual('@librechat/client'),
-  useToastContext: () => ({ showToast: jest.fn() }),
 }));
 
 const endpoint = 'AI Governance Gateway' as EModelEndpoint;
 const model = 'governed-model';
-const iban = 'My IBAN is GB82 WEST 1234 5698 7654 32';
+const email = 'Please email max@example.com today';
+const maskedEmail = 'Please email [EMAIL] today';
 const newConversation: TConversation = {
   conversationId: null,
   title: null,
@@ -59,40 +46,81 @@ const savedConversation: TConversation = {
   agent_id: encodeEphemeralAgentId({ endpoint, model }),
 };
 
+const maskReview = (conversationId: string | null): TPendingDlpReview => ({
+  text: email,
+  conversationId,
+  result: {
+    reviewId: 'review-1',
+    decision: 'MASK',
+    policyVersion: 5,
+    findings: [
+      {
+        location: '/messages/0/content',
+        start: 13,
+        end: 28,
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        replacement: '[EMAIL]',
+      },
+    ],
+    maskedPreview: [{ location: '/messages/0/content', text: maskedEmail }],
+  },
+});
+
+const blockReview: TPendingDlpReview = {
+  text: 'My IBAN is DE89370400440532013000',
+  conversationId: savedConversation.conversationId,
+  result: {
+    reviewId: 'review-2',
+    decision: 'BLOCK',
+    findings: [
+      {
+        location: '/messages/0/content',
+        start: 11,
+        end: 33,
+        category: 'IBAN_CODE',
+        action: 'BLOCK',
+      },
+    ],
+  },
+};
+
 const setSubmission = jest.fn<void, Parameters<SetterOrUpdater<TSubmission | null>>>();
 const setMessages = jest.fn<void, [TMessage[]]>();
 
+/** Stands in for the stream handler, which stores the review a turn ended with. */
+function ReviewFromStream({ review }: { review: TPendingDlpReview }) {
+  const setReview = useSetRecoilState(store.dlpReviewByIndex(0));
+  return <button aria-label="Stream review" onClick={() => setReview(review)} />;
+}
+
 function Chat({
   conversation,
-  history = [],
+  review,
 }: {
   conversation: TConversation;
-  history?: TMessage[];
+  review: TPendingDlpReview;
 }) {
   const [text, setText] = useState('');
-  const {
-    ask,
-    pendingDlpSubmission,
-    cancelDlpIntervention,
-    confirmDlpIntervention,
-    isDlpChecking,
-  } = useChatFunctions({
-    conversation,
-    getMessages: () => history,
-    setMessages,
-    setSubmission,
-    isSubmitting: false,
-    latestMessage: history.at(-1) ?? null,
-  });
+  const { ask, pendingDlpSubmission, cancelDlpIntervention, confirmDlpIntervention } =
+    useChatFunctions({
+      conversation,
+      getMessages: () => [],
+      setMessages,
+      setSubmission,
+      isSubmitting: false,
+      latestMessage: null,
+    });
 
   return (
     <>
       <input aria-label="Prompt" value={text} onChange={(event) => setText(event.target.value)} />
-      <button aria-label="Send" disabled={isDlpChecking} onClick={() => ask({ text })} />
+      <button aria-label="Send" onClick={() => ask({ text })} />
+      <ReviewFromStream review={review} />
       {pendingDlpSubmission && (
         <DlpInterventionDialog
           result={pendingDlpSubmission.result}
-          originalText={pendingDlpSubmission.props.text}
+          originalText={pendingDlpSubmission.text}
           onCancel={cancelDlpIntervention}
           onConfirm={confirmDlpIntervention}
         />
@@ -101,150 +129,83 @@ function Chat({
   );
 }
 
-function renderChat(conversation: TConversation, governancePilotEnabled = false) {
-  const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  queryClient.setQueryData(startupConfigKey(true), {
-    governanceDlpEnabled: true,
-    governancePilotEnabled,
-  });
+function renderChat(conversation: TConversation, review: TPendingDlpReview) {
+  const queryClient = new QueryClient();
   queryClient.setQueryData([QueryKeys.endpoints], { [endpoint]: { type: EModelEndpoint.custom } });
-  const view = render(<Chat conversation={conversation} />, {
-    wrapper: ({ children }) => (
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <QueryClientProvider client={queryClient}>
-          <RecoilRoot
-            initializeState={({ set }) => {
-              if (governancePilotEnabled) {
-                set(ephemeralAgentByConvoId(conversation.conversationId ?? 'new'), {
-                  web_search: true,
-                  execute_code: true,
-                  skills: true,
-                  artifacts: 'html',
-                  mcp: ['external'],
-                });
-              }
-            }}
-          >
-            {children}
-          </RecoilRoot>
-        </QueryClientProvider>
-      </MemoryRouter>
-    ),
-  });
-  return { ...view, queryClient };
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <QueryClientProvider client={queryClient}>
+        <RecoilRoot>{children}</RecoilRoot>
+      </QueryClientProvider>
+    </MemoryRouter>
+  );
+  return render(<Chat conversation={conversation} review={review} />, { wrapper });
 }
 
-async function send(text: string) {
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).not.toBeDisabled());
-  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: text } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+function lastSubmission(): TSubmission {
+  const submission = setSubmission.mock.calls.at(-1)?.[0];
+  if (submission == null || typeof submission === 'function') {
+    throw new Error('Expected a chat submission');
+  }
+  return submission;
 }
 
 beforeEach(() => {
   setSubmission.mockClear();
   setMessages.mockClear();
-  jest.spyOn(axios, 'post').mockImplementation(async (url, data) => {
-    if (url !== '/api/governance/dlp/check' || typeof data !== 'string') {
-      throw new Error('Unexpected HTTP request in DLP fixture');
-    }
-    const { text }: GovernanceDlpCheckRequest = JSON.parse(data);
-    const response: GovernanceDlpCheckResponse = {
-      enabled: true,
-      decision: text === iban ? 'BLOCK' : 'ALLOW',
-      policyVersion: 1,
-      findings:
-        text === iban
-          ? [
-              {
-                location: '/messages/0/content',
-                start: 11,
-                end: 38,
-                category: 'IBAN_CODE',
-                action: 'BLOCK',
-              },
-            ]
-          : [],
-    };
-    return { data: response };
-  });
 });
 
-it.each([newConversation, savedConversation])(
-  'shows a blocking dialog without submitting in conversation $conversationId',
-  async (conversation) => {
-    const { queryClient } = renderChat(conversation);
+it('sends a message at once, without a separate DLP check', () => {
+  renderChat(savedConversation, maskReview(savedConversation.conversationId));
 
-    await send(iban);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: email } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('com_ui_dlp_block_title')).toBeInTheDocument();
-    expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
-    expect(setSubmission).not.toHaveBeenCalled();
-    expect(setMessages).not.toHaveBeenCalled();
-    queryClient.clear();
-  },
-);
+  expect(setSubmission).toHaveBeenCalledTimes(1);
+  expect(lastSubmission().userMessage.text).toBe(email);
+  expect(lastSubmission().dlpReviewId).toBeUndefined();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
 
-it.each([false, true])(
-  'keeps checking plain-text follow-ups with pilot enabled = %s',
-  async (governancePilot) => {
-    const { rerender, queryClient } = renderChat(newConversation, governancePilot);
-    await send('hi');
-    await waitFor(() => expect(setSubmission).toHaveBeenCalledTimes(1));
+it.each([savedConversation, newConversation])(
+  'sends the masked text with the review ID once the user confirms, in conversation $conversationId',
+  (conversation) => {
+    renderChat(conversation, maskReview(conversation.conversationId));
 
-    const history = setMessages.mock.calls[0][0].map((message) => ({
-      ...message,
-      conversationId: savedConversation.conversationId,
-      text: message.isCreatedByUser ? message.text : 'Hello',
-      createdAt: '2026-09-23T00:00:00Z',
-      unfinished: false,
-    }));
-    rerender(<Chat conversation={savedConversation} history={history} />);
-    await send(iban);
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('[EMAIL]')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
     expect(setSubmission).toHaveBeenCalledTimes(1);
-    expect(setMessages).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_close' }));
-
-    for (const [index, prompt] of ['Tell me about rain', 'Tell me more'].entries()) {
-      await send(prompt);
-      await waitFor(() => expect(setSubmission).toHaveBeenCalledTimes(index + 2));
-      const submission = setSubmission.mock.calls[index + 1][0];
-      if (submission == null || typeof submission === 'function') {
-        throw new Error('Expected a chat submission');
-      }
-      expect(submission.conversation.conversationId).toBe(savedConversation.conversationId);
-      expect(submission.userMessage.text).toBe(prompt);
-      expect(submission.messages).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ text: iban })]),
-      );
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-      const completedHistory = setMessages.mock.calls.at(-1)![0].map((message) => ({
-        ...message,
-        text: message.isCreatedByUser ? message.text : 'OK',
-        createdAt: '2026-09-23T00:00:00Z',
-        unfinished: false,
-      }));
-      rerender(<Chat conversation={savedConversation} history={completedHistory} />);
-    }
-
-    await send(iban);
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(axios.post).toHaveBeenCalledTimes(5);
-    expect(setSubmission).toHaveBeenCalledTimes(3);
-    expect(setMessages).toHaveBeenCalledTimes(3);
-    queryClient.clear();
+    expect(lastSubmission().userMessage.text).toBe(maskedEmail);
+    expect(lastSubmission().dlpReviewId).toBe('review-1');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   },
 );
 
-it('ignores persisted hidden tool selections while keeping pilot DLP and text submissions functional', async () => {
-  const { queryClient } = renderChat(savedConversation, true);
-  await send('plain text');
-  await waitFor(() => expect(setSubmission).toHaveBeenCalledTimes(1));
-  expect(axios.post).toHaveBeenCalledTimes(1);
-  expect(setSubmission.mock.calls[0][0]).toMatchObject({
-    ephemeralAgent: undefined,
-    manualSkills: undefined,
-  });
-  queryClient.clear();
+it('shows a BLOCK review without a way to send the message', () => {
+  renderChat(savedConversation, blockReview);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+
+  expect(screen.getByText('com_ui_dlp_block_title')).toBeInTheDocument();
+  expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
+  expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_close' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(setSubmission).not.toHaveBeenCalled();
+});
+
+it('drops a review once the chat moves to another conversation', () => {
+  const review = maskReview(savedConversation.conversationId);
+  const { rerender } = renderChat(savedConversation, review);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  rerender(
+    <Chat conversation={{ ...savedConversation, conversationId: 'other' }} review={review} />,
+  );
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });

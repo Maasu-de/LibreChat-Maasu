@@ -21,15 +21,6 @@ export interface GovernanceDlpResult {
   maskedPreview?: GovernanceMaskedContent[];
 }
 
-export interface GovernanceDlpCheckRequest {
-  text: string;
-  model: string;
-}
-
-export type GovernanceDlpCheckResponse =
-  | { enabled: false }
-  | ({ enabled: true } & GovernanceDlpResult);
-
 /**
  * A DLP review the Governance Backend returned instead of a completion. Findings and the masked
  * preview refer to the submitted text at `/messages/0/content`. Sending that text again with
