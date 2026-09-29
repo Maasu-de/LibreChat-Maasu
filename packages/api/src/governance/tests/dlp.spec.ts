@@ -8,6 +8,7 @@ import {
   createDlpBlock,
   hasSelectedTools,
   isPlainTextSubmission,
+  isGovernanceGatewayUrl,
   createGovernanceDlpFetch,
   GovernanceDlpError,
   type CheckDlpParams,
@@ -92,6 +93,31 @@ describe('Governance DLP', () => {
       findings: [],
       dlpToken: 'signed-dlp-token',
     });
+  });
+
+  it('checks against the gateway root when the base URL is the DLP completions API', async () => {
+    process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/api/v1/dlp/';
+    const data: DlpCheckResponse = { action: 'ALLOW', findings: [], dlp_token: 'signed-dlp-token' };
+    const http = jest.fn<ReturnType<HttpPoster>, Parameters<HttpPoster>>(
+      async () => ({ status: 200, data }) as AxiosResponse<DlpCheckResponse>,
+    );
+
+    await checkDlp({
+      request: { model: 'governed-model', messages: [{ role: 'user', content: 'normal text' }] },
+      userId: 'user-123',
+      http,
+    });
+
+    expect(http.mock.calls[0]?.[0]).toBe('http://governance.test/api/v1/dlp/check');
+  });
+
+  it.each([
+    ['http://governance.test/v1', 'http://governance.test/api/v1/dlp', true],
+    ['http://governance.test/api/v1/dlp', 'http://governance.test/v1/', true],
+    ['http://governance.test/api/v1/dlp', 'http://other.test/api/v1/dlp', false],
+  ])('matches completion base URL %s against configured %s', (baseURL, configured, expected) => {
+    process.env.GOVERNANCE_API_BASE_URL = configured;
+    expect(isGovernanceGatewayUrl(baseURL)).toBe(expected);
   });
 
   it('formats the deny payload for a BLOCK decision', () => {
@@ -181,6 +207,65 @@ describe('Governance DLP', () => {
       }),
     );
     expect(result).toBe(upstreamResponse);
+  });
+
+  it('forwards the text-only request to the DLP completions API without a separate check', async () => {
+    const upstreamResponse = new Response('stream remains intact');
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => upstreamResponse,
+    );
+    const check = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+      check,
+    });
+
+    const result = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'sensitive text' }],
+        stream: true,
+        user: 'user-123',
+        stream_options: { include_usage: true },
+      }),
+    });
+
+    const headers = new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers);
+    expect(check).not.toHaveBeenCalled();
+    expect(headers.has('X-DLP-Token')).toBe(false);
+    expect(headers.get('X-LibreChat-User-ID')).toBe('user-123');
+    expect(upstreamFetch.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'sensitive text' }],
+        stream: true,
+      }),
+    );
+    expect(result).toBe(upstreamResponse);
+  });
+
+  it('rejects an unsupported request to the DLP completions API instead of forwarding it', async () => {
+    const upstreamFetch = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+      check: jest.fn(),
+    });
+
+    await expect(
+      governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'governed-model',
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'normal text' }] }],
+        }),
+      }),
+    ).rejects.toMatchObject({ code: 'dlp_check_unsupported_request' });
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it.each(['WARN', 'MASK'] as const)(

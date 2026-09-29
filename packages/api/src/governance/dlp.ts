@@ -15,6 +15,9 @@ import { isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHECK_PATH = '/api/v1/dlp/check';
+const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
+/** Completion base paths the gateway serves: `/v1` (check token) and `/api/v1/dlp` (inline DLP). */
+const COMPLETION_BASE_PATH = /\/(?:api\/v1\/dlp|v1)$/;
 const DLP_TOKEN_HEADER = 'X-DLP-Token';
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -112,7 +115,7 @@ function trimTrailingSlash(value: string): string {
 }
 
 function gatewayRoot(value: string): string {
-  return trimTrailingSlash(value).replace(/\/v1$/, '');
+  return trimTrailingSlash(value).replace(COMPLETION_BASE_PATH, '');
 }
 
 function getDlpConfiguration(): { gatewayUrl: string; serviceCredential: string } {
@@ -314,6 +317,11 @@ function isChatCompletionsUrl(input: RequestInfo | URL): boolean {
   return getRequestPathname(input).endsWith('/chat/completions');
 }
 
+/** The DLP completions endpoint scans, masks and blocks in the same call, so it needs no token. */
+function isDlpChatCompletionsUrl(input: RequestInfo | URL): boolean {
+  return getRequestPathname(input).endsWith(DLP_CHAT_COMPLETIONS_PATH);
+}
+
 /**
  * The OpenAI Responses API (`/responses`) sends user content in a request shape the Governance
  * Backend does not accept, so it cannot be scanned or issued an `X-DLP-Token` here. Such a
@@ -398,21 +406,24 @@ function withGovernanceRequest(
   init: RequestInit | undefined,
   request: GovernanceChatCompletionRequest,
   userId: string,
-  dlpToken: string,
+  dlpToken?: string,
 ): RequestInit {
   const requestHeaders =
     typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined;
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
-  headers.set(DLP_TOKEN_HEADER, dlpToken);
+  if (dlpToken !== undefined) {
+    headers.set(DLP_TOKEN_HEADER, dlpToken);
+  }
   return { ...init, body: JSON.stringify(request), headers };
 }
 
 /**
- * Checks the exact allow-listed text request immediately before it is streamed to the Governance
- * Backend. This gives the gateway a token bound to the final message list while leaving the
- * response stream untouched. A governed completion sent through an unsupported request shape
+ * Reduces a governed completion to the allow-listed text request before it is streamed to the
+ * Governance Backend, leaving the response stream untouched. The `/api/v1/dlp` endpoint enforces
+ * DLP on that request itself. The `/v1` endpoint first needs an exact check, whose token is bound
+ * to the final message list. A governed completion sent through an unsupported request shape
  * (currently the Responses API) is rejected here rather than forwarded without a scan or token.
  */
 export function createGovernanceDlpFetch({
@@ -440,6 +451,10 @@ export function createGovernanceDlpFetch({
     const request = body ? parseChatCompletionRequest(body) : undefined;
     if (!request || (isGovernancePilotEnabled() && request.stream !== true)) {
       throw new GovernanceDlpError('dlp_check_unsupported_request');
+    }
+
+    if (isDlpChatCompletionsUrl(input)) {
+      return fetch(input, withGovernanceRequest(input, init, request, userId));
     }
 
     const result = await check({ request, userId });
