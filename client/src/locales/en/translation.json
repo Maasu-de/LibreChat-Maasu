@@ -1093,6 +1093,7 @@
   "com_ui_description_placeholder": "Optional: Enter a description to display for the prompt",
   "com_ui_deselect_all": "Deselect All",
   "com_ui_detailed": "Detailed",
+  "com_ui_dlp_approval_unavailable": "This prompt can't be sent as reviewed. Cancel and send it again.",
   "com_ui_dlp_block_description": "This prompt cannot be sent under your organization's data loss prevention policy.",
   "com_ui_dlp_block_title": "Sensitive prompt blocked",
   "com_ui_dlp_category_client_name": "Client name",

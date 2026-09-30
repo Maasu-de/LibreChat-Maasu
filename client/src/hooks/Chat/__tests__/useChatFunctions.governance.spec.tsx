@@ -11,9 +11,16 @@ import DlpInterventionDialog from '~/components/Chat/Input/DlpInterventionDialog
 import useChatFunctions from '../useChatFunctions';
 import store from '~/store';
 
+const mockShowToast = jest.fn();
+
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: { id: 'user-1' } }),
   useLocalize: () => (key: string) => key,
+}));
+
+jest.mock('@librechat/client', () => ({
+  ...jest.requireActual('@librechat/client'),
+  useToastContext: () => ({ showToast: mockShowToast }),
 }));
 
 jest.mock('~/data-provider', () => ({
@@ -154,6 +161,7 @@ function lastSubmission(): TSubmission {
 beforeEach(() => {
   setSubmission.mockClear();
   setMessages.mockClear();
+  mockShowToast.mockClear();
 });
 
 it('sends a message at once, without a separate DLP check', () => {
@@ -184,6 +192,21 @@ it.each([savedConversation, newConversation])(
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   },
 );
+
+it('keeps the review open and says so when it has no approved text to send', () => {
+  const review = maskReview(savedConversation.conversationId);
+  renderChat(savedConversation, { ...review, result: { ...review.result, maskedPreview: [] } });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+  expect(setSubmission).not.toHaveBeenCalled();
+  expect(mockShowToast).toHaveBeenCalledWith({
+    message: 'com_ui_dlp_approval_unavailable',
+    status: 'error',
+  });
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
 
 it('shows a BLOCK review without a way to send the message', () => {
   renderChat(savedConversation, blockReview);

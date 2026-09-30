@@ -156,8 +156,9 @@ const ChatForm = memo(function ChatForm({
   }, [cancelDlpIntervention, methods, pendingDlpReview]);
 
   const handleConfirmDlpIntervention = useCallback(() => {
-    confirmDlpIntervention();
-    methods.reset();
+    if (confirmDlpIntervention()) {
+      methods.reset();
+    }
   }, [confirmDlpIntervention, methods]);
 
   const handleContainerClick = useCallback(() => {
