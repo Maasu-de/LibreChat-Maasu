@@ -89,16 +89,17 @@ describe('Governance DLP', () => {
       fetch: upstreamFetch,
     });
 
-    await expect(
-      governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'governed-model',
-          messages: [{ role: 'user', content: [{ type: 'text', text: 'normal text' }] }],
-        }),
+    const response = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'normal text' }] }],
       }),
-    ).rejects.toMatchObject({ code: 'dlp_check_unsupported_request' });
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_unsupported_request' } });
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
@@ -109,16 +110,22 @@ describe('Governance DLP', () => {
       fetch: upstreamFetch,
     });
 
-    await expect(
-      governedFetch('http://governance.test/api/v1/dlp/responses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'governed-model',
-          input: [{ role: 'user', content: 'normal text' }],
-        }),
+    const response = await governedFetch('http://governance.test/api/v1/dlp/responses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'governed-model',
+        input: [{ role: 'user', content: 'normal text' }],
       }),
-    ).rejects.toMatchObject({ code: 'dlp_check_unsupported_request' });
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'dlp_unsupported_request',
+        message: expect.stringContaining('Use Responses API'),
+      },
+    });
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
