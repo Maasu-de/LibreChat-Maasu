@@ -71,6 +71,7 @@ export interface GovernanceFetchParams {
   reviews?: ReviewStore;
 }
 
+/** Raised when the DLP integration cannot be set up. A rejected completion is a 400 instead. */
 export class GovernanceDlpError extends Error {
   code: string;
 
@@ -98,18 +99,18 @@ function getDlpConfiguration(): { gatewayUrl: string; serviceCredential: string 
   const serviceCredential = process.env.LIBRECHAT_SERVICE_CREDENTIAL ?? '';
 
   if (!gatewayUrl || !serviceCredential) {
-    throw new GovernanceDlpError('dlp_check_not_configured');
+    throw new GovernanceDlpError('dlp_not_configured');
   }
 
   return { gatewayUrl, serviceCredential };
 }
 
-function normalizeDecision(value: string | undefined): GovernanceDecision {
+function normalizeDecision(value: string | undefined): GovernanceDecision | undefined {
   const decision = value?.toUpperCase();
   if (decision === 'ALLOW' || decision === 'WARN' || decision === 'MASK' || decision === 'BLOCK') {
     return decision;
   }
-  throw new GovernanceDlpError('dlp_check_malformed_response');
+  return undefined;
 }
 
 /** The message-form request body fields that decide whether a send takes the DLP approval flow. */
@@ -180,8 +181,8 @@ function isDlpChatCompletionsUrl(input: RequestInfo | URL): boolean {
 
 /**
  * The OpenAI Responses API (`/responses`) sends user content in a request shape the Governance
- * Backend does not accept, so it cannot be scanned. Such a request must fail closed rather than
- * be sent on without DLP enforcement.
+ * Backend does not accept, so it cannot be scanned. Such a request is rejected rather than sent on
+ * without DLP enforcement.
  */
 function isResponsesApiUrl(input: RequestInfo | URL): boolean {
   return getRequestPathname(input).endsWith('/responses');
@@ -271,9 +272,19 @@ function withGovernanceRequest(
   return { ...init, body: JSON.stringify(request), headers };
 }
 
-/** A 400 ends the model call without the SDK retrying it, as it would a thrown fetch error. */
-function governanceErrorResponse(code: string, message: string): Response {
-  return new Response(JSON.stringify({ error: { message, type: 'governance_review', code } }), {
+type DlpRejectionCode =
+  | 'dlp_review_required'
+  | 'dlp_approval_invalid'
+  | 'dlp_malformed_response'
+  | 'dlp_unsupported_request';
+
+/**
+ * Ends the model call with a 400 that carries the reason. Every rejection is returned this way
+ * and never thrown: the SDK retries a thrown fetch error and then reports it as a connection
+ * error, which hides the message.
+ */
+function rejectCompletion(code: DlpRejectionCode, message: string = DLP_FAILURE_MESSAGE): Response {
+  return new Response(JSON.stringify({ error: { message, type: 'governance_dlp_error', code } }), {
     status: 400,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -312,20 +323,23 @@ function withApproval(
  */
 async function handleReview(params: ApprovalParams, review: GatewayReview): Promise<Response> {
   const decision = normalizeDecision(review.action);
+  if (!decision) {
+    return rejectCompletion('dlp_malformed_response');
+  }
   const submitted = findSubmittedText(params.request.messages, params.text);
   if (!submitted) {
-    return governanceErrorResponse('dlp_check_unsupported_request', DLP_FAILURE_MESSAGE);
+    return rejectCompletion('dlp_unsupported_request');
   }
 
   const findings = findingsInSubmittedText(review.findings ?? [], submitted);
   if (decision === 'BLOCK') {
     params.onReview(toClientReview(review, decision, findings));
-    return governanceErrorResponse('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
+    return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
 
   const { messages, dlp_token: dlpToken } = review;
   if (!messages || !dlpToken) {
-    return governanceErrorResponse('dlp_check_malformed_response', DLP_FAILURE_MESSAGE);
+    return rejectCompletion('dlp_malformed_response');
   }
   if (findings.length === 0) {
     return params.fetch(params.input, withApproval(params, messages, dlpToken));
@@ -333,7 +347,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
 
   const approvedText = maskText(params.text, findings);
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
-    return governanceErrorResponse('dlp_check_malformed_response', DLP_FAILURE_MESSAGE);
+    return rejectCompletion('dlp_malformed_response');
   }
 
   await params.reviews.set(
@@ -348,7 +362,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     reviewTtl(review.expires_at),
   );
   params.onReview(toClientReview(review, decision, findings, approvedText));
-  return governanceErrorResponse('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
+  return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
 /**
@@ -366,7 +380,7 @@ async function sendForApproval(params: ApprovalParams): Promise<Response> {
       stored.model !== request.model ||
       stored.text !== text
     ) {
-      return governanceErrorResponse('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
+      return rejectCompletion('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
     }
     const approved = await params.fetch(
       input,
@@ -408,11 +422,11 @@ export function createGovernanceDlpFetch({
       const base = process.env.GOVERNANCE_API_BASE_URL?.replace(/\/+$/, '');
       const destination = new URL(getRequestUrl(input));
       if (!base || destination.href !== new URL(`${base}/chat/completions`).href) {
-        throw new GovernanceDlpError('dlp_check_unsupported_request');
+        return rejectCompletion('dlp_unsupported_request');
       }
     }
     if (isResponsesApiUrl(input)) {
-      throw new GovernanceDlpError('dlp_check_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
+      return rejectCompletion('dlp_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
     }
 
     if (!isDlpChatCompletionsUrl(input)) {
@@ -422,7 +436,7 @@ export function createGovernanceDlpFetch({
     const body = await getRequestBody(input, init);
     const request = body ? parseChatCompletionRequest(body) : undefined;
     if (!request || (isGovernancePilotEnabled() && request.stream !== true)) {
-      throw new GovernanceDlpError('dlp_check_unsupported_request');
+      return rejectCompletion('dlp_unsupported_request');
     }
 
     const response = onReview

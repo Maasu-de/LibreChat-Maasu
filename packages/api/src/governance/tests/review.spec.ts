@@ -298,10 +298,23 @@ describe('DLP approval flow', () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
-      error: { code: 'dlp_check_malformed_response' },
+      error: { code: 'dlp_malformed_response' },
     });
     expect(onReview).not.toHaveBeenCalled();
     expect(reviews.entries.size).toBe(0);
+  });
+
+  it('fails closed on a review with an unknown decision', async () => {
+    const { onReview, onSent, send } = setup({
+      responses: [reviewResponse({ review_id: 'review-5', action: 'REDACT' })],
+    });
+
+    const response = await send(messages);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_malformed_response' } });
+    expect(onReview).not.toHaveBeenCalled();
+    expect(onSent).not.toHaveBeenCalled();
   });
 
   it('sends the stored approved request and token when the user confirms', async () => {
