@@ -1,16 +1,11 @@
-import axios from 'axios';
-import { ErrorTypes, isEphemeralAgentId } from 'librechat-data-provider';
+import { isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
   TEndpointOption,
   TEphemeralAgent,
   GovernanceDecision,
-  GovernanceDlpResult,
-  GovernanceFinding,
   GovernanceDlpReview,
-  GovernanceMaskedContent,
 } from 'librechat-data-provider';
-import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import type { GatewayReview, ReviewStore } from './review';
 import type { ServerRequest } from '~/types/http';
 import {
@@ -24,18 +19,13 @@ import {
 } from './review';
 import { isEnabled } from '~/utils/common';
 
-const DLP_CHECK_PATH = '/api/v1/dlp/check';
 const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
-/** Completion base paths the gateway serves: `/v1` (check token) and `/api/v1/dlp` (inline DLP). */
-const COMPLETION_BASE_PATH = /\/(?:api\/v1\/dlp|v1)$/;
-const DLP_TOKEN_HEADER = 'X-DLP-Token';
+/** Base paths the gateway serves: `/api/v1/dlp` (completions and models) and `/v1` (models only). */
+const GATEWAY_BASE_PATH = /\/(?:api\/v1\/dlp|v1)$/;
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
-const DEFAULT_TIMEOUT_MS = 10000;
 
 const DLP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
-const DLP_BLOCKED_MESSAGE =
-  "This message was blocked by your organization's data loss prevention policy. No content was sent to the model.";
 const DLP_REVIEW_PENDING_MESSAGE = 'This message needs your review before it is sent to the model.';
 const DLP_APPROVAL_INVALID_MESSAGE =
   'The approval for this message is no longer valid. Please send the message again.';
@@ -59,58 +49,17 @@ export interface GovernanceChatCompletionRequest {
   messages: GovernanceChatMessage[];
   stream?: boolean;
   temperature?: number;
-  /** `/api/v1/dlp` only: return a review instead of calling the model when DLP finds anything. */
+  /** Return a review instead of calling the model when DLP finds anything. */
   require_user_approval?: boolean;
-  /** `/api/v1/dlp` only: approval token of the stage 1 review being completed. */
+  /** Approval token of the stage 1 review being completed. */
   dlp_token?: string;
 }
-
-export interface DlpCheckResult extends GovernanceDlpResult {
-  dlpToken?: string;
-}
-
-export interface DlpBlock {
-  status: number;
-  body: {
-    type: ErrorTypes;
-    reason: 'policy_blocked';
-    message: string;
-    decision: 'BLOCK';
-    policy_version?: number;
-    findings: GovernanceFinding[];
-  };
-}
-
-/** Gateway response shape. `decision` is accepted for the contract dependency's future spelling. */
-export interface DlpCheckResponse {
-  action?: string;
-  decision?: string;
-  policy_version?: number;
-  findings?: GovernanceFinding[];
-  masked_preview?: GovernanceMaskedContent[] | null;
-  dlp_token?: string;
-}
-
-export type HttpPoster = (
-  url: string,
-  body: GovernanceChatCompletionRequest,
-  config: AxiosRequestConfig,
-) => Promise<AxiosResponse<DlpCheckResponse>>;
 
 export type GovernanceFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-export type DlpChecker = (params: CheckDlpParams) => Promise<DlpCheckResult>;
-
-export interface CheckDlpParams {
-  request: GovernanceChatCompletionRequest;
-  userId: string;
-  http?: HttpPoster;
-}
 
 export interface GovernanceFetchParams {
   userId: string;
   fetch?: GovernanceFetch;
-  check?: DlpChecker;
   /** The user's submitted text, which reviews and approvals are bound to. */
   text?: string;
   /** Review the user approved; its stored request is sent instead of the rebuilt one. */
@@ -139,7 +88,7 @@ function trimTrailingSlash(value: string): string {
 }
 
 function gatewayRoot(value: string): string {
-  return trimTrailingSlash(value).replace(COMPLETION_BASE_PATH, '');
+  return trimTrailingSlash(value).replace(GATEWAY_BASE_PATH, '');
 }
 
 function getDlpConfiguration(): { gatewayUrl: string; serviceCredential: string } {
@@ -161,51 +110,7 @@ function normalizeDecision(value: string | undefined): GovernanceDecision {
   throw new GovernanceDlpError('dlp_check_malformed_response');
 }
 
-function normalizeResponse(response: DlpCheckResponse): DlpCheckResult {
-  return {
-    decision: normalizeDecision(response.action ?? response.decision),
-    policyVersion: response.policy_version,
-    findings: response.findings ?? [],
-    maskedPreview: response.masked_preview ?? undefined,
-    dlpToken:
-      typeof response.dlp_token === 'string' && response.dlp_token.length > 0
-        ? response.dlp_token
-        : undefined,
-  };
-}
-
-const defaultHttp: HttpPoster = (url, body, config) => axios.post(url, body, config);
-
-/** Calls the Governance Backend without exposing its service credential to browser code. */
-export async function checkDlp({
-  request,
-  userId,
-  http = defaultHttp,
-}: CheckDlpParams): Promise<DlpCheckResult> {
-  const { gatewayUrl, serviceCredential } = getDlpConfiguration();
-
-  let response: AxiosResponse<DlpCheckResponse>;
-  try {
-    response = await http(`${gatewayUrl}${DLP_CHECK_PATH}`, request, {
-      timeout: DEFAULT_TIMEOUT_MS,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${serviceCredential}`,
-        'X-LibreChat-User-ID': userId,
-      },
-    });
-  } catch {
-    throw new GovernanceDlpError('dlp_check_failed');
-  }
-
-  if (response.status < 200 || response.status >= 300) {
-    throw new GovernanceDlpError('dlp_check_failed');
-  }
-
-  return normalizeResponse(response.data);
-}
-
-/** The message-form request body fields inspected by the server-side DLP preflight. */
+/** The message-form request body fields that decide whether a send takes the DLP approval flow. */
 export type GovernanceSubmissionBody = Partial<
   Pick<
     TPayload,
@@ -253,25 +158,6 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
   );
 }
 
-/** Formats a BLOCK decision for the shared SSE deny path. Only BLOCK denies a completion. */
-export function createDlpBlock(result: DlpCheckResult): DlpBlock {
-  if (result.decision !== 'BLOCK') {
-    throw new GovernanceDlpError('dlp_block_not_applicable');
-  }
-
-  return {
-    status: 403,
-    body: {
-      type: ErrorTypes.GOVERNANCE_BLOCKED,
-      reason: 'policy_blocked',
-      decision: 'BLOCK',
-      message: DLP_BLOCKED_MESSAGE,
-      policy_version: result.policyVersion,
-      findings: result.findings,
-    },
-  };
-}
-
 /** True when an OpenAI-compatible completion base URL targets the configured gateway. */
 export function isGovernanceGatewayUrl(completionBaseUrl: string): boolean {
   return gatewayRoot(completionBaseUrl) === getDlpConfiguration().gatewayUrl;
@@ -288,19 +174,15 @@ function getRequestPathname(input: RequestInfo | URL): string {
   return new URL(getRequestUrl(input), 'http://localhost').pathname;
 }
 
-function isChatCompletionsUrl(input: RequestInfo | URL): boolean {
-  return getRequestPathname(input).endsWith('/chat/completions');
-}
-
-/** The DLP completions endpoint scans, masks and blocks in the same call, so it needs no token. */
+/** The gateway's only completion endpoint, which scans, masks and blocks in the same call. */
 function isDlpChatCompletionsUrl(input: RequestInfo | URL): boolean {
   return getRequestPathname(input).endsWith(DLP_CHAT_COMPLETIONS_PATH);
 }
 
 /**
  * The OpenAI Responses API (`/responses`) sends user content in a request shape the Governance
- * Backend does not accept, so it cannot be scanned or issued an `X-DLP-Token` here. Such a
- * request must fail closed rather than reach the model without the outbound DLP check.
+ * Backend does not accept, so it cannot be scanned. Such a request must fail closed rather than
+ * be sent on without DLP enforcement.
  */
 function isResponsesApiUrl(input: RequestInfo | URL): boolean {
   return getRequestPathname(input).endsWith('/responses');
@@ -373,16 +255,12 @@ function withGovernanceRequest(
   init: RequestInit | undefined,
   request: GovernanceChatCompletionRequest,
   userId: string,
-  dlpToken?: string,
 ): RequestInit {
   const requestHeaders =
     typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined;
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
-  if (dlpToken !== undefined) {
-    headers.set(DLP_TOKEN_HEADER, dlpToken);
-  }
   return { ...init, body: JSON.stringify(request), headers };
 }
 
@@ -493,16 +371,14 @@ async function sendForApproval(params: ApprovalParams): Promise<Response> {
 
 /**
  * Reduces a governed completion to the allow-listed text request before it is streamed to the
- * Governance Backend, leaving the response stream untouched. The `/api/v1/dlp` endpoint enforces
- * DLP on that request itself and, with `onReview`, pauses for the user's approval. The `/v1`
- * endpoint first needs an exact check, whose token is bound to the final message list. A governed
- * completion sent through an unsupported request shape (currently the Responses API) is rejected
- * here rather than forwarded without a scan or token.
+ * Governance Backend, leaving the response stream untouched. The gateway enforces DLP on that
+ * request itself and, with `onReview`, pauses for the user's approval. A governed completion sent
+ * through an unsupported request shape (currently the Responses API) is rejected here rather than
+ * forwarded unscanned.
  */
 export function createGovernanceDlpFetch({
   userId,
   fetch = globalThis.fetch,
-  check = checkDlp,
   text = '',
   reviewId,
   onReview,
@@ -513,7 +389,7 @@ export function createGovernanceDlpFetch({
       throw new GovernanceDlpError('dlp_check_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
     }
 
-    if (!isChatCompletionsUrl(input)) {
+    if (!isDlpChatCompletionsUrl(input)) {
       return fetch(input, init);
     }
 
@@ -523,36 +399,20 @@ export function createGovernanceDlpFetch({
       throw new GovernanceDlpError('dlp_check_unsupported_request');
     }
 
-    if (isDlpChatCompletionsUrl(input)) {
-      if (!onReview) {
-        return fetch(input, withGovernanceRequest(input, init, request, userId));
-      }
-      return sendForApproval({
-        input,
-        init,
-        request,
-        userId,
-        text,
-        reviewId,
-        onReview,
-        fetch,
-        reviews: reviews ?? getReviewStore(),
-      });
+    if (!onReview) {
+      return fetch(input, withGovernanceRequest(input, init, request, userId));
     }
-
-    const result = await check({ request, userId });
-    if (result.decision === 'BLOCK') {
-      throw new GovernanceDlpError(
-        'dlp_check_intervention_required',
-        createDlpBlock(result).body.message,
-      );
-    }
-
-    if (result.dlpToken === undefined) {
-      throw new GovernanceDlpError('dlp_check_malformed_response');
-    }
-
-    return fetch(input, withGovernanceRequest(input, init, request, userId, result.dlpToken));
+    return sendForApproval({
+      input,
+      init,
+      request,
+      userId,
+      text,
+      reviewId,
+      onReview,
+      fetch,
+      reviews: reviews ?? getReviewStore(),
+    });
   };
 }
 

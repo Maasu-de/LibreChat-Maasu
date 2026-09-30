@@ -1,28 +1,39 @@
 # Governance DLP follow-ups
 
-This ticket covers only a normal, plain-text chat submission. The following work is intentionally deferred.
+The DLP approval flow covers only a normal, plain-text chat submission. Such a message is sent
+to the gateway's `POST /api/v1/dlp/chat/completions` with `require_user_approval: true`. When
+DLP finds something in the submitted text, the gateway returns a review instead of a completion.
+LibreChat ends the turn without saving the message, shows the review in the intervention
+dialog, and on approval sends the masked messages again with the review's `dlp_token`.
+LibreChat makes no separate DLP check call; the gateway's earlier `POST /api/v1/dlp/check`
+and `X-DLP-Token` flow has been removed.
 
-- Build an intervention component that renders `decision`, `findings`, `masked_preview`, `policy_version`, and `dlp_token`, then lets a user review or resubmit a WARN or MASK result. This ticket does not surface WARN or MASK to the client at all: the preflight lets both through and the gateway-side DLP token performs any masking. The `GOVERNANCE_INTERVENTION` error type, its `com_error_governance_intervention` string, and the WARN/MASK branch of the deny-payload builder were removed as unreachable; the component work must reintroduce whatever client contract it needs (likely a non-error SSE event rather than an error type, since WARN/MASK still complete).
-- Extend the contract and integration to attachments, multimodal content, edited messages, continued messages, tools, agent handoffs, assistants, and remote API routes.
-- Add end-to-end coverage against a running Governance Backend after contract #44 is confirmed.
-- Coordinate with the Governance Backend owner on a single preflight token protocol. The current gateway binds a token to the final OpenAI message list, while LibreChat's UI preflight only has the submitted text. LibreChat therefore performs an exact server-side check immediately before the governed completion to mint the forwarded token. A gateway contract that can issue a token for the canonical LibreChat submission would remove that second check.
+The following work is intentionally deferred.
+
+- Extend the contract and integration to attachments, multimodal content, edited messages, continued messages, tools, agent handoffs, assistants, and remote API routes. These sends skip the approval flow today and reach the gateway's completion endpoint as built, without being reduced to the text-only request.
+- Add end-to-end coverage against a running Governance Backend.
 - Expand the Gateway request contract before enabling governed support for LibreChat parameters beyond its text-only allow-list. The current Gateway rejects fields such as `user`, `stream_options`, sampling controls, tools, and provider extensions. This integration forwards only `model`, string `messages`, `stream`, and `temperature` to a governed completion so unsupported fields never reach a model unscanned. Supporting the omitted parameters requires a contract decision and Gateway work; no such work is included here.
 
-No gateway changes are included in this ticket.
+## Required deployment configuration
 
-## Required deployment handoff
+LibreChat needs three server-side values, all of which
+`ai-governance-gateway/deploy/compose.yaml` passes to the LibreChat service:
 
-The existing `ai-governance-gateway/deploy/compose.yaml` passes
-`GOVERNANCE_API_BASE_URL` and `LIBRECHAT_SERVICE_CREDENTIAL` to LibreChat, which this
-integration already uses. It must also pass `GOVERNANCE_DLP_ENABLED=true` to the
-LibreChat service before deployment. This is a gateway deployment configuration change,
-not a Gateway source-code change, and was intentionally not made here.
+- `GOVERNANCE_API_BASE_URL`, set to the gateway's DLP completions base URL, for example
+  `http://governance-backend:8000/api/v1/dlp`. The `/v1` base URL serves only the model list
+  and cannot complete a chat.
+- `LIBRECHAT_SERVICE_CREDENTIAL`.
+- `GOVERNANCE_DLP_ENABLED=true`.
 
-## Contract confirmation pending #44
+## Gateway contract
 
-The checked-in Gateway contract currently returns `action` (not `decision`), plus
-`findings`, `masked_preview`, `policy_version`, and `dlp_token`. This integration
-accepts either `action` or a future `decision` spelling. The Gateway currently requires
-its `dlp_token` on every completion and binds it to the exact final message list; that is
-why the final server-side outbound check is retained. Confirm these details with #44's
-owner before changing either side of the contract.
+The contract is documented in `ai-governance-gateway/docs/dlp-chat-completions-api.md`. This
+integration relies on the following parts of it:
+
+- A review arrives as the `dlp` field of the stage 1 response, as the first server-sent event
+  or as a JSON body, with `review_id`, `action`, `policy_version`, `findings`, `messages`,
+  `dlp_token`, and `expires_at`. A `BLOCK` review has no `messages` or `dlp_token` and cannot
+  be approved.
+- Finding offsets are code points within the message at the finding's `location`.
+- Stage 2 sends the review's `messages` unchanged, with `require_user_approval: true` and the
+  `dlp_token` in the request body.

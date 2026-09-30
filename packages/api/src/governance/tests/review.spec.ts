@@ -67,7 +67,6 @@ function setup({
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
-    check: jest.fn(),
     text,
     reviewId,
     onReview,
@@ -165,7 +164,7 @@ describe('DLP approval flow', () => {
       stream: true,
       require_user_approval: true,
     });
-    expect(new Headers(upstream.mock.calls[0]?.[1]?.headers).has('X-DLP-Token')).toBe(false);
+    expect(upstream).toHaveBeenCalledTimes(1);
     expect(await response.text()).toContain('"Hi"');
     expect(onReview).not.toHaveBeenCalled();
   });
