@@ -8,6 +8,7 @@ const {
   buildToolSet,
   logToolError,
   sanitizeTitle,
+  isDlpUnsent,
   payloadParser,
   createSafeUser,
   initializeAgent,
@@ -1489,7 +1490,8 @@ class AgentClient extends BaseClient {
         });
       }
     } catch (err) {
-      if (this.options.req?.governanceDlpReview) {
+      /** A governed turn that ends before the gateway starts its completion was never sent. */
+      if (isDlpUnsent(this.options.req)) {
         throw err;
       }
       if (abortController.signal.aborted) {

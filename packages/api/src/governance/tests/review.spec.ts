@@ -64,12 +64,14 @@ function setup({
     },
   );
   const onReview = jest.fn<void, [GovernanceDlpReview]>();
+  const onSent = jest.fn();
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
     text,
     reviewId,
     onReview,
+    onSent,
     reviews,
   });
   const send = (messages: ReviewMessage[]) =>
@@ -79,7 +81,7 @@ function setup({
       body: JSON.stringify({ model: 'governed-model', messages, stream: true, top_p: 0.5 }),
     });
   const sentBody = (call: number) => JSON.parse(String(upstream.mock.calls[call]?.[1]?.body));
-  return { upstream, onReview, reviews, send, sentBody };
+  return { upstream, onReview, onSent, reviews, send, sentBody };
 }
 
 describe('readReview', () => {
@@ -154,7 +156,9 @@ describe('DLP approval flow', () => {
   ];
 
   it('asks for approval and returns the completion when DLP finds nothing', async () => {
-    const { upstream, onReview, send, sentBody } = setup({ responses: [completionResponse()] });
+    const { upstream, onReview, onSent, send, sentBody } = setup({
+      responses: [completionResponse()],
+    });
 
     const response = await send(messages);
 
@@ -167,11 +171,12 @@ describe('DLP approval flow', () => {
     expect(upstream).toHaveBeenCalledTimes(1);
     expect(await response.text()).toContain('"Hi"');
     expect(onReview).not.toHaveBeenCalled();
+    expect(onSent).toHaveBeenCalledTimes(1);
   });
 
   it('stores a review of the submitted text and hands it to the user', async () => {
     const maskedMessages = [messages[0], { role: 'user', content: MASKED }];
-    const { upstream, onReview, reviews, send } = setup({
+    const { upstream, onReview, onSent, reviews, send } = setup({
       responses: [
         reviewResponse({
           review_id: 'review-1',
@@ -204,6 +209,7 @@ describe('DLP approval flow', () => {
       messages: maskedMessages,
       dlpToken: 'approval-token',
     });
+    expect(onSent).not.toHaveBeenCalled();
   });
 
   it('completes a review at once when every finding is in an earlier message', async () => {
@@ -221,7 +227,7 @@ describe('DLP approval flow', () => {
       content: message.content.replaceAll('max@example.com', '[EMAIL]'),
     }));
     const completion = completionResponse();
-    const { onReview, reviews, send, sentBody } = setup({
+    const { onReview, onSent, reviews, send, sentBody } = setup({
       text,
       responses: [
         reviewResponse({
@@ -249,11 +255,12 @@ describe('DLP approval flow', () => {
       dlp_token: 'approval-token',
     });
     expect(onReview).not.toHaveBeenCalled();
+    expect(onSent).toHaveBeenCalledTimes(1);
     expect(reviews.entries.size).toBe(0);
   });
 
   it('hands a BLOCK review to the user without storing an approval', async () => {
-    const { upstream, onReview, reviews, send } = setup({
+    const { upstream, onReview, onSent, reviews, send } = setup({
       responses: [
         reviewResponse({
           review_id: 'review-3',
@@ -269,6 +276,7 @@ describe('DLP approval flow', () => {
     expect(upstream).toHaveBeenCalledTimes(1);
     expect(onReview.mock.calls[0]?.[0]).toMatchObject({ reviewId: 'review-3', decision: 'BLOCK' });
     expect(onReview.mock.calls[0]?.[0].maskedPreview).toBeUndefined();
+    expect(onSent).not.toHaveBeenCalled();
     expect(reviews.entries.size).toBe(0);
   });
 
@@ -306,7 +314,7 @@ describe('DLP approval flow', () => {
       dlpToken: 'approval-token',
     });
     const completion = completionResponse();
-    const { send, sentBody } = setup({
+    const { onSent, send, sentBody } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -326,6 +334,29 @@ describe('DLP approval flow', () => {
       require_user_approval: true,
       dlp_token: 'approval-token',
     });
+    expect(onSent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count an approval the gateway rejects as sent', async () => {
+    const reviews = memoryStore();
+    reviews.entries.set('review-1', {
+      userId: 'user-123',
+      model: 'governed-model',
+      text: MASKED,
+      messages: [{ role: 'user', content: MASKED }],
+      dlpToken: 'approval-token',
+    });
+    const { onSent, send } = setup({
+      text: MASKED,
+      reviewId: 'review-1',
+      reviews,
+      responses: [new Response('{"error":{"code":"dlp_review_required"}}', { status: 409 })],
+    });
+
+    const response = await send([{ role: 'user', content: MASKED }]);
+
+    expect(response.status).toBe(409);
+    expect(onSent).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -342,7 +373,7 @@ describe('DLP approval flow', () => {
       dlpToken: 'approval-token',
       ...override,
     });
-    const { upstream, send } = setup({
+    const { upstream, onSent, send } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -354,5 +385,6 @@ describe('DLP approval flow', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_approval_invalid' } });
     expect(upstream).not.toHaveBeenCalled();
+    expect(onSent).not.toHaveBeenCalled();
   });
 });

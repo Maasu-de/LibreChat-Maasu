@@ -1,4 +1,5 @@
 const { Constants } = require('librechat-data-provider');
+const { createRequestDlpFetch } = require('@librechat/api');
 const { FakeClient, initializeFakeClient } = require('./FakeClient');
 
 jest.mock('~/db/connect');
@@ -1039,32 +1040,84 @@ describe('BaseClient', () => {
       expect(calls[1][0].isCreatedByUser).toBe(false); // Second call should be for response message
     });
 
-    test('saves a governed user message only once the model call returns', async () => {
-      TestClient.options.req = { body: {}, governanceDlpEligible: true };
-      TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({});
-      const sendCompletion = TestClient.sendCompletion.bind(TestClient);
-      const savesDuringCompletion = [];
-      TestClient.sendCompletion = async (...args) => {
-        savesDuringCompletion.push(TestClient.saveMessageToDatabase.mock.calls.length);
-        return sendCompletion(...args);
+    describe('governed turn', () => {
+      const completion = () =>
+        new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+
+      /** A request set up the way the governed endpoint does, with its gateway stubbed. */
+      const governedRequest = (gatewayFetch) => {
+        const req = { body: { text: 'Hello, world!' }, user: { id: 'user-1' } };
+        const governedFetch = createRequestDlpFetch(req, gatewayFetch);
+        const callGateway = () =>
+          governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'governed-model',
+              messages: [{ role: 'user', content: 'Hello, world!' }],
+              stream: true,
+            }),
+          });
+        return { req, callGateway };
       };
 
-      await TestClient.sendMessage('Hello, world!');
+      let originalReq;
 
-      expect(savesDuringCompletion).toEqual([0]);
-      const calls = TestClient.saveMessageToDatabase.mock.calls;
-      expect(calls.map(([message]) => message.isCreatedByUser)).toEqual([true, false]);
-    });
+      beforeEach(() => {
+        originalReq = TestClient.options.req;
+        TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({});
+      });
 
-    test('saves nothing when a governed model call ends in a DLP review', async () => {
-      TestClient.options.req = { body: {}, governanceDlpEligible: true };
-      TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({});
-      TestClient.sendCompletion = jest.fn().mockRejectedValue(new Error('review required'));
+      afterEach(() => {
+        TestClient.options.req = originalReq;
+      });
 
-      await expect(TestClient.sendMessage('My IBAN is DE89370400440532013000')).rejects.toThrow(
-        'review required',
-      );
-      expect(TestClient.saveMessageToDatabase).not.toHaveBeenCalled();
+      test('saves the user message once the gateway starts the completion', async () => {
+        const { req, callGateway } = governedRequest(async () => completion());
+        TestClient.options.req = req;
+        const sendCompletion = TestClient.sendCompletion.bind(TestClient);
+        const saves = [];
+        TestClient.sendCompletion = async (...args) => {
+          saves.push(TestClient.saveMessageToDatabase.mock.calls.length);
+          await callGateway();
+          saves.push(TestClient.saveMessageToDatabase.mock.calls.length);
+          return sendCompletion(...args);
+        };
+
+        await TestClient.sendMessage('Hello, world!');
+
+        expect(saves).toEqual([0, 1]);
+        const calls = TestClient.saveMessageToDatabase.mock.calls;
+        expect(calls.map(([message]) => message.isCreatedByUser)).toEqual([true, false]);
+      });
+
+      test('stores nothing when the gateway does not start a completion', async () => {
+        const { req, callGateway } = governedRequest(
+          async () => new Response('{"error":{"code":"dlp_review_required"}}', { status: 409 }),
+        );
+        TestClient.options.req = req;
+        TestClient.sendCompletion = async () => {
+          const response = await callGateway();
+          throw new Error(`gateway answered ${response.status}`);
+        };
+
+        await expect(TestClient.sendMessage('Hello, world!')).rejects.toThrow(
+          'gateway answered 409',
+        );
+        expect(TestClient.saveMessageToDatabase).not.toHaveBeenCalled();
+      });
+
+      test('stores nothing when the model call returns without being sent', async () => {
+        const { req } = governedRequest(async () => completion());
+        TestClient.options.req = req;
+
+        await expect(TestClient.sendMessage('Hello, world!')).rejects.toThrow(
+          'The message was not sent to the model.',
+        );
+        expect(TestClient.saveMessageToDatabase).not.toHaveBeenCalled();
+      });
     });
   });
 

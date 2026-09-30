@@ -2,6 +2,7 @@ const { logger } = require('@librechat/data-schemas');
 const { Constants, ViolationTypes, isEphemeralAgentId } = require('librechat-data-provider');
 const {
   sendEvent,
+  onDlpSent,
   getViolationInfo,
   buildMessageFiles,
   createReviewEvent,
@@ -454,11 +455,15 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
             },
           });
 
-          GenerationJobManager.emitChunk(streamId, {
-            created: true,
-            message: userMessage,
-            streamId,
-          });
+          /** A governed turn is only announced as created once the gateway starts its
+           *  completion: until then nothing is stored, and a stop is an early abort. */
+          onDlpSent(req, () =>
+            GenerationJobManager.emitChunk(streamId, {
+              created: true,
+              message: userMessage,
+              streamId,
+            }),
+          );
         };
 
         const messageOptions = {

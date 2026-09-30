@@ -1,11 +1,15 @@
 import { ContentTypes } from 'librechat-data-provider';
 import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
+import type { GovernanceFetch, GovernanceSubmissionBody } from '../dlp';
+import type { ServerRequest } from '~/types/http';
 import {
+  onDlpSent,
+  isDlpUnsent,
   hasSelectedTools,
   isPlainTextSubmission,
+  createRequestDlpFetch,
   isGovernanceGatewayUrl,
   createGovernanceDlpFetch,
-  type GovernanceSubmissionBody,
 } from '../dlp';
 
 const environmentKeys = ['GOVERNANCE_API_BASE_URL', 'LIBRECHAT_SERVICE_CREDENTIAL'] as const;
@@ -135,6 +139,83 @@ describe('Governance DLP', () => {
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
     expect(upstreamFetch).toHaveBeenCalledWith(url, init);
     expect(result).toBe(upstreamResponse);
+  });
+});
+
+describe('governed turn sent state', () => {
+  const governedRequest = (): ServerRequest =>
+    ({
+      body: { text: 'normal text' },
+      user: { id: 'user-123' } as ServerRequest['user'],
+    }) as ServerRequest;
+
+  const completion = (): Response =>
+    new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+
+  const send = (governedFetch: GovernanceFetch) =>
+    governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'normal text' }],
+        stream: true,
+      }),
+    });
+
+  it('runs a callback at once for a turn that is not governed', () => {
+    const req = governedRequest();
+    const callback = jest.fn();
+
+    onDlpSent(req, callback);
+    onDlpSent(undefined, callback);
+
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  it('holds a callback until the gateway starts the completion, and runs it once', async () => {
+    const req = governedRequest();
+    const governedFetch = createRequestDlpFetch(req, async () => completion());
+    const callback = jest.fn();
+
+    onDlpSent(req, callback);
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+
+    await send(governedFetch);
+    await send(governedFetch);
+
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the turn unsent when the gateway does not start a completion', async () => {
+    const req = governedRequest();
+    const governedFetch = createRequestDlpFetch(
+      req,
+      async () =>
+        new Response('{"error":{"code":"governance_processing_failed"}}', { status: 503 }),
+    );
+    const callback = jest.fn();
+    onDlpSent(req, callback);
+
+    const response = await send(governedFetch);
+
+    expect(response.status).toBe(503);
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('keeps a sent turn sent when its fetch is created again', async () => {
+    const req = governedRequest();
+    await send(createRequestDlpFetch(req, async () => completion()));
+
+    createRequestDlpFetch(req, async () => completion());
+
+    expect(isDlpUnsent(req)).toBe(false);
   });
 });
 

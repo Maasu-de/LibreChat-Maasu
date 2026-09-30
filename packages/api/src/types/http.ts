@@ -36,4 +36,11 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpEligible?: boolean;
   /** A DLP review of this request that the user has to decide on before the model is called. */
   governanceDlpReview?: GovernanceDlpReview;
+  /**
+   * `false` until the gateway starts this turn's governed completion, `true` from then on, and
+   * unset for a turn that is not governed. An unsent turn stores nothing.
+   */
+  governanceDlpSent?: boolean;
+  /** Run once when `governanceDlpSent` turns `true`. */
+  governanceDlpSentCallbacks?: Array<() => void>;
 };

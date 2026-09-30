@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { logger } = require('@librechat/data-schemas');
 const {
+  onDlpSent,
   countTokens,
+  isDlpUnsent,
   checkBalance,
   getBalanceConfig,
   buildMessageFiles,
@@ -537,7 +539,6 @@ class BaseClient {
     const appConfig = this.options.req?.config;
     /** @type {Promise<TMessage>} */
     let userMessagePromise;
-    let saveUserMessage = null;
     const { user, head, isEdited, conversationId, responseMessageId, saveOptions, userMessage } =
       await this.handleStartMethods(message, opts);
 
@@ -653,7 +654,8 @@ class BaseClient {
           userMessage.alwaysAppliedSkills = names;
         }
       }
-      saveUserMessage = () => {
+      /** A governed turn is stored only once the gateway starts its completion. */
+      onDlpSent(this.options.req, () => {
         userMessagePromise = this.saveMessageToDatabase(userMessage, saveOptions, user).catch(
           (err) => {
             logger.error('[BaseClient] Failed to save user message:', err);
@@ -666,12 +668,7 @@ class BaseClient {
             userMessagePromise,
           });
         }
-      };
-      /** A governed turn can end in a DLP review, so its text is only saved once the model ran. */
-      if (this.options.req?.governanceDlpEligible !== true) {
-        saveUserMessage();
-        saveUserMessage = null;
-      }
+      });
     }
 
     const balanceConfig = getBalanceConfig(appConfig);
@@ -704,7 +701,9 @@ class BaseClient {
     }
 
     const { completion, metadata } = await this.sendCompletion(payload, opts);
-    saveUserMessage?.();
+    if (isDlpUnsent(this.options.req)) {
+      throw new Error('The message was not sent to the model.');
+    }
     if (this.abortController) {
       this.abortController.requestCompleted = true;
     }
