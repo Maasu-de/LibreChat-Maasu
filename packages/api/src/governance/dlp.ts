@@ -20,8 +20,8 @@ import {
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
-/** Base paths the gateway serves: `/api/v1/dlp` (completions and models) and `/v1` (models only). */
-const GATEWAY_BASE_PATH = /\/(?:api\/v1\/dlp|v1)$/;
+/** Base path under which the gateway serves completions and models. */
+const GATEWAY_BASE_PATH = /\/api\/v1\/dlp$/;
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
 
 const DLP_FAILURE_MESSAGE =

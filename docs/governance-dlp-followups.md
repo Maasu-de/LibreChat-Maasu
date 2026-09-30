@@ -20,8 +20,8 @@ LibreChat needs three server-side values, all of which
 `ai-governance-gateway/deploy/compose.yaml` passes to the LibreChat service:
 
 - `GOVERNANCE_API_BASE_URL`, set to the gateway's DLP completions base URL, for example
-  `http://governance-backend:8000/api/v1/dlp`. The `/v1` base URL serves only the model list
-  and cannot complete a chat.
+  `http://governance-backend:8000/api/v1/dlp`. The gateway no longer serves anything under
+  the earlier `/v1` base URL.
 - `LIBRECHAT_SERVICE_CREDENTIAL`.
 - `GOVERNANCE_DLP_ENABLED=true`.
 
