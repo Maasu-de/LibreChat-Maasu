@@ -1,6 +1,6 @@
-const checkGovernanceDlp = require('../checkGovernanceDlp');
+const markGovernanceDlp = require('../markGovernanceDlp');
 
-describe('checkGovernanceDlp', () => {
+describe('markGovernanceDlp', () => {
   const originalEnabled = process.env.GOVERNANCE_DLP_ENABLED;
 
   beforeEach(() => {
@@ -18,7 +18,7 @@ describe('checkGovernanceDlp', () => {
   const run = (body) => {
     const req = { body, user: { id: 'user-123' } };
     const next = jest.fn();
-    checkGovernanceDlp(req, {}, next);
+    markGovernanceDlp(req, {}, next);
     return { req, next };
   };
 
