@@ -41,6 +41,7 @@ export interface StoredReview {
 export interface ReviewStore {
   get: (reviewId: string) => Promise<StoredReview | undefined>;
   set: (reviewId: string, review: StoredReview, ttl: number) => Promise<unknown>;
+  delete: (reviewId: string) => Promise<unknown>;
 }
 
 /** Where the user's submitted text sits in the chat request LibreChat sends to the gateway. */

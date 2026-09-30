@@ -351,7 +351,11 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   return governanceErrorResponse('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
-/** Sends the approved stage 2 request, or stage 1 with `require_user_approval`. */
+/**
+ * Sends the approved stage 2 request, or stage 1 with `require_user_approval`. An approval is
+ * used up once its completion starts, so it cannot be sent a second time. It is kept when the
+ * gateway fails, so that attempt can be retried.
+ */
 async function sendForApproval(params: ApprovalParams): Promise<Response> {
   const { input, request, userId, text, reviewId, reviews } = params;
   if (reviewId !== undefined) {
@@ -364,7 +368,14 @@ async function sendForApproval(params: ApprovalParams): Promise<Response> {
     ) {
       return governanceErrorResponse('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
     }
-    return params.fetch(input, withApproval(params, stored.messages, stored.dlpToken));
+    const approved = await params.fetch(
+      input,
+      withApproval(params, stored.messages, stored.dlpToken),
+    );
+    if (approved.ok) {
+      await reviews.delete(reviewId);
+    }
+    return approved;
   }
 
   const stage1 = await params.fetch(input, withApproval(params, request.messages));
