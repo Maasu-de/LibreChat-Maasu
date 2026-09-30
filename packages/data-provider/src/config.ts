@@ -1360,7 +1360,6 @@ export type StartupConfigContext = 'share';
 
 export type TStartupConfig = {
   appTitle: string;
-  governanceDlpEnabled?: boolean;
   socialLogins?: string[];
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
