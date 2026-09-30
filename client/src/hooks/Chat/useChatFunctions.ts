@@ -213,9 +213,7 @@ export default function useChatFunctions({
   const getSender = useGetSender();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
-  const [pendingDlpSubmission, setPendingDlpSubmission] = useRecoilState(
-    store.dlpReviewByIndex(index),
-  );
+  const [pendingDlpReview, setPendingDlpReview] = useRecoilState(store.dlpReviewByIndex(index));
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
   const isTemporary = useRecoilValue(store.isTemporary);
@@ -644,21 +642,21 @@ export default function useChatFunctions({
     logger.dir('message_stream', submission, { depth: null });
   };
 
-  const cancelDlpIntervention = () => setPendingDlpSubmission(null);
+  const cancelDlpIntervention = () => setPendingDlpReview(null);
 
   useEffect(() => {
     const conversationKey = dlpConversationKey(immutableConversation?.conversationId);
-    setPendingDlpSubmission((pending) =>
+    setPendingDlpReview((pending) =>
       pending && dlpConversationKey(pending.conversationId) !== conversationKey ? null : pending,
     );
-  }, [immutableConversation?.conversationId, setPendingDlpSubmission]);
+  }, [immutableConversation?.conversationId, setPendingDlpReview]);
 
   /** Sends the reviewed text (masked where the review masks it) as approved by the user. */
   const confirmDlpIntervention = () => {
-    if (!pendingDlpSubmission || pendingDlpSubmission.result.decision === 'BLOCK') {
+    if (!pendingDlpReview || pendingDlpReview.result.decision === 'BLOCK') {
       return;
     }
-    const { result } = pendingDlpSubmission;
+    const { result } = pendingDlpReview;
     const approved = result.maskedPreview?.find(
       (item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION,
     );
@@ -666,7 +664,7 @@ export default function useChatFunctions({
       return;
     }
 
-    setPendingDlpSubmission(null);
+    setPendingDlpReview(null);
     ask({ text: approved.text }, { dlpReviewId: result.reviewId });
   };
 
@@ -709,7 +707,7 @@ export default function useChatFunctions({
   return {
     ask,
     regenerate,
-    pendingDlpSubmission,
+    pendingDlpReview,
     cancelDlpIntervention,
     confirmDlpIntervention,
   };

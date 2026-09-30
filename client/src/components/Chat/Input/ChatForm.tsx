@@ -56,7 +56,7 @@ interface ChatFormProps {
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
   newConversation: ConvoGenerator;
   handleStopGenerating: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  pendingDlpSubmission: ReturnType<typeof useChatContext>['pendingDlpSubmission'];
+  pendingDlpReview: ReturnType<typeof useChatContext>['pendingDlpReview'];
   cancelDlpIntervention: ReturnType<typeof useChatContext>['cancelDlpIntervention'];
   confirmDlpIntervention: ReturnType<typeof useChatContext>['confirmDlpIntervention'];
 }
@@ -72,7 +72,7 @@ const ChatForm = memo(function ChatForm({
   setFilesLoading,
   newConversation,
   handleStopGenerating,
-  pendingDlpSubmission,
+  pendingDlpReview,
   cancelDlpIntervention,
   confirmDlpIntervention,
 }: ChatFormProps) {
@@ -148,11 +148,11 @@ const ChatForm = memo(function ChatForm({
   );
 
   const handleCancelDlpIntervention = useCallback(() => {
-    if (pendingDlpSubmission) {
-      methods.setValue('text', pendingDlpSubmission.text, { shouldValidate: true });
+    if (pendingDlpReview) {
+      methods.setValue('text', pendingDlpReview.text, { shouldValidate: true });
     }
     cancelDlpIntervention();
-  }, [cancelDlpIntervention, methods, pendingDlpSubmission]);
+  }, [cancelDlpIntervention, methods, pendingDlpReview]);
 
   const handleConfirmDlpIntervention = useCallback(() => {
     confirmDlpIntervention();
@@ -276,10 +276,10 @@ const ChatForm = memo(function ChatForm({
           : 'sm:mb-10',
       )}
     >
-      {pendingDlpSubmission && (
+      {pendingDlpReview && (
         <DlpInterventionDialog
-          result={pendingDlpSubmission.result}
-          originalText={pendingDlpSubmission.text}
+          result={pendingDlpReview.result}
+          originalText={pendingDlpReview.text}
           onCancel={handleCancelDlpIntervention}
           onConfirm={handleConfirmDlpIntervention}
         />
@@ -465,7 +465,7 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
     setFilesLoading,
     newConversation,
     handleStopGenerating,
-    pendingDlpSubmission,
+    pendingDlpReview,
     cancelDlpIntervention,
     confirmDlpIntervention,
   } = useChatContext();
@@ -520,7 +520,7 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
       setFilesLoading={setFilesLoading}
       newConversation={stableNewConversation}
       handleStopGenerating={stableHandleStop}
-      pendingDlpSubmission={pendingDlpSubmission}
+      pendingDlpReview={pendingDlpReview}
       cancelDlpIntervention={cancelDlpIntervention}
       confirmDlpIntervention={confirmDlpIntervention}
     />

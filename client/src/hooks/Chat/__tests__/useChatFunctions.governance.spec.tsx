@@ -102,25 +102,26 @@ function Chat({
   review: TPendingDlpReview;
 }) {
   const [text, setText] = useState('');
-  const { ask, pendingDlpSubmission, cancelDlpIntervention, confirmDlpIntervention } =
-    useChatFunctions({
+  const { ask, pendingDlpReview, cancelDlpIntervention, confirmDlpIntervention } = useChatFunctions(
+    {
       conversation,
       getMessages: () => [],
       setMessages,
       setSubmission,
       isSubmitting: false,
       latestMessage: null,
-    });
+    },
+  );
 
   return (
     <>
       <input aria-label="Prompt" value={text} onChange={(event) => setText(event.target.value)} />
       <button aria-label="Send" onClick={() => ask({ text })} />
       <ReviewFromStream review={review} />
-      {pendingDlpSubmission && (
+      {pendingDlpReview && (
         <DlpInterventionDialog
-          result={pendingDlpSubmission.result}
-          originalText={pendingDlpSubmission.text}
+          result={pendingDlpReview.result}
+          originalText={pendingDlpReview.text}
           onCancel={cancelDlpIntervention}
           onConfirm={confirmDlpIntervention}
         />
