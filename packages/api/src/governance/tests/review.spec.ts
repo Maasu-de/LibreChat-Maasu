@@ -40,6 +40,7 @@ function memoryStore(): ReviewStore & { entries: Map<string, StoredReview> } {
     entries,
     get: async (reviewId) => entries.get(reviewId),
     set: async (reviewId, review) => entries.set(reviewId, review),
+    delete: async (reviewId) => entries.delete(reviewId),
   };
 }
 
@@ -335,9 +336,36 @@ describe('DLP approval flow', () => {
       dlp_token: 'approval-token',
     });
     expect(onSent).toHaveBeenCalledTimes(1);
+    expect(reviews.entries.has('review-1')).toBe(false);
   });
 
-  it('does not count an approval the gateway rejects as sent', async () => {
+  it('rejects a second send of an approval whose completion already started', async () => {
+    const reviews = memoryStore();
+    const approved = [{ role: 'user', content: MASKED }];
+    reviews.entries.set('review-1', {
+      userId: 'user-123',
+      model: 'governed-model',
+      text: MASKED,
+      messages: approved,
+      dlpToken: 'approval-token',
+    });
+    const { upstream, send } = setup({
+      text: MASKED,
+      reviewId: 'review-1',
+      reviews,
+      responses: [completionResponse()],
+    });
+
+    const first = await send(approved);
+    const second = await send(approved);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(400);
+    expect(await second.json()).toMatchObject({ error: { code: 'dlp_approval_invalid' } });
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an approval the gateway does not complete, and does not count it as sent', async () => {
     const reviews = memoryStore();
     reviews.entries.set('review-1', {
       userId: 'user-123',
@@ -357,6 +385,7 @@ describe('DLP approval flow', () => {
 
     expect(response.status).toBe(409);
     expect(onSent).not.toHaveBeenCalled();
+    expect(reviews.entries.has('review-1')).toBe(true);
   });
 
   it.each([

@@ -16,6 +16,10 @@ error, and a stop restores the draft. This assumes one governed completion per t
 why the deployment disables titles and summaries: a title request that passes DLP would mark
 the turn as sent before the main completion has been checked.
 
+An approval can be used once. LibreChat keeps the approved messages and token on the server
+until the approved completion starts, then deletes them, so sending the same `dlpReviewId`
+again is rejected. An approval the gateway fails or rejects is kept until it expires.
+
 The following work is intentionally deferred.
 
 - Extend the contract and integration to attachments, multimodal content, edited messages, continued messages, tools, agent handoffs, assistants, and remote API routes. These sends skip the approval flow today and reach the gateway's completion endpoint as built, without being reduced to the text-only request.
