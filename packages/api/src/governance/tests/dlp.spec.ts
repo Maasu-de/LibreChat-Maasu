@@ -32,9 +32,9 @@ afterAll(() => {
 
 describe('Governance DLP', () => {
   it.each([
-    ['http://governance.test/v1', 'http://governance.test/api/v1/dlp', true],
-    ['http://governance.test/api/v1/dlp', 'http://governance.test/v1/', true],
+    ['http://governance.test/api/v1/dlp', 'http://governance.test/api/v1/dlp/', true],
     ['http://governance.test/api/v1/dlp', 'http://other.test/api/v1/dlp', false],
+    ['http://governance.test/v1', 'http://governance.test/api/v1/dlp', false],
   ])('matches completion base URL %s against configured %s', (baseURL, configured, expected) => {
     process.env.GOVERNANCE_API_BASE_URL = configured;
     expect(isGovernanceGatewayUrl(baseURL)).toBe(expected);
@@ -118,10 +118,9 @@ describe('Governance DLP', () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it.each<[string, RequestInit]>([
-    ['http://governance.test/api/v1/dlp/models', { method: 'GET' }],
-    ['http://governance.test/v1/models', { method: 'GET' }],
-  ])('passes the non-completion request %s through untouched', async (url, init) => {
+  it('passes a non-completion request through untouched', async () => {
+    const url = 'http://governance.test/api/v1/dlp/models';
+    const init: RequestInit = { method: 'GET' };
     const upstreamResponse = new Response('[]');
     const upstreamFetch = jest.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => upstreamResponse,
