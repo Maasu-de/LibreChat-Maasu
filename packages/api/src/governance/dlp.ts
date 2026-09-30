@@ -1,7 +1,6 @@
 import { isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
-  TEndpointOption,
   TEphemeralAgent,
   GovernanceDecision,
   GovernanceDlpReview,
@@ -115,7 +114,6 @@ export type GovernanceSubmissionBody = Partial<
   Pick<
     TPayload,
     | 'text'
-    | 'model'
     | 'files'
     | 'tools'
     | 'agent_id'
@@ -126,9 +124,7 @@ export type GovernanceSubmissionBody = Partial<
     | 'editedContent'
     | 'ephemeralAgent'
   >
-> & {
-  endpointOption?: Pick<TEndpointOption, 'model' | 'model_parameters' | 'modelOptions'>;
-};
+>;
 
 /** True when the ephemeral agent has any tool selected that would bypass a plain-text send. */
 export function hasSelectedTools(ephemeralAgent?: TEphemeralAgent | null): boolean {
