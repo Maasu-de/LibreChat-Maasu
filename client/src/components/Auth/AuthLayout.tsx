@@ -62,14 +62,9 @@ function AuthLayout({
       <BlinkAnimation active={isFetching}>
         <div className="mx-auto mt-4 h-40 w-full max-w-xl">
           <img
-            src="assets/logo-light.svg?v=2"
-            alt={localize('com_ui_logo', { 0: 'Maasu' })}
-            className="dark:hidden h-full w-full object-contain"
-          />
-          <img
             src="assets/logo.svg?v=2"
             alt={localize('com_ui_logo', { 0: 'Maasu' })}
-            className="hidden dark:block h-full w-full object-contain"
+            className="h-full w-full object-contain"
           />
         </div>
       </BlinkAnimation>
