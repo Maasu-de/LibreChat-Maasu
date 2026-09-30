@@ -1,5 +1,6 @@
 import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-provider';
-import type { GatewayReview, ReviewMessage, ReviewStore, StoredReview } from '../review';
+import type { GatewayReview, ReviewStore, StoredReview } from '../review';
+import type { GovernanceChatMessage } from '../dlp';
 import { maskText, readReview, findSubmittedText, findingsInSubmittedText } from '../review';
 import { createGovernanceDlpFetch } from '../dlp';
 
@@ -75,7 +76,7 @@ function setup({
     onSent,
     reviews,
   });
-  const send = (messages: ReviewMessage[]) =>
+  const send = (messages: GovernanceChatMessage[]) =>
     governedFetch(DLP_COMPLETIONS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -151,7 +152,7 @@ describe('submitted text helpers', () => {
 });
 
 describe('DLP approval flow', () => {
-  const messages: ReviewMessage[] = [
+  const messages: GovernanceChatMessage[] = [
     { role: 'system', content: 'Be brief.' },
     { role: 'user', content: SUBMITTED },
   ];
@@ -214,7 +215,7 @@ describe('DLP approval flow', () => {
   });
 
   it('completes a review at once when every finding is in an earlier message', async () => {
-    const history: ReviewMessage[] = [
+    const history: GovernanceChatMessage[] = [
       { role: 'user', content: 'mail max@example.com' },
       { role: 'assistant', content: 'ok' },
       {

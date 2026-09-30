@@ -15,6 +15,7 @@ import {
   replaceSpecialVars,
   isAssistantsEndpoint,
   getDefaultParamsEndpoint,
+  GOVERNANCE_DLP_TEXT_LOCATION,
 } from 'librechat-data-provider';
 import type {
   TMessage,
@@ -40,8 +41,6 @@ import store, { useGetEphemeralAgent } from '~/store';
 import { startupConfigKey } from '~/data-provider';
 import useUserKey from '~/hooks/Input/useUserKey';
 import { useAuthContext } from '~/hooks';
-
-const DLP_TEXT_LOCATION = '/messages/0/content';
 
 /** A review is kept while the chat stays on its conversation; a new chat has no ID yet. */
 const dlpConversationKey = (conversationId?: string | null) =>
@@ -660,7 +659,9 @@ export default function useChatFunctions({
       return;
     }
     const { result } = pendingDlpSubmission;
-    const approved = result.maskedPreview?.find((item) => item.location === DLP_TEXT_LOCATION);
+    const approved = result.maskedPreview?.find(
+      (item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION,
+    );
     if (!approved) {
       return;
     }

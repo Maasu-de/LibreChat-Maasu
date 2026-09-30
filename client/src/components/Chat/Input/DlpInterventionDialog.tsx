@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
+import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type {
   GovernanceDlpResult,
@@ -12,7 +13,6 @@ import { cn } from '~/utils';
 
 type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: boolean };
 
-const MESSAGE_LOCATION = '/messages/0/content';
 const label = (category: string) => category.replaceAll('_', ' ');
 
 const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
@@ -53,7 +53,7 @@ export function buildFindingSegments(text: string, findings: GovernanceFinding[]
   const relevant = findings
     .filter(
       (f) =>
-        f.location === MESSAGE_LOCATION &&
+        f.location === GOVERNANCE_DLP_TEXT_LOCATION &&
         f.start >= 0 &&
         f.end > f.start &&
         f.start < chars.length,
@@ -120,7 +120,9 @@ export default function DlpInterventionDialog({
     () => buildFindingSegments(originalText, result.findings),
     [originalText, result.findings],
   );
-  const maskedText = result.maskedPreview?.find((m) => m.location === MESSAGE_LOCATION)?.text;
+  const maskedText = result.maskedPreview?.find(
+    (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
+  )?.text;
   const maskedSegments = useMemo(
     () => buildReplacementSegments(maskedText ?? '', result.findings),
     [maskedText, result.findings],

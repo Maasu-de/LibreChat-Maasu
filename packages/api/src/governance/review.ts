@@ -1,22 +1,15 @@
-import { CacheKeys } from 'librechat-data-provider';
+import { CacheKeys, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
   GovernanceFinding,
   GovernanceDecision,
   GovernanceDlpReview,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
+import type { GovernanceChatMessage } from './dlp';
 import { standardCache } from '~/cache';
-
-/** Findings and the masked preview sent to the browser refer to the submitted text here. */
-export const SUBMITTED_TEXT_LOCATION = '/messages/0/content';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
 const EVENT_END = /\r?\n\r?\n/;
-
-export interface ReviewMessage {
-  role: string;
-  content: string;
-}
 
 /** The `dlp` extension of a stage 1 response from `POST /api/v1/dlp/chat/completions`. */
 export interface GatewayReview {
@@ -24,7 +17,7 @@ export interface GatewayReview {
   action: string;
   policy_version?: number;
   findings?: GovernanceFinding[];
-  messages?: ReviewMessage[];
+  messages?: GovernanceChatMessage[];
   dlp_token?: string;
   expires_at?: number;
 }
@@ -34,7 +27,7 @@ export interface StoredReview {
   userId: string;
   model: string;
   text: string;
-  messages: ReviewMessage[];
+  messages: GovernanceChatMessage[];
   dlpToken: string;
 }
 
@@ -161,7 +154,7 @@ export async function readReview(
 
 /** Finds the last user message that ends with the submitted text; quoted excerpts precede it. */
 export function findSubmittedText(
-  messages: ReviewMessage[],
+  messages: GovernanceChatMessage[],
   text: string,
 ): SubmittedText | undefined {
   if (text.length === 0) {
@@ -189,7 +182,7 @@ export function findingsInSubmittedText(
     .filter((finding) => finding.location === location && finding.end > offset)
     .map((finding) => ({
       ...finding,
-      location: SUBMITTED_TEXT_LOCATION,
+      location: GOVERNANCE_DLP_TEXT_LOCATION,
       start: Math.max(finding.start - offset, 0),
       end: finding.end - offset,
     }));
@@ -257,7 +250,7 @@ export function toClientReview(
     maskedPreview:
       approvedText === undefined
         ? undefined
-        : [{ location: SUBMITTED_TEXT_LOCATION, text: approvedText }],
+        : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text: approvedText }],
     expiresAt: review.expires_at,
   };
 }
