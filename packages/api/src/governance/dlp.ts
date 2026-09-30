@@ -65,6 +65,8 @@ export interface GovernanceFetchParams {
   reviewId?: string;
   /** Receives a review the user has to decide on. The model call then ends without a completion. */
   onReview?: (review: GovernanceDlpReview) => void;
+  /** Called when the gateway starts a completion, which means the request passed DLP. */
+  onSent?: () => void;
   reviews?: ReviewStore;
 }
 
@@ -378,6 +380,7 @@ export function createGovernanceDlpFetch({
   text = '',
   reviewId,
   onReview,
+  onSent,
   reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
@@ -395,29 +398,62 @@ export function createGovernanceDlpFetch({
       throw new GovernanceDlpError('dlp_check_unsupported_request');
     }
 
-    if (!onReview) {
-      return fetch(input, withGovernanceRequest(input, init, request, userId));
+    const response = onReview
+      ? await sendForApproval({
+          input,
+          init,
+          request,
+          userId,
+          text,
+          reviewId,
+          onReview,
+          fetch,
+          reviews: reviews ?? getReviewStore(),
+        })
+      : await fetch(input, withGovernanceRequest(input, init, request, userId));
+    if (response.ok) {
+      onSent?.();
     }
-    return sendForApproval({
-      input,
-      init,
-      request,
-      userId,
-      text,
-      reviewId,
-      onReview,
-      fetch,
-      reviews: reviews ?? getReviewStore(),
-    });
+    return response;
   };
 }
 
-/** The governed fetch for one chat request. A review the user has to decide on is set on `req`. */
+function markDlpSent(req: ServerRequest): void {
+  if (req.governanceDlpSent === true) {
+    return;
+  }
+  req.governanceDlpSent = true;
+  const callbacks = req.governanceDlpSentCallbacks ?? [];
+  req.governanceDlpSentCallbacks = undefined;
+  for (const callback of callbacks) {
+    callback();
+  }
+}
+
+/** True for a governed turn whose completion the gateway has not started: it stores nothing. */
+export function isDlpUnsent(req?: ServerRequest): boolean {
+  return req?.governanceDlpSent === false;
+}
+
+/** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
+export function onDlpSent(req: ServerRequest | undefined, callback: () => void): void {
+  if (!req || !isDlpUnsent(req)) {
+    callback();
+    return;
+  }
+  req.governanceDlpSentCallbacks = [...(req.governanceDlpSentCallbacks ?? []), callback];
+}
+
+/**
+ * The governed fetch for one chat request. The turn counts as unsent until the gateway starts its
+ * completion, and a review the user has to decide on is set on `req`.
+ */
 export function createRequestDlpFetch(
   req: ServerRequest,
   fetch?: GovernanceFetch,
 ): GovernanceFetch {
   const { text, dlpReviewId } = req.body ?? {};
+  req.governanceDlpSent ??= false;
   return createGovernanceDlpFetch({
     userId: req.user?.id ?? '',
     fetch,
@@ -426,5 +462,6 @@ export function createRequestDlpFetch(
     onReview: (review) => {
       req.governanceDlpReview = review;
     },
+    onSent: () => markDlpSent(req),
   });
 }

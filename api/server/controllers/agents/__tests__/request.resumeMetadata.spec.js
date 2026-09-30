@@ -9,6 +9,7 @@ const mockLogger = {
 
 const mockGenerationJobManager = {
   createJob: jest.fn(),
+  emitChunk: jest.fn(),
   emitError: jest.fn(),
   completeJob: jest.fn(),
   getResumeState: jest.fn(),
@@ -82,6 +83,7 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
+  onDlpSent: (...args) => jest.requireActual('@librechat/api').onDlpSent(...args),
   getViolationInfo: jest.fn(),
   buildMessageFiles: jest.fn(() => []),
   resolveTitleTiming: jest.fn(() => 'immediate'),
@@ -616,6 +618,71 @@ describe('ResumableAgentController resume metadata', () => {
         parentMessageId: 'user-message',
       }),
       expect.any(Object),
+    );
+  });
+
+  it('announces a governed turn as created only once the gateway starts its completion', async () => {
+    const { createRequestDlpFetch } = jest.requireActual('@librechat/api');
+    const conversationId = 'conversation-123';
+    const userMessage = {
+      messageId: 'user-message',
+      parentMessageId: 'parent-message',
+      conversationId,
+      text: 'A governed message',
+    };
+    let chunksBeforeSent;
+    const initializeClient = jest.fn(async ({ req }) => {
+      const governedFetch = createRequestDlpFetch(
+        req,
+        async () =>
+          new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+      );
+      const sendMessage = async (_text, opts) => {
+        opts.onStart(userMessage, 'response-message');
+        chunksBeforeSent = mockGenerationJobManager.emitChunk.mock.calls.length;
+        await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'governed-model',
+            messages: [{ role: 'user', content: userMessage.text }],
+            stream: true,
+          }),
+        });
+        throw new Error('stop after the gateway started');
+      };
+      return { client: { sendMessage } };
+    });
+    const req = {
+      user: { id: 'user-123' },
+      body: {
+        text: userMessage.text,
+        messageId: userMessage.messageId,
+        parentMessageId: userMessage.parentMessageId,
+        conversationId,
+        endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+      },
+      config: {},
+    };
+    const res = createResumableResponse();
+
+    await AgentController(req, res, jest.fn(), initializeClient, null);
+    for (let i = 0; i < 50 && mockGenerationJobManager.emitError.mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(chunksBeforeSent).toBe(0);
+    expect(mockGenerationJobManager.emitChunk).toHaveBeenCalledTimes(1);
+    expect(mockGenerationJobManager.emitChunk).toHaveBeenCalledWith(conversationId, {
+      created: true,
+      message: userMessage,
+      streamId: conversationId,
+    });
+    expect(mockGenerationJobManager.emitError).toHaveBeenCalledWith(
+      conversationId,
+      'stop after the gateway started',
     );
   });
 });

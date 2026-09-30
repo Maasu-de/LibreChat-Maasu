@@ -8,6 +8,14 @@ dialog, and on approval sends the masked messages again with the review's `dlp_t
 LibreChat makes no separate DLP check call; the gateway's earlier `POST /api/v1/dlp/check`
 and `X-DLP-Token` flow has been removed.
 
+A governed message counts as sent only once the gateway starts its completion, which means it
+passed DLP. Until then LibreChat stores neither the message nor a reply and does not announce
+the turn to the browser as created. A turn that ends in a review, fails, or is stopped before
+that point leaves nothing in the database: a review opens the dialog, a failure shows its
+error, and a stop restores the draft. This assumes one governed completion per turn, which is
+why the deployment disables titles and summaries: a title request that passes DLP would mark
+the turn as sent before the main completion has been checked.
+
 The following work is intentionally deferred.
 
 - Extend the contract and integration to attachments, multimodal content, edited messages, continued messages, tools, agent handoffs, assistants, and remote API routes. These sends skip the approval flow today and reach the gateway's completion endpoint as built, without being reduced to the text-only request.
