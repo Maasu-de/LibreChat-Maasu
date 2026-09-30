@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { v4 } from 'uuid';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
+import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSetRecoilState, useRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
 import {
@@ -40,7 +41,7 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
 import store, { useGetEphemeralAgent } from '~/store';
 import { startupConfigKey } from '~/data-provider';
 import useUserKey from '~/hooks/Input/useUserKey';
-import { useAuthContext } from '~/hooks';
+import { useAuthContext, useLocalize } from '~/hooks';
 
 /** A review is kept while the chat stays on its conversation; a new chat has no ID yet. */
 const dlpConversationKey = (conversationId?: string | null) =>
@@ -210,7 +211,9 @@ export default function useChatFunctions({
   setSubmission: SetterOrUpdater<TSubmission | null>;
 }) {
   const navigate = useNavigate();
+  const localize = useLocalize();
   const getSender = useGetSender();
+  const { showToast } = useToastContext();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
   const [pendingDlpReview, setPendingDlpReview] = useRecoilState(store.dlpReviewByIndex(index));
@@ -651,21 +654,26 @@ export default function useChatFunctions({
     );
   }, [immutableConversation?.conversationId, setPendingDlpReview]);
 
-  /** Sends the reviewed text (masked where the review masks it) as approved by the user. */
-  const confirmDlpIntervention = () => {
+  /**
+   * Sends the reviewed text (masked where the review masks it) as approved by the user, and
+   * returns whether it did. A review without approved text stays open so it can be cancelled.
+   */
+  const confirmDlpIntervention = (): boolean => {
     if (!pendingDlpReview || pendingDlpReview.result.decision === 'BLOCK') {
-      return;
+      return false;
     }
     const { result } = pendingDlpReview;
     const approved = result.maskedPreview?.find(
       (item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION,
     );
     if (!approved) {
-      return;
+      showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
+      return false;
     }
 
     setPendingDlpReview(null);
     ask({ text: approved.text }, { dlpReviewId: result.reviewId });
+    return true;
   };
 
   const regenerate = (
