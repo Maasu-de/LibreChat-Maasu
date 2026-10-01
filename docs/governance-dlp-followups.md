@@ -17,8 +17,9 @@ why the deployment disables titles and summaries: a title request that passes DL
 the turn as sent before the main completion has been checked.
 
 An approval can be used once. LibreChat keeps the approved messages and token on the server
-until the approved completion starts, then deletes them, so sending the same `dlpReviewId`
-again is rejected. An approval the gateway fails or rejects is kept until it expires.
+and removes them before it sends them, so a second send of the same `dlpReviewId`, even a
+concurrent one, is rejected. They are put back when the gateway fails or rejects the approved
+request, so it can be retried until it expires.
 
 The following work is intentionally deferred.
 

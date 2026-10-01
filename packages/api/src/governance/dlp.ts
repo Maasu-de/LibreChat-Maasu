@@ -358,6 +358,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
       text: approvedText,
       messages,
       dlpToken,
+      expiresAt: review.expires_at,
     },
     reviewTtl(review.expires_at),
   );
@@ -366,30 +367,45 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
 }
 
 /**
- * Sends the approved stage 2 request, or stage 1 with `require_user_approval`. An approval is
- * used up once its completion starts, so it cannot be sent a second time. It is kept when the
- * gateway fails, so that attempt can be retried.
+ * Sends the approved stage 2 request. The review is claimed before it is sent, so concurrent
+ * confirmations cannot both send it, and restored when the gateway does not start the completion,
+ * so that attempt can be retried.
  */
-async function sendForApproval(params: ApprovalParams): Promise<Response> {
-  const { input, request, userId, text, reviewId, reviews } = params;
-  if (reviewId !== undefined) {
-    const stored = await reviews.get(reviewId);
-    if (
-      !stored ||
-      stored.userId !== userId ||
-      stored.model !== request.model ||
-      stored.text !== text
-    ) {
-      return rejectCompletion('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
-    }
-    const approved = await params.fetch(
-      input,
+async function sendApproved(params: ApprovalParams, reviewId: string): Promise<Response> {
+  const { request, userId, text, reviews } = params;
+  const stored = await reviews.get(reviewId);
+  if (
+    !stored ||
+    stored.userId !== userId ||
+    stored.model !== request.model ||
+    stored.text !== text ||
+    !(await reviews.delete(reviewId))
+  ) {
+    return rejectCompletion('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
+  }
+
+  const restore = () => reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
+  let approved: Response;
+  try {
+    approved = await params.fetch(
+      params.input,
       withApproval(params, stored.messages, stored.dlpToken),
     );
-    if (approved.ok) {
-      await reviews.delete(reviewId);
-    }
-    return approved;
+  } catch (error) {
+    await restore();
+    throw error;
+  }
+  if (!approved.ok) {
+    await restore();
+  }
+  return approved;
+}
+
+/** Sends the approved stage 2 request, or stage 1 with `require_user_approval`. */
+async function sendForApproval(params: ApprovalParams): Promise<Response> {
+  const { input, request, reviewId } = params;
+  if (reviewId !== undefined) {
+    return sendApproved(params, reviewId);
   }
 
   const stage1 = await params.fetch(input, withApproval(params, request.messages));
