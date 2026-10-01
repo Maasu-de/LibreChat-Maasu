@@ -485,6 +485,9 @@ export function onDlpSent(req: ServerRequest | undefined, callback: () => void):
   req.governanceDlpSentCallbacks = [...(req.governanceDlpSentCallbacks ?? []), callback];
 }
 
+/** The approval-off fetch of each turn's governed fetch, for side calls made with its options. */
+const sideCallFetches = new WeakMap<GovernanceFetch, GovernanceFetch>();
+
 /**
  * The governed fetch for one chat request. The turn counts as unsent until the gateway starts its
  * completion, and a review the user has to decide on is set on `req`. Without `approval`, as for a
@@ -500,7 +503,7 @@ export function createRequestDlpFetch(
   }
   const { text, dlpReviewId } = req.body ?? {};
   req.governanceDlpSent ??= false;
-  return createGovernanceDlpFetch({
+  const governedFetch = createGovernanceDlpFetch({
     userId: req.user?.id ?? '',
     fetch,
     text: typeof text === 'string' ? text : '',
@@ -510,4 +513,14 @@ export function createRequestDlpFetch(
     },
     onSent: () => markDlpSent(req),
   });
+  sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));
+  return governedFetch;
+}
+
+/**
+ * The approval-off fetch for a side call, such as a summarization, that reuses a turn's governed
+ * client options. Unlike the turn's own fetch, its completion does not mark the turn as sent.
+ */
+export function getDlpSideCallFetch(fetch?: GovernanceFetch): GovernanceFetch | undefined {
+  return fetch ? sideCallFetches.get(fetch) : undefined;
 }
