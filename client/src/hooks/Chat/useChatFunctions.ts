@@ -681,7 +681,12 @@ export default function useChatFunctions({
     }
 
     setPendingDlpReview(null);
-    ask({ text: approved.text }, { dlpReviewId: result.reviewId });
+    /** The reviewed submit already drained the `$` queue, so its skills come from the review.
+     *  An explicit list also keeps skills queued since then for the next message. */
+    ask(
+      { text: approved.text },
+      { dlpReviewId: result.reviewId, overrideManualSkills: pendingDlpReview.manualSkills ?? [] },
+    );
     return true;
   };
 

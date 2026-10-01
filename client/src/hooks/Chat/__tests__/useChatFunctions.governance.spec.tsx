@@ -3,7 +3,12 @@ import { RecoilRoot, useSetRecoilState } from 'recoil';
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EModelEndpoint, QueryKeys, encodeEphemeralAgentId } from 'librechat-data-provider';
+import {
+  Constants,
+  QueryKeys,
+  EModelEndpoint,
+  encodeEphemeralAgentId,
+} from 'librechat-data-provider';
 import type { TMessage, TSubmission, TConversation } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
 import type { TPendingDlpReview } from '~/common';
@@ -101,6 +106,14 @@ function ReviewFromStream({ review }: { review: TPendingDlpReview }) {
   return <button aria-label="Stream review" onClick={() => setReview(review)} />;
 }
 
+/** Stands in for the `$` popover, which queues a skill for the next message. */
+function QueueSkill({ conversationId, skill }: { conversationId: string; skill: string }) {
+  const setSkills = useSetRecoilState(store.pendingManualSkillsByConvoId(conversationId));
+  return (
+    <button aria-label="Queue skill" onClick={() => setSkills((skills) => [...skills, skill])} />
+  );
+}
+
 function Chat({
   conversation,
   review,
@@ -125,6 +138,10 @@ function Chat({
       <input aria-label="Prompt" value={text} onChange={(event) => setText(event.target.value)} />
       <button aria-label="Send" onClick={() => ask({ text })} />
       <ReviewFromStream review={review} />
+      <QueueSkill
+        conversationId={conversation.conversationId ?? Constants.NEW_CONVO}
+        skill="queued-later"
+      />
       {pendingDlpReview && (
         <DlpInterventionDialog
           result={pendingDlpReview.result}
@@ -192,6 +209,26 @@ it.each([savedConversation, newConversation])(
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   },
 );
+
+it("sends the reviewed turn's $ skills with the approved text, and keeps newer ones queued", () => {
+  renderChat(savedConversation, {
+    ...maskReview(savedConversation.conversationId),
+    manualSkills: ['brand-voice'],
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Queue skill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+  expect(lastSubmission().dlpReviewId).toBe('review-1');
+  expect(lastSubmission().manualSkills).toEqual(['brand-voice']);
+  expect(lastSubmission().userMessage.manualSkills).toEqual(['brand-voice']);
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Next' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(lastSubmission().manualSkills).toEqual(['queued-later']);
+});
 
 it('keeps the review open and says so when it has no approved text to send', () => {
   const review = maskReview(savedConversation.conversationId);

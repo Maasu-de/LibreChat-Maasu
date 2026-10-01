@@ -1,7 +1,13 @@
 import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, StoredReview } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
-import { maskText, readReview, findSubmittedText, findingsInSubmittedText } from '../review';
+import {
+  maskText,
+  readReview,
+  createReviewEvent,
+  findSubmittedText,
+  findingsInSubmittedText,
+} from '../review';
 import { createGovernanceDlpFetch } from '../dlp';
 
 const DLP_COMPLETIONS_URL = 'http://governance.test/api/v1/dlp/chat/completions';
@@ -148,6 +154,34 @@ describe('submitted text helpers', () => {
       emailFinding('/messages/0/content', 22),
     ];
     expect(maskText(text, findings)).toBe('🙂 [EMAIL] and [EMAIL]');
+  });
+});
+
+describe('createReviewEvent', () => {
+  it('returns the turn with its quotes and $ skills so the client can send them again', () => {
+    const review: GovernanceDlpReview = {
+      reviewId: 'review-1',
+      decision: 'MASK',
+      findings: [emailFinding('/messages/0/content', 13)],
+      maskedPreview: [{ location: '/messages/0/content', text: MASKED }],
+    };
+
+    const event = createReviewEvent(review, {
+      messageId: 'message-1',
+      parentMessageId: 'parent-1',
+      conversationId: 'conversation-1',
+      text: SUBMITTED,
+      quotes: ['an excerpt'],
+      manualSkills: ['brand-voice'],
+    });
+
+    expect(event).toMatchObject({ final: true, earlyAbort: true, dlpReview: review });
+    expect(event.requestMessage).toMatchObject({
+      messageId: 'message-1',
+      text: SUBMITTED,
+      quotes: ['an excerpt'],
+      manualSkills: ['brand-voice'],
+    });
   });
 });
 
