@@ -1690,6 +1690,7 @@ class AgentClient extends BaseClient {
       req,
       endpoint,
       model_parameters: clientOptions,
+      dlpApproval: false,
       db: {
         getUserKey: db.getUserKey,
         getUserKeyValues: db.getUserKeyValues,

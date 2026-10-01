@@ -1,4 +1,5 @@
 const { EventEmitter } = require('events');
+const { Constants } = require('librechat-data-provider');
 
 const mockLogger = {
   debug: jest.fn(),
@@ -8,7 +9,9 @@ const mockLogger = {
 };
 
 const mockGenerationJobManager = {
+  getJob: jest.fn(),
   createJob: jest.fn(),
+  emitDone: jest.fn(),
   emitChunk: jest.fn(),
   emitError: jest.fn(),
   completeJob: jest.fn(),
@@ -84,6 +87,7 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
   onDlpSent: (...args) => jest.requireActual('@librechat/api').onDlpSent(...args),
+  isDlpUnsent: (...args) => jest.requireActual('@librechat/api').isDlpUnsent(...args),
   getViolationInfo: jest.fn(),
   buildMessageFiles: jest.fn(() => []),
   resolveTitleTiming: jest.fn(() => 'immediate'),
@@ -188,6 +192,8 @@ describe('ResumableAgentController resume metadata', () => {
     mockGenerationJobManager.getResumeState.mockResolvedValue(null);
     mockGenerationJobManager.updateMetadata.mockResolvedValue(undefined);
     mockGenerationJobManager.emitError.mockResolvedValue(undefined);
+    mockGenerationJobManager.getJob.mockResolvedValue({ createdAt: 1000 });
+    mockGenerationJobManager.emitDone.mockResolvedValue(undefined);
     mockSaveMessage.mockResolvedValue({});
   });
 
@@ -684,5 +690,84 @@ describe('ResumableAgentController resume metadata', () => {
       conversationId,
       'stop after the gateway started',
     );
+  });
+
+  describe('title timing for a new conversation', () => {
+    const text = 'A first message';
+
+    const completion = async () =>
+      new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+
+    async function runFirstTurn({ governed }) {
+      const { createRequestDlpFetch } = jest.requireActual('@librechat/api');
+      const addTitle = jest.fn(async () => {});
+      let titlesBeforeResponse;
+      const initializeClient = jest.fn(async ({ req }) => {
+        const modelFetch = governed ? createRequestDlpFetch(req, completion) : completion;
+        const sendMessage = async () => {
+          await modelFetch('http://governance.test/api/v1/dlp/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'governed-model',
+              messages: [{ role: 'user', content: text }],
+              stream: true,
+            }),
+          });
+          titlesBeforeResponse = addTitle.mock.calls.length;
+          return {
+            messageId: 'response-message',
+            databasePromise: Promise.resolve({
+              conversation: { conversationId: req.body.conversationId },
+            }),
+          };
+        };
+        return { client: { sendMessage } };
+      });
+      const req = {
+        user: { id: 'user-123' },
+        body: {
+          text,
+          parentMessageId: Constants.NO_PARENT,
+          endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+        },
+        config: {},
+      };
+
+      await AgentController(req, createResumableResponse(), jest.fn(), initializeClient, addTitle);
+      for (let i = 0; i < 50 && mockGenerationJobManager.completeJob.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await nextTick();
+      return { req, addTitle, titlesBeforeResponse };
+    }
+
+    it('titles a governed turn only after its response', async () => {
+      const { req, addTitle, titlesBeforeResponse } = await runFirstTurn({ governed: true });
+
+      expect(titlesBeforeResponse).toBe(0);
+      expect(addTitle).toHaveBeenCalledTimes(1);
+      expect(addTitle).toHaveBeenCalledWith(req, {
+        text,
+        response: expect.objectContaining({ messageId: 'response-message' }),
+        client: expect.any(Object),
+      });
+      expect(mockGenerationJobManager.emitDone.mock.invocationCallOrder[0]).toBeLessThan(
+        addTitle.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('keeps titling a turn that is not governed alongside its response', async () => {
+      const { req, addTitle, titlesBeforeResponse } = await runFirstTurn({ governed: false });
+
+      expect(titlesBeforeResponse).toBe(1);
+      expect(addTitle).toHaveBeenCalledTimes(1);
+      expect(addTitle).toHaveBeenCalledWith(
+        req,
+        expect.objectContaining({ text, immediate: true }),
+      );
+    });
   });
 });

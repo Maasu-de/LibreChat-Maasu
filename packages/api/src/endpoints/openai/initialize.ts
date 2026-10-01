@@ -33,6 +33,7 @@ export async function initializeOpenAI({
   endpoint,
   model_parameters,
   db,
+  dlpApproval,
 }: BaseInitializeParams): Promise<InitializeResultBase> {
   const appConfig = req.config;
   const openAIConfig = appConfig?.endpoints?.[EModelEndpoint.openAI];
@@ -203,7 +204,7 @@ export async function initializeOpenAI({
   ) {
     options.configOptions = {
       ...(options.configOptions ?? {}),
-      fetch: createRequestDlpFetch(req, options.configOptions?.fetch),
+      fetch: createRequestDlpFetch(req, options.configOptions?.fetch, dlpApproval),
     };
   }
 

@@ -471,12 +471,17 @@ export function onDlpSent(req: ServerRequest | undefined, callback: () => void):
 
 /**
  * The governed fetch for one chat request. The turn counts as unsent until the gateway starts its
- * completion, and a review the user has to decide on is set on `req`.
+ * completion, and a review the user has to decide on is set on `req`. Without `approval`, as for a
+ * title, the gateway masks or blocks the call itself and the turn's state is left untouched.
  */
 export function createRequestDlpFetch(
   req: ServerRequest,
   fetch?: GovernanceFetch,
+  approval: boolean = true,
 ): GovernanceFetch {
+  if (!approval) {
+    return createGovernanceDlpFetch({ userId: req.user?.id ?? '', fetch });
+  }
   const { text, dlpReviewId } = req.body ?? {};
   req.governanceDlpSent ??= false;
   return createGovernanceDlpFetch({

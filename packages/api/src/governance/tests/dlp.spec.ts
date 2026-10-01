@@ -224,6 +224,30 @@ describe('governed turn sent state', () => {
 
     expect(isDlpUnsent(req)).toBe(false);
   });
+
+  it('sends a call without approval as is, leaving the turn and its review alone', async () => {
+    const req = governedRequest();
+    req.body.dlpReviewId = 'approved-review';
+    createRequestDlpFetch(req, async () => completion());
+    const callback = jest.fn();
+    onDlpSent(req, callback);
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => completion(),
+    );
+
+    const response = await send(createRequestDlpFetch(req, upstreamFetch, false));
+
+    expect(response.ok).toBe(true);
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      model: 'governed-model',
+      messages: [{ role: 'user', content: 'normal text' }],
+      stream: true,
+    });
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+    expect(req.governanceDlpReview).toBeUndefined();
+  });
 });
 
 const plainTextBody = (overrides: GovernanceSubmissionBody = {}): GovernanceSubmissionBody => ({
