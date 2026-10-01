@@ -7,6 +7,8 @@ import {
 } from 'librechat-data-provider';
 import type { SummarizationConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
+import type { ServerRequest } from '~/types/http';
+import { createRequestDlpFetch, getDlpSideCallFetch } from '~/governance/dlp';
 import { createRun } from '~/agents/run';
 
 // Mock winston logger — `format` must be callable so @librechat/data-schemas
@@ -943,6 +945,69 @@ describe('custom-endpoint provider resolution', () => {
     /** Summarization.model must win — parameters must not carry a stale model/modelName. */
     expect(parameters.model).toBeUndefined();
     expect(parameters.modelName).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite: governed summarization fetch
+// ---------------------------------------------------------------------------
+describe('governed summarization fetch', () => {
+  const gatewayUrl = 'http://gateway.test/api/v1/dlp';
+  const governedFetch = () =>
+    createRequestDlpFetch(
+      { body: { text: 'hi' }, user: { id: 'user-1' } } as ServerRequest,
+      jest.fn(),
+    );
+  const agentWithFetch = (fetch: unknown, overrides?: Record<string, unknown>) =>
+    makeAgent({
+      model_parameters: { model: 'gpt-4o', configuration: { baseURL: gatewayUrl, fetch } },
+      ...overrides,
+    });
+
+  it('gives a summarization that inherits the agent options the approval-off fetch', async () => {
+    const fetch = governedFetch();
+    const agents = await callAndCapture({ agents: [agentWithFetch(fetch)] });
+
+    const config = agents[0].summarizationConfig as { parameters?: TestSummarizationParameters };
+    const sideCallFetch = getDlpSideCallFetch(fetch);
+    expect(sideCallFetch).toBeDefined();
+    expect(config.parameters?.configuration).toEqual({ baseURL: gatewayUrl, fetch: sideCallFetch });
+    const clientOptions = agents[0].clientOptions as { configuration: { fetch: unknown } };
+    expect(clientOptions.configuration.fetch).toBe(fetch);
+  });
+
+  it('keeps user summarization parameters alongside the swapped fetch', async () => {
+    const fetch = governedFetch();
+    const agents = await callAndCapture({
+      agents: [agentWithFetch(fetch)],
+      summarizationConfig: { parameters: { temperature: 0.2 } },
+    });
+
+    const config = agents[0].summarizationConfig as { parameters?: TestSummarizationParameters };
+    expect(config.parameters?.temperature).toBe(0.2);
+    expect(config.parameters?.configuration?.fetch).toBe(getDlpSideCallFetch(fetch));
+  });
+
+  it('leaves a summarization on another endpoint with its own configuration', async () => {
+    const appConfig = makeAppConfig([
+      { name: 'Together', baseURL: 'https://api.together.ai/v1', apiKey: 'together-key' },
+    ]);
+    const agents = await callAndCapture({
+      agents: [agentWithFetch(governedFetch(), { endpoint: 'Gateway' })],
+      summarizationConfig: { provider: 'Together', model: 'mixtral' },
+      appConfig,
+    });
+
+    const config = agents[0].summarizationConfig as { parameters?: TestSummarizationParameters };
+    expect(config.parameters?.configuration?.baseURL).toBe('https://api.together.ai/v1');
+    expect(config.parameters?.configuration?.fetch).toBeUndefined();
+  });
+
+  it('leaves the summarization of an agent that is not governed alone', async () => {
+    const agents = await callAndCapture({ agents: [agentWithFetch(jest.fn())] });
+
+    const config = agents[0].summarizationConfig as Record<string, unknown>;
+    expect(config.parameters).toBeUndefined();
   });
 });
 

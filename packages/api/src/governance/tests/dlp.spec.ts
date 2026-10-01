@@ -6,6 +6,7 @@ import {
   onDlpSent,
   isDlpUnsent,
   hasSelectedTools,
+  getDlpSideCallFetch,
   isPlainTextSubmission,
   createRequestDlpFetch,
   isGovernanceGatewayUrl,
@@ -247,6 +248,35 @@ describe('governed turn sent state', () => {
     expect(isDlpUnsent(req)).toBe(true);
     expect(callback).not.toHaveBeenCalled();
     expect(req.governanceDlpReview).toBeUndefined();
+  });
+
+  it('gives side calls a fetch whose completion does not mark the turn sent', async () => {
+    const req = governedRequest();
+    const governedFetch = createRequestDlpFetch(req, async () => completion());
+    const callback = jest.fn();
+    onDlpSent(req, callback);
+
+    const sideCallFetch = getDlpSideCallFetch(governedFetch);
+    expect(sideCallFetch).toBeDefined();
+    const response = await send(sideCallFetch as GovernanceFetch);
+
+    expect(response.ok).toBe(true);
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+
+    await send(governedFetch);
+
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no side-call fetch for any other fetch', () => {
+    const upstreamFetch: GovernanceFetch = async () => completion();
+
+    expect(getDlpSideCallFetch(undefined)).toBeUndefined();
+    expect(getDlpSideCallFetch(upstreamFetch)).toBeUndefined();
+    expect(
+      getDlpSideCallFetch(createRequestDlpFetch(governedRequest(), upstreamFetch, false)),
+    ).toBeUndefined();
   });
 });
 
