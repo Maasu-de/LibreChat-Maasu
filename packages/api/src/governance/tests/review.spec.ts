@@ -178,6 +178,7 @@ describe('DLP approval flow', () => {
 
   it('stores a review of the submitted text and hands it to the user', async () => {
     const maskedMessages = [messages[0], { role: 'user', content: MASKED }];
+    const expiresAt = Math.floor(Date.now() / 1000) + 600;
     const { upstream, onReview, onSent, reviews, send } = setup({
       responses: [
         reviewResponse({
@@ -187,7 +188,7 @@ describe('DLP approval flow', () => {
           findings: [emailFinding('/messages/1/content', 13)],
           messages: maskedMessages,
           dlp_token: 'approval-token',
-          expires_at: Math.floor(Date.now() / 1000) + 600,
+          expires_at: expiresAt,
         }),
       ],
     });
@@ -202,7 +203,7 @@ describe('DLP approval flow', () => {
       policyVersion: 5,
       findings: [emailFinding('/messages/0/content', 13)],
       maskedPreview: [{ location: '/messages/0/content', text: MASKED }],
-      expiresAt: expect.any(Number),
+      expiresAt,
     });
     expect(reviews.entries.get('review-1')).toEqual({
       userId: 'user-123',
@@ -210,6 +211,7 @@ describe('DLP approval flow', () => {
       text: MASKED,
       messages: maskedMessages,
       dlpToken: 'approval-token',
+      expiresAt,
     });
     expect(onSent).not.toHaveBeenCalled();
   });
@@ -377,6 +379,54 @@ describe('DLP approval flow', () => {
     expect(second.status).toBe(400);
     expect(await second.json()).toMatchObject({ error: { code: 'dlp_approval_invalid' } });
     expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends an approval only once when the user confirms it twice at the same time', async () => {
+    const reviews = memoryStore();
+    const approved = [{ role: 'user', content: MASKED }];
+    reviews.entries.set('review-1', {
+      userId: 'user-123',
+      model: 'governed-model',
+      text: MASKED,
+      messages: approved,
+      dlpToken: 'approval-token',
+    });
+    const { upstream, onSent, send } = setup({
+      text: MASKED,
+      reviewId: 'review-1',
+      reviews,
+      responses: [completionResponse()],
+    });
+
+    const [first, second] = await Promise.all([send(approved), send(approved)]);
+
+    expect([first.status, second.status].sort()).toEqual([200, 400]);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(reviews.entries.has('review-1')).toBe(false);
+  });
+
+  it('restores an approval whose send to the gateway fails', async () => {
+    const reviews = memoryStore();
+    const review: StoredReview = {
+      userId: 'user-123',
+      model: 'governed-model',
+      text: MASKED,
+      messages: [{ role: 'user', content: MASKED }],
+      dlpToken: 'approval-token',
+    };
+    reviews.entries.set('review-1', review);
+    const { onSent, send } = setup({
+      text: MASKED,
+      reviewId: 'review-1',
+      reviews,
+      responses: [],
+    });
+
+    await expect(send(review.messages)).rejects.toThrow('unexpected gateway call');
+
+    expect(onSent).not.toHaveBeenCalled();
+    expect(reviews.entries.get('review-1')).toEqual(review);
   });
 
   it('keeps an approval the gateway does not complete, and does not count it as sent', async () => {

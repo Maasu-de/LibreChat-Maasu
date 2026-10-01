@@ -29,12 +29,15 @@ export interface StoredReview {
   text: string;
   messages: GovernanceChatMessage[];
   dlpToken: string;
+  /** Unix seconds at which the gateway's approval token expires. */
+  expiresAt?: number;
 }
 
 export interface ReviewStore {
   get: (reviewId: string) => Promise<StoredReview | undefined>;
   set: (reviewId: string, review: StoredReview, ttl: number) => Promise<unknown>;
-  delete: (reviewId: string) => Promise<unknown>;
+  /** Resolves true only for the caller that removed the review, even when called concurrently. */
+  delete: (reviewId: string) => Promise<boolean>;
 }
 
 /** Where the user's submitted text sits in the chat request LibreChat sends to the gateway. */
