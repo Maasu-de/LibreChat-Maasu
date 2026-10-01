@@ -216,7 +216,7 @@ export function maskText(text: string, findings: GovernanceFinding[]): string {
  */
 export function createReviewEvent(
   review: GovernanceDlpReview,
-  userMessage?: FinalMessageFields & { quotes?: string[] },
+  userMessage?: FinalMessageFields & { quotes?: string[]; manualSkills?: string[] },
 ): FinalEvent {
   return {
     final: true,
@@ -229,6 +229,7 @@ export function createReviewEvent(
           conversationId: userMessage.conversationId,
           text: userMessage.text ?? '',
           quotes: userMessage.quotes,
+          manualSkills: userMessage.manualSkills,
           isCreatedByUser: true,
         }
       : null,

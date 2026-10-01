@@ -549,6 +549,7 @@ export default function useResumableSSE(
                   result: data.dlpReview,
                   text: data.requestMessage?.text ?? userMessage.text,
                   conversationId: currentSubmission.conversation?.conversationId ?? null,
+                  manualSkills: data.requestMessage?.manualSkills ?? currentSubmission.manualSkills,
                 });
               }
               finalizeUsage(data, { ...currentSubmission, userMessage });

@@ -386,6 +386,8 @@ export type TPendingDlpReview = {
   /** The text the user sent, which the review's findings refer to. */
   text: string;
   conversationId: string | null;
+  /** The `$` skills the reviewed turn was sent with, sent again with the approved text. */
+  manualSkills?: string[];
 };
 
 /**
