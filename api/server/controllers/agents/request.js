@@ -3,6 +3,7 @@ const { Constants, ViolationTypes, isEphemeralAgentId } = require('librechat-dat
 const {
   sendEvent,
   onDlpSent,
+  isDlpUnsent,
   getViolationInfo,
   buildMessageFiles,
   createReviewEvent,
@@ -348,11 +349,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
     client = result.client;
 
     // Resolve title timing from the public agents endpoint first, then fall
-    // back to the agent's actual backing provider/custom endpoint.
-    titleTiming = resolveTitleTiming({
-      appConfig: req.config,
-      endpoint: [endpointOption?.endpoint, client?.options?.agent?.endpoint],
-    });
+    // back to the agent's actual backing provider/custom endpoint. A governed
+    // turn is titled only after its response, once the gateway has sent it.
+    titleTiming = isDlpUnsent(req)
+      ? 'final'
+      : resolveTitleTiming({
+          appConfig: req.config,
+          endpoint: [endpointOption?.endpoint, client?.options?.agent?.endpoint],
+        });
 
     if (client?.sender) {
       GenerationJobManager.updateMetadata(streamId, { sender: client.sender });

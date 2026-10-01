@@ -270,6 +270,53 @@ describe('AgentClient - titleConvo', () => {
       }
     });
 
+    it('sends a governed title to the gateway without asking the user to approve it', async () => {
+      const gatewayUrl = 'http://governance.test/api/v1/dlp';
+      const governanceEnv = {
+        GOVERNANCE_DLP_ENABLED: 'true',
+        GOVERNANCE_API_BASE_URL: gatewayUrl,
+        LIBRECHAT_SERVICE_CREDENTIAL: 'service-credential',
+        OPENAI_REVERSE_PROXY: gatewayUrl,
+      };
+      const prevEnv = Object.fromEntries(
+        Object.keys(governanceEnv).map((key) => [key, process.env[key]]),
+      );
+      Object.assign(process.env, governanceEnv);
+      const gatewayFetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+      mockReq.governanceDlpEligible = true;
+      mockReq.governanceDlpSent = true;
+      mockReq.body.text = 'Hello there';
+      mockReq.body.dlpReviewId = 'approved-review';
+      const titleRequest = {
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: 'User: Hello there' }],
+      };
+      try {
+        await client.titleConvo({ text: 'Hello there', abortController: new AbortController() });
+
+        const { configuration } = mockRun.generateTitle.mock.calls[0][0].clientOptions;
+        const response = await configuration.fetch(`${gatewayUrl}/chat/completions`, {
+          method: 'POST',
+          body: JSON.stringify(titleRequest),
+        });
+
+        expect(response.ok).toBe(true);
+        expect(gatewayFetch).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(gatewayFetch.mock.calls[0][1].body)).toEqual(titleRequest);
+        expect(mockReq.governanceDlpSent).toBe(true);
+        expect(mockReq.governanceDlpReview).toBeUndefined();
+      } finally {
+        gatewayFetch.mockRestore();
+        for (const [key, value] of Object.entries(prevEnv)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+      }
+    });
+
     it('should handle missing endpoint config gracefully', async () => {
       // Remove endpoint config
       mockReq.config = { endpoints: {} };

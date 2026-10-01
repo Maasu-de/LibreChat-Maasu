@@ -184,6 +184,7 @@ export async function initializeCustom({
   endpoint,
   model_parameters,
   db,
+  dlpApproval,
 }: BaseInitializeParams): Promise<InitializeResultBase> {
   const appConfig = req.config;
   const { key: expiresAt } = req.body;
@@ -363,7 +364,7 @@ export async function initializeCustom({
     ) {
       options.configOptions = {
         ...(options.configOptions ?? {}),
-        fetch: createRequestDlpFetch(req, options.configOptions?.fetch),
+        fetch: createRequestDlpFetch(req, options.configOptions?.fetch, dlpApproval),
       };
     }
     if (options != null) {
