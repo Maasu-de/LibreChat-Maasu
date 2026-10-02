@@ -1114,6 +1114,7 @@
   "com_ui_dlp_masked_prompt": "Masked prompt",
   "com_ui_dlp_original_prompt": "Original prompt",
   "com_ui_dlp_replacement_explanation": "Highlighted replacement tokens will be sent instead of the sensitive values above.",
+  "com_ui_dlp_send_failed": "Your approved message could not be sent. Send it again, or cancel to edit it.",
   "com_ui_dlp_send_masked": "Send masked",
   "com_ui_dlp_warn_description": "Sensitive information was detected. Review the findings before continuing.",
   "com_ui_dlp_warn_title": "Sensitive information detected",

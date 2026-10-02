@@ -51,6 +51,8 @@ export type FinalEvent = {
   error?: { message: string };
   /** DLP review that ended the turn before the model was called */
   dlpReview?: GovernanceDlpReview;
+  /** Approved DLP review whose send failed and that the user can send again */
+  dlpRetryReviewId?: string;
 };
 
 export type ServerSentEvent = StreamEvent | CreatedEvent | FinalEvent;

@@ -68,6 +68,8 @@ export interface GovernanceFetchParams {
   onReview?: (review: GovernanceDlpReview) => void;
   /** Called when the gateway starts a completion, which means the request passed DLP. */
   onSent?: () => void;
+  /** Told after each send of the approved review whether a failure put it back for another try. */
+  onApprovalKept?: (kept: boolean) => void;
   reviews?: ReviewStore;
 }
 
@@ -298,6 +300,7 @@ interface ApprovalParams {
   text: string;
   reviewId?: string;
   onReview: (review: GovernanceDlpReview) => void;
+  onApprovalKept?: (kept: boolean) => void;
   fetch: GovernanceFetch;
   reviews: ReviewStore;
 }
@@ -366,13 +369,18 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
+/** A failed send worth repeating: a timeout, a rate limit or a server error. */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 /**
  * Sends the approved stage 2 request. The review is claimed before it is sent, so concurrent
- * confirmations cannot both send it, and restored when the gateway does not start the completion,
- * so that attempt can be retried.
+ * confirmations cannot both send it. It is restored when the send fails in a way that can be
+ * retried, by the SDK or by the user, and not when the gateway rejects the approval itself.
  */
 async function sendApproved(params: ApprovalParams, reviewId: string): Promise<Response> {
-  const { request, userId, text, reviews } = params;
+  const { request, userId, text, reviews, onApprovalKept } = params;
   const stored = await reviews.get(reviewId);
   if (
     !stored ||
@@ -384,7 +392,11 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
     return rejectCompletion('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
   }
 
-  const restore = () => reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
+  onApprovalKept?.(false);
+  const restore = async () => {
+    await reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
+    onApprovalKept?.(true);
+  };
   let approved: Response;
   try {
     approved = await params.fetch(
@@ -395,7 +407,7 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
     await restore();
     throw error;
   }
-  if (!approved.ok) {
+  if (!approved.ok && isRetryableStatus(approved.status)) {
     await restore();
   }
   return approved;
@@ -431,6 +443,7 @@ export function createGovernanceDlpFetch({
   reviewId,
   onReview,
   onSent,
+  onApprovalKept,
   reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
@@ -464,6 +477,7 @@ export function createGovernanceDlpFetch({
           text,
           reviewId,
           onReview,
+          onApprovalKept,
           fetch,
           reviews: reviews ?? getReviewStore(),
         })
@@ -490,6 +504,18 @@ function markDlpSent(req: ServerRequest): void {
 /** True for a governed turn whose completion the gateway has not started: it stores nothing. */
 export function isDlpUnsent(req?: ServerRequest): boolean {
   return req?.governanceDlpSent === false;
+}
+
+/**
+ * The approved review of an unsent turn whose send failed but put the review back, so the user
+ * can send it again. Undefined for any other turn.
+ */
+export function getRetryableDlpReviewId(req?: ServerRequest): string | undefined {
+  const reviewId = req?.body?.dlpReviewId;
+  if (!isDlpUnsent(req) || req?.governanceDlpApprovalKept !== true) {
+    return undefined;
+  }
+  return typeof reviewId === 'string' && reviewId !== '' ? reviewId : undefined;
 }
 
 /** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
@@ -528,6 +554,9 @@ export function createRequestDlpFetch(
       req.governanceDlpReview = review;
     },
     onSent: () => markDlpSent(req),
+    onApprovalKept: (kept) => {
+      req.governanceDlpApprovalKept = kept;
+    },
   });
   sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));
   return governedFetch;

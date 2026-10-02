@@ -36,6 +36,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpEligible?: boolean;
   /** A DLP review of this request that the user has to decide on before the model is called. */
   governanceDlpReview?: GovernanceDlpReview;
+  /** Set when the approved review's last send failed and put it back, so it can be sent again. */
+  governanceDlpApprovalKept?: boolean;
   /**
    * `false` until the gateway starts this turn's governed completion, `true` from then on, and
    * unset for a turn that is not governed. An unsent turn stores nothing.

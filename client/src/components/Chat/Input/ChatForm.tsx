@@ -282,6 +282,7 @@ const ChatForm = memo(function ChatForm({
         <DlpInterventionDialog
           result={pendingDlpReview.result}
           originalText={pendingDlpReview.text}
+          sendFailed={pendingDlpReview.status === 'failed'}
           onCancel={handleCancelDlpIntervention}
           onConfirm={handleConfirmDlpIntervention}
         />

@@ -210,14 +210,31 @@ export function maskText(text: string, findings: GovernanceFinding[]): string {
   return masked + chars.slice(cursor).join('');
 }
 
+type ReviewedUserMessage = FinalMessageFields & { quotes?: string[]; manualSkills?: string[] };
+
 /**
  * Ends a turn paused for DLP review the way an early abort ends it: nothing was saved, so the
  * client drops the pending messages, restores the draft and shows the review.
  */
 export function createReviewEvent(
   review: GovernanceDlpReview,
-  userMessage?: FinalMessageFields & { quotes?: string[]; manualSkills?: string[] },
+  userMessage?: ReviewedUserMessage,
 ): FinalEvent {
+  return { ...createUnsentTurnEvent(userMessage), dlpReview: review };
+}
+
+/**
+ * Ends a turn whose approved review could not be sent like a review ends it, so the client
+ * shows that review again and the user can send it again or cancel it.
+ */
+export function createApprovalRetryEvent(
+  reviewId: string,
+  userMessage?: ReviewedUserMessage,
+): FinalEvent {
+  return { ...createUnsentTurnEvent(userMessage), dlpRetryReviewId: reviewId };
+}
+
+function createUnsentTurnEvent(userMessage?: ReviewedUserMessage): FinalEvent {
   return {
     final: true,
     conversation: null,
@@ -236,7 +253,6 @@ export function createReviewEvent(
     responseMessage: null,
     aborted: true,
     earlyAbort: true,
-    dlpReview: review,
   };
 }
 

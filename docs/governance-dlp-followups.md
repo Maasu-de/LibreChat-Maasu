@@ -18,8 +18,12 @@ the turn as sent before the main completion has been checked.
 
 An approval can be used once. LibreChat keeps the approved messages and token on the server
 and removes them before it sends them, so a second send of the same `dlpReviewId`, even a
-concurrent one, is rejected. They are put back when the gateway fails or rejects the approved
-request, so it can be retried until it expires.
+concurrent one, is rejected. They are put back when the send fails with a network error, a
+timeout, a rate limit or a server error, but not when the gateway rejects the approval itself,
+for example because its token expired. The SDK's own retries use them again. If those fail too,
+the turn ends without storing anything and the browser shows the same review again, so the user
+can send it again until it expires or cancel it. The browser keeps the review, hidden, from the
+user's approval until the approved turn starts, so no second review is needed.
 
 The following work is intentionally deferred.
 

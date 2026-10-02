@@ -7,6 +7,7 @@ import {
   createReviewEvent,
   findSubmittedText,
   findingsInSubmittedText,
+  createApprovalRetryEvent,
 } from '../review';
 import { createGovernanceDlpFetch } from '../dlp';
 
@@ -73,6 +74,7 @@ function setup({
   );
   const onReview = jest.fn<void, [GovernanceDlpReview]>();
   const onSent = jest.fn();
+  const onApprovalKept = jest.fn<void, [boolean]>();
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
@@ -80,6 +82,7 @@ function setup({
     reviewId,
     onReview,
     onSent,
+    onApprovalKept,
     reviews,
   });
   const send = (messages: GovernanceChatMessage[]) =>
@@ -89,7 +92,7 @@ function setup({
       body: JSON.stringify({ model: 'governed-model', messages, stream: true, top_p: 0.5 }),
     });
   const sentBody = (call: number) => JSON.parse(String(upstream.mock.calls[call]?.[1]?.body));
-  return { upstream, onReview, onSent, reviews, send, sentBody };
+  return { upstream, onReview, onSent, onApprovalKept, reviews, send, sentBody };
 }
 
 describe('readReview', () => {
@@ -182,6 +185,27 @@ describe('createReviewEvent', () => {
       quotes: ['an excerpt'],
       manualSkills: ['brand-voice'],
     });
+  });
+});
+
+describe('createApprovalRetryEvent', () => {
+  it('ends the turn like a review, naming the approved review to show again', () => {
+    const event = createApprovalRetryEvent('review-1', {
+      messageId: 'message-1',
+      parentMessageId: 'parent-1',
+      conversationId: 'conversation-1',
+      text: MASKED,
+      quotes: ['an excerpt'],
+    });
+
+    expect(event).toMatchObject({
+      final: true,
+      earlyAbort: true,
+      responseMessage: null,
+      dlpRetryReviewId: 'review-1',
+    });
+    expect(event.dlpReview).toBeUndefined();
+    expect(event.requestMessage).toMatchObject({ text: MASKED, quotes: ['an excerpt'] });
   });
 });
 
@@ -443,7 +467,7 @@ describe('DLP approval flow', () => {
       dlpToken: 'approval-token',
     };
     reviews.entries.set('review-1', review);
-    const { onSent, send } = setup({
+    const { onSent, onApprovalKept, send } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -454,29 +478,47 @@ describe('DLP approval flow', () => {
 
     expect(onSent).not.toHaveBeenCalled();
     expect(reviews.entries.get('review-1')).toEqual(review);
+    expect(onApprovalKept).toHaveBeenLastCalledWith(true);
   });
 
-  it('keeps an approval the gateway does not complete, and does not count it as sent', async () => {
-    const reviews = memoryStore();
-    reviews.entries.set('review-1', {
+  describe('when the gateway does not complete an approval', () => {
+    const review: StoredReview = {
       userId: 'user-123',
       model: 'governed-model',
       text: MASKED,
       messages: [{ role: 'user', content: MASKED }],
       dlpToken: 'approval-token',
-    });
-    const { onSent, send } = setup({
-      text: MASKED,
-      reviewId: 'review-1',
-      reviews,
-      responses: [new Response('{"error":{"code":"dlp_review_required"}}', { status: 409 })],
+    };
+
+    const sendFailing = (status: number) => {
+      const reviews = memoryStore();
+      reviews.entries.set('review-1', review);
+      const result = setup({
+        text: MASKED,
+        reviewId: 'review-1',
+        reviews,
+        responses: [new Response('{"error":{}}', { status })],
+      });
+      return { ...result, response: result.send(review.messages) };
+    };
+
+    it.each([408, 429, 502, 503])('keeps it for another send after a %s', async (status) => {
+      const { onSent, onApprovalKept, reviews, response } = sendFailing(status);
+
+      expect((await response).status).toBe(status);
+      expect(onSent).not.toHaveBeenCalled();
+      expect(reviews.entries.get('review-1')).toEqual(review);
+      expect(onApprovalKept).toHaveBeenLastCalledWith(true);
     });
 
-    const response = await send([{ role: 'user', content: MASKED }]);
+    it.each([403, 409])('uses it up when the gateway rejects it with a %s', async (status) => {
+      const { onSent, onApprovalKept, reviews, response } = sendFailing(status);
 
-    expect(response.status).toBe(409);
-    expect(onSent).not.toHaveBeenCalled();
-    expect(reviews.entries.has('review-1')).toBe(true);
+      expect((await response).status).toBe(status);
+      expect(onSent).not.toHaveBeenCalled();
+      expect(reviews.entries.has('review-1')).toBe(false);
+      expect(onApprovalKept).toHaveBeenLastCalledWith(false);
+    });
   });
 
   it.each([

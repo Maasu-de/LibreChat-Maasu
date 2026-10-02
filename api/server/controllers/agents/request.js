@@ -8,6 +8,8 @@ const {
   buildMessageFiles,
   createReviewEvent,
   getReferencedQuotes,
+  createApprovalRetryEvent,
+  getRetryableDlpReviewId,
   resolveTitleTiming,
   GenerationJobManager,
   filterPersistableAbortContent,
@@ -705,6 +707,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         // Check if this was an abort (not a real error)
         const wasAborted = job.abortController.signal.aborted || error.message?.includes('abort');
 
+        const retryReviewId = getRetryableDlpReviewId(req);
         if (req.governanceDlpReview) {
           await GenerationJobManager.emitDone(
             streamId,
@@ -714,6 +717,16 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         } else if (wasAborted) {
           logger.debug(`[ResumableAgentController] Generation aborted for ${streamId}`);
           // abortJob already handled emitDone and completeJob
+        } else if (retryReviewId) {
+          logger.error(
+            `[ResumableAgentController] Approved DLP review not sent for ${streamId}:`,
+            error,
+          );
+          await GenerationJobManager.emitDone(
+            streamId,
+            createApprovalRetryEvent(retryReviewId, userMessage),
+          );
+          GenerationJobManager.completeJob(streamId);
         } else {
           logger.error(`[ResumableAgentController] Generation error for ${streamId}:`, error);
           await GenerationJobManager.emitError(streamId, error.message || 'Generation failed');

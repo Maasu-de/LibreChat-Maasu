@@ -10,8 +10,10 @@ import {
   isPlainTextSubmission,
   createRequestDlpFetch,
   isGovernanceGatewayUrl,
+  getRetryableDlpReviewId,
   createGovernanceDlpFetch,
 } from '../dlp';
+import { getReviewStore } from '../review';
 
 const environmentKeys = ['GOVERNANCE_API_BASE_URL', 'LIBRECHAT_SERVICE_CREDENTIAL'] as const;
 
@@ -346,5 +348,83 @@ describe('isPlainTextSubmission', () => {
 
   it('ignores empty file and tool arrays', () => {
     expect(isPlainTextSubmission(plainTextBody({ files: [], tools: [] }))).toBe(true);
+  });
+});
+
+describe('approved review to send again', () => {
+  const reviewId = 'approved-review';
+  const text = 'Please email [EMAIL] today';
+  const messages = [{ role: 'user', content: text }];
+
+  const approvedRequest = (): ServerRequest =>
+    ({
+      body: { text, dlpReviewId: reviewId },
+      user: { id: 'user-123' } as ServerRequest['user'],
+    }) as ServerRequest;
+
+  const gateway = (...statuses: number[]) =>
+    jest.fn(async (): Promise<Response> => {
+      const status = statuses.shift() ?? 200;
+      return status === 200
+        ? new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' },
+          })
+        : new Response('{"error":{}}', { status });
+    });
+
+  const send = (governedFetch: GovernanceFetch) =>
+    governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'governed-model', messages, stream: true }),
+    });
+
+  beforeEach(async () => {
+    await getReviewStore().set(
+      reviewId,
+      { userId: 'user-123', model: 'governed-model', text, messages, dlpToken: 'approval-token' },
+      60_000,
+    );
+  });
+
+  afterEach(async () => {
+    await getReviewStore().delete(reviewId);
+  });
+
+  it('names the review when its send fails and puts it back', async () => {
+    const req = approvedRequest();
+
+    await send(createRequestDlpFetch(req, gateway(503)));
+
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(getRetryableDlpReviewId(req)).toBe(reviewId);
+  });
+
+  it.each([403, 409])('names no review the gateway rejected with a %s', async (status) => {
+    const req = approvedRequest();
+
+    await send(createRequestDlpFetch(req, gateway(status)));
+
+    expect(getRetryableDlpReviewId(req)).toBeUndefined();
+  });
+
+  it('names no review once a retry of its send starts the completion', async () => {
+    const req = approvedRequest();
+    const governedFetch = createRequestDlpFetch(req, gateway(503, 200));
+
+    await send(governedFetch);
+    await send(governedFetch);
+
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(getRetryableDlpReviewId(req)).toBeUndefined();
+  });
+
+  it('names no review for a turn that was not approved', () => {
+    const req = approvedRequest();
+    req.body.dlpReviewId = undefined;
+    req.governanceDlpSent = false;
+    req.governanceDlpApprovalKept = true;
+
+    expect(getRetryableDlpReviewId(req)).toBeUndefined();
   });
 });

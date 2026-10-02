@@ -58,7 +58,7 @@ export * from './governance/dlp';
 export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
-export { createReviewEvent } from './governance/review';
+export { createReviewEvent, createApprovalRetryEvent } from './governance/review';
 /* Files */
 export * from './files';
 /* Storage */
