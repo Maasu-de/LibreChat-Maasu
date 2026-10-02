@@ -43,6 +43,12 @@ describe('isFileSnapshotEnabled', () => {
 });
 
 describe('buildSharedLinkStartupPayload', () => {
+  it.each(['true', 'false'])('includes pilot mode for anonymous viewers: %s', (enabled) => {
+    expect(
+      buildSharedLinkStartupPayload(null, { GOVERNANCE_PILOT_ENABLED: enabled }),
+    ).toMatchObject({ governancePilotEnabled: enabled === 'true' });
+  });
+
   it('builds the share-view startup allowlist', () => {
     const payload = buildSharedLinkStartupPayload(
       {
@@ -63,6 +69,7 @@ describe('buildSharedLinkStartupPayload', () => {
 
     expect(payload).toEqual({
       appTitle: 'Test Chat',
+      governancePilotEnabled: false,
       analyticsGtmId: 'GTM-XYZ',
       bundlerURL: 'https://bundler.example.com',
       staticBundlerURL: 'https://static-bundler.example.com',
@@ -80,6 +87,6 @@ describe('buildSharedLinkStartupPayload', () => {
       {},
     );
 
-    expect(payload).toEqual({ appTitle: 'LibreChat' });
+    expect(payload).toEqual({ appTitle: 'LibreChat', governancePilotEnabled: false });
   });
 });

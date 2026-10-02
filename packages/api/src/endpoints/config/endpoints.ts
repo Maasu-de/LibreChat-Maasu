@@ -9,6 +9,7 @@ import type { AgentCapabilities, TEndpointsConfig, TConfig } from 'librechat-dat
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, TCustomEndpointsConfig } from '~/types';
 import { loadCustomEndpointsConfig as defaultLoadCustomEndpoints } from '~/endpoints/custom';
+import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from '~/governance/mode';
 
 type PartialEndpointEntry = Partial<TConfig> & Record<string, unknown>;
 type DefaultEndpointsResult = Record<string, PartialEndpointEntry | false | null>;
@@ -42,7 +43,9 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
         userId: req.user?.id,
         tenantId: req.user?.tenantId,
       }));
-    const defaultEndpointsConfig = await loadDefaultEndpointsConfig(appConfig);
+    const defaultEndpointsConfig = isGovernancePilotEnabled()
+      ? {}
+      : await loadDefaultEndpointsConfig(appConfig);
     const customEndpointsConfig = loadCustomEndpointsConfig(appConfig?.endpoints?.custom);
 
     const mergedConfig: MutableEndpointsConfig = {
@@ -124,6 +127,9 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
       };
     }
 
+    if (isGovernancePilotEnabled()) {
+      return { [GOVERNANCE_ENDPOINT]: mergedConfig[GOVERNANCE_ENDPOINT] } as TEndpointsConfig;
+    }
     return orderEndpointsConfig(mergedConfig as TEndpointsConfig);
   }
 
@@ -131,6 +137,9 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     req: ServerRequest,
     capability: AgentCapabilities,
   ): Promise<boolean> {
+    if (isGovernancePilotEnabled()) {
+      return false;
+    }
     const isAgents = isAgentsEndpoint(req.body?.endpointType || req.body?.endpoint);
     const endpointsConfig = await getEndpointsConfig(req);
     const capabilities =

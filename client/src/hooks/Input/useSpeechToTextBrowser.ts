@@ -93,6 +93,7 @@ const useSpeechToTextBrowser = (
   }, [setText, onTranscriptionComplete, resetTranscript, finalTranscript, autoSendText]);
 
   const toggleListening = useCallback(() => {
+    if (speechToTextEndpoint === 'disabled') return;
     if (!browserSupportsSpeechRecognition) {
       showToast({
         message: sttExternal
@@ -130,6 +131,7 @@ const useSpeechToTextBrowser = (
       });
     }
   }, [
+    speechToTextEndpoint,
     autoTranscribeAudio,
     browserSupportsSpeechRecognition,
     isListening,
