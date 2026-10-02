@@ -263,6 +263,73 @@ it("sends the reviewed turn's $ skills with the approved text, and keeps newer o
   expect(lastSubmission().manualSkills).toEqual(['queued-later']);
 });
 
+it.each([
+  ['com_ui_cancel', maskReview(savedConversation.conversationId)],
+  ['com_ui_close', blockReview],
+])("queues the review's $ skills again when it is dismissed with %s", (button, review) => {
+  renderChat(savedConversation, { ...review, manualSkills: ['brand-voice'] });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: button }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+    target: { value: 'Edited' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(lastSubmission().manualSkills).toEqual(['brand-voice']);
+});
+
+it("puts a cancelled review's $ skills ahead of skills queued since, once each", () => {
+  renderChat(savedConversation, {
+    ...maskReview(savedConversation.conversationId),
+    manualSkills: ['brand-voice', 'queued-later'],
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Queue skill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+    target: { value: 'Edited' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(lastSubmission().manualSkills).toEqual(['brand-voice', 'queued-later']);
+});
+
+it.each([savedConversation, newConversation])(
+  "queues the review's $ skills again in its conversation $conversationId when the chat moves away",
+  (conversation) => {
+    const review = { ...maskReview(conversation.conversationId), manualSkills: ['brand-voice'] };
+    const { rerender } = renderChat(conversation, review);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+    rerender(<Chat conversation={{ ...conversation, conversationId: 'other' }} review={review} />);
+    rerender(<Chat conversation={conversation} review={review} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'Edited' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(lastSubmission().manualSkills).toEqual(['brand-voice']);
+  },
+);
+
+it('does not queue the $ skills of an approved review that is already on its way', () => {
+  const review = { ...maskReview(savedConversation.conversationId), manualSkills: ['brand-voice'] };
+  const { rerender } = renderChat(savedConversation, review);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+  rerender(
+    <Chat conversation={{ ...savedConversation, conversationId: 'other' }} review={review} />,
+  );
+  rerender(<Chat conversation={savedConversation} review={review} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Next' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(lastSubmission().manualSkills).toBeUndefined();
+});
+
 it('keeps the review open and says so when it has no approved text to send', () => {
   const review = maskReview(savedConversation.conversationId);
   renderChat(savedConversation, { ...review, result: { ...review.result, maskedPreview: [] } });
