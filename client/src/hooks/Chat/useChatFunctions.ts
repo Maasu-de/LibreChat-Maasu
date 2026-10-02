@@ -216,7 +216,9 @@ export default function useChatFunctions({
   const { showToast } = useToastContext();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
-  const [pendingDlpReview, setPendingDlpReview] = useRecoilState(store.dlpReviewByIndex(index));
+  const [dlpReview, setDlpReview] = useRecoilState(store.dlpReviewByIndex(index));
+  /** The review the user has to decide on, hidden while its approved turn is on its way. */
+  const pendingDlpReview = dlpReview?.status === 'sending' ? null : dlpReview;
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
   const isTemporary = useRecoilValue(store.isTemporary);
@@ -645,18 +647,19 @@ export default function useChatFunctions({
     logger.dir('message_stream', submission, { depth: null });
   };
 
-  const cancelDlpIntervention = () => setPendingDlpReview(null);
+  const cancelDlpIntervention = () => setDlpReview(null);
 
   useEffect(() => {
     const conversationKey = dlpConversationKey(immutableConversation?.conversationId);
-    setPendingDlpReview((pending) =>
+    setDlpReview((pending) =>
       pending && dlpConversationKey(pending.conversationId) !== conversationKey ? null : pending,
     );
-  }, [immutableConversation?.conversationId, setPendingDlpReview]);
+  }, [immutableConversation?.conversationId, setDlpReview]);
 
   /**
    * Sends the reviewed text (masked where the review masks it) as approved by the user, and
    * returns whether it did. A review without approved text stays open so it can be cancelled.
+   * The review is kept, hidden, until the approved turn starts, so a failed send can reopen it.
    */
   const confirmDlpIntervention = (): boolean => {
     if (!pendingDlpReview || pendingDlpReview.result.decision === 'BLOCK') {
@@ -671,7 +674,7 @@ export default function useChatFunctions({
       return false;
     }
 
-    setPendingDlpReview(null);
+    setDlpReview({ ...pendingDlpReview, status: 'sending' });
     /** The reviewed submit already drained the `$` queue, so its skills come from the review.
      *  An explicit list also keeps skills queued since then for the next message. */
     ask(

@@ -102,11 +102,14 @@ export function buildReplacementSegments(
 export default function DlpInterventionDialog({
   result,
   originalText,
+  sendFailed = false,
   onCancel,
   onConfirm,
 }: {
   result: GovernanceDlpResult;
   originalText: string;
+  /** The approved message could not be sent, and can be sent again. */
+  sendFailed?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -157,6 +160,14 @@ export default function DlpInterventionDialog({
         showCancelButton={false}
         main={
           <div className="flex max-h-[65vh] flex-col gap-4 overflow-y-auto px-1" role="document">
+            {sendFailed && (
+              <p
+                role="alert"
+                className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+              >
+                {localize('com_ui_dlp_send_failed')}
+              </p>
+            )}
             {textBlock(
               localize('com_ui_dlp_original_prompt'),
               'border-border-light bg-surface-secondary text-text-primary',

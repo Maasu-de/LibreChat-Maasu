@@ -88,6 +88,10 @@ jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
   onDlpSent: (...args) => jest.requireActual('@librechat/api').onDlpSent(...args),
   isDlpUnsent: (...args) => jest.requireActual('@librechat/api').isDlpUnsent(...args),
+  getRetryableDlpReviewId: (...args) =>
+    jest.requireActual('@librechat/api').getRetryableDlpReviewId(...args),
+  createApprovalRetryEvent: (...args) =>
+    jest.requireActual('@librechat/api').createApprovalRetryEvent(...args),
   getViolationInfo: jest.fn(),
   buildMessageFiles: jest.fn(() => []),
   resolveTitleTiming: jest.fn(() => 'immediate'),
@@ -690,6 +694,54 @@ describe('ResumableAgentController resume metadata', () => {
       conversationId,
       'stop after the gateway started',
     );
+  });
+
+  it('shows a kept DLP approval again when its send fails, instead of an error', async () => {
+    const conversationId = 'conversation-123';
+    const userMessage = {
+      messageId: 'user-message',
+      parentMessageId: 'parent-message',
+      conversationId,
+      text: 'Please email [EMAIL] today',
+    };
+    const initializeClient = jest.fn(async ({ req }) => {
+      const sendMessage = async (_text, opts) => {
+        opts.onStart(userMessage, 'response-message');
+        req.governanceDlpSent = false;
+        req.governanceDlpApprovalKept = true;
+        throw new Error('503 Service Unavailable');
+      };
+      return { client: { sendMessage } };
+    });
+    const req = {
+      user: { id: 'user-123' },
+      body: {
+        text: userMessage.text,
+        messageId: userMessage.messageId,
+        parentMessageId: userMessage.parentMessageId,
+        conversationId,
+        dlpReviewId: 'review-1',
+        endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+      },
+      config: {},
+    };
+
+    await AgentController(req, createResumableResponse(), jest.fn(), initializeClient, null);
+    for (let i = 0; i < 50 && mockGenerationJobManager.completeJob.mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(mockGenerationJobManager.emitError).not.toHaveBeenCalled();
+    expect(mockGenerationJobManager.emitDone).toHaveBeenCalledWith(
+      conversationId,
+      expect.objectContaining({
+        final: true,
+        earlyAbort: true,
+        dlpRetryReviewId: 'review-1',
+        requestMessage: expect.objectContaining({ text: userMessage.text }),
+      }),
+    );
+    expect(mockGenerationJobManager.completeJob).toHaveBeenCalledWith(conversationId);
   });
 
   describe('title timing for a new conversation', () => {

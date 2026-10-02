@@ -106,6 +106,17 @@ function ReviewFromStream({ review }: { review: TPendingDlpReview }) {
   return <button aria-label="Stream review" onClick={() => setReview(review)} />;
 }
 
+/** Stands in for the stream handler, which reopens a review whose approved send failed. */
+function FailedSendFromStream() {
+  const setReview = useSetRecoilState(store.dlpReviewByIndex(0));
+  return (
+    <button
+      aria-label="Fail send"
+      onClick={() => setReview((review) => review && { ...review, status: 'failed' })}
+    />
+  );
+}
+
 /** Stands in for the `$` popover, which queues a skill for the next message. */
 function QueueSkill({ conversationId, skill }: { conversationId: string; skill: string }) {
   const setSkills = useSetRecoilState(store.pendingManualSkillsByConvoId(conversationId));
@@ -138,6 +149,7 @@ function Chat({
       <input aria-label="Prompt" value={text} onChange={(event) => setText(event.target.value)} />
       <button aria-label="Send" onClick={() => ask({ text })} />
       <ReviewFromStream review={review} />
+      <FailedSendFromStream />
       <QueueSkill
         conversationId={conversation.conversationId ?? Constants.NEW_CONVO}
         skill="queued-later"
@@ -146,6 +158,7 @@ function Chat({
         <DlpInterventionDialog
           result={pendingDlpReview.result}
           originalText={pendingDlpReview.text}
+          sendFailed={pendingDlpReview.status === 'failed'}
           onCancel={cancelDlpIntervention}
           onConfirm={confirmDlpIntervention}
         />
@@ -209,6 +222,26 @@ it.each([savedConversation, newConversation])(
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   },
 );
+
+it('shows the review again when its approved send fails, so it can be sent again', () => {
+  renderChat(savedConversation, maskReview(savedConversation.conversationId));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByText('com_ui_dlp_send_failed')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Fail send' }));
+
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(screen.getByText('com_ui_dlp_send_failed')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+  expect(setSubmission).toHaveBeenCalledTimes(2);
+  expect(lastSubmission().userMessage.text).toBe(maskedEmail);
+  expect(lastSubmission().dlpReviewId).toBe('review-1');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
 
 it("sends the reviewed turn's $ skills with the approved text, and keeps newer ones queued", () => {
   renderChat(savedConversation, {
