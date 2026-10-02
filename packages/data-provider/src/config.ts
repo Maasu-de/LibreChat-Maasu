@@ -1360,7 +1360,6 @@ export type StartupConfigContext = 'share';
 
 export type TStartupConfig = {
   appTitle: string;
-  governanceDlpEnabled?: boolean;
   socialLogins?: string[];
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
@@ -2203,6 +2202,10 @@ export enum CacheKeys {
    */
   PENDING_REQ = 'PENDING_REQ',
   /**
+   * Key for Governance DLP reviews awaiting the user's approval
+   */
+  GOVERNANCE_DLP_REVIEWS = 'GOVERNANCE_DLP_REVIEWS',
+  /**
    * Key for s3 check intervals per user
    */
   S3_EXPIRY_INTERVAL = 'S3_EXPIRY_INTERVAL',
@@ -2374,10 +2377,6 @@ export enum ErrorTypes {
    * SSE stream 404 — job completed, expired, or was deleted before the subscriber connected
    */
   STREAM_EXPIRED = 'stream_expired',
-  /** Governance policy blocked a message before completion. */
-  GOVERNANCE_BLOCKED = 'governance_blocked',
-  /** Governance DLP check could not be completed (gateway error or timeout). */
-  GOVERNANCE_UNAVAILABLE = 'governance_unavailable',
 }
 
 /**

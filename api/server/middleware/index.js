@@ -15,7 +15,7 @@ const { requireRumProxyAuth } = require('./requireJwtAuth');
 const configMiddleware = require('./config/app');
 const validateModel = require('./validateModel');
 const moderateText = require('./moderateText');
-const checkGovernanceDlp = require('./checkGovernanceDlp');
+const markGovernanceDlp = require('./markGovernanceDlp');
 const logHeaders = require('./logHeaders');
 const setHeaders = require('./setHeaders');
 const validate = require('./validate');
@@ -37,7 +37,7 @@ module.exports = {
   setHeaders,
   logHeaders,
   moderateText,
-  checkGovernanceDlp,
+  markGovernanceDlp,
   validateModel,
   requireJwtAuth,
   requireRumProxyAuth,

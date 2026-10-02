@@ -21,11 +21,15 @@ export interface GovernanceDlpResult {
   maskedPreview?: GovernanceMaskedContent[];
 }
 
-export interface GovernanceDlpCheckRequest {
-  text: string;
-  model: string;
-}
+/** Location that the findings and masked preview of a DLP review give for the submitted text. */
+export const GOVERNANCE_DLP_TEXT_LOCATION = '/messages/0/content';
 
-export type GovernanceDlpCheckResponse =
-  | { enabled: false }
-  | ({ enabled: true } & GovernanceDlpResult);
+/**
+ * A DLP review the Governance Backend returned instead of a completion. Findings and the masked
+ * preview refer to the submitted text at `GOVERNANCE_DLP_TEXT_LOCATION`. Sending that text again
+ * with `dlpReviewId` sends the approved request to the model.
+ */
+export interface GovernanceDlpReview extends GovernanceDlpResult {
+  reviewId: string;
+  expiresAt?: number;
+}
