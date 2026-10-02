@@ -308,9 +308,9 @@ function withApproval(
 }
 
 /**
- * Handles a stage 1 review. Findings outside the submitted text were approved in earlier turns,
- * so such a review is completed at once. Otherwise the review is stored for the user's approval
- * and handed to `onReview`, and the model call ends.
+ * Handles a stage 1 review: it is stored for the user's approval and handed to `onReview`, and
+ * the model call ends. The gateway reviews only findings in the submitted message, so a review
+ * without findings in the submitted text is rejected, never approved on the user's behalf.
  */
 async function handleReview(params: ApprovalParams, review: GatewayReview): Promise<Response> {
   const decision = normalizeDecision(review.action);
@@ -333,7 +333,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     return rejectCompletion('dlp_malformed_response');
   }
   if (findings.length === 0) {
-    return params.fetch(params.input, withApproval(params, messages, dlpToken));
+    return rejectCompletion('dlp_malformed_response');
   }
 
   const approvedText = maskText(params.text, findings);
