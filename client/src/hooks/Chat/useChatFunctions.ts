@@ -647,14 +647,36 @@ export default function useChatFunctions({
     logger.dir('message_stream', submission, { depth: null });
   };
 
-  const cancelDlpIntervention = () => setDlpReview(null);
+  /**
+   * Drops the review, unless it belongs to `keepForConversation`. Its submit drained the `$`
+   * queue, so its skills go back to the front of that queue for the edited message; a review
+   * on its way already sent them.
+   */
+  const dropDlpReview = useRecoilCallback(
+    ({ snapshot, set }) =>
+      (keepForConversation?: string) => {
+        const review = snapshot.getLoadable(store.dlpReviewByIndex(index)).valueMaybe();
+        const conversationKey = dlpConversationKey(review?.conversationId);
+        if (!review || conversationKey === keepForConversation) {
+          return;
+        }
+        set(store.dlpReviewByIndex(index), null);
+        const skills = review.status === 'sending' ? [] : (review.manualSkills ?? []);
+        if (skills.length > 0) {
+          set(store.pendingManualSkillsByConvoId(conversationKey), (queued) => [
+            ...skills,
+            ...queued.filter((skill) => !skills.includes(skill)),
+          ]);
+        }
+      },
+    [index],
+  );
+
+  const cancelDlpIntervention = () => dropDlpReview();
 
   useEffect(() => {
-    const conversationKey = dlpConversationKey(immutableConversation?.conversationId);
-    setDlpReview((pending) =>
-      pending && dlpConversationKey(pending.conversationId) !== conversationKey ? null : pending,
-    );
-  }, [immutableConversation?.conversationId, setDlpReview]);
+    dropDlpReview(dlpConversationKey(immutableConversation?.conversationId));
+  }, [immutableConversation?.conversationId, dropDlpReview]);
 
   /**
    * Sends the reviewed text (masked where the review masks it) as approved by the user, and
