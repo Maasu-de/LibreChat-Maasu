@@ -250,7 +250,7 @@ describe('DLP approval flow', () => {
     expect(onSent).not.toHaveBeenCalled();
   });
 
-  it('completes a review at once when every finding is in an earlier message', async () => {
+  it('rejects a review whose findings are all outside the submitted text, without approving it', async () => {
     const history: GovernanceChatMessage[] = [
       { role: 'user', content: 'mail max@example.com' },
       { role: 'assistant', content: 'ok' },
@@ -264,8 +264,7 @@ describe('DLP approval flow', () => {
       ...message,
       content: message.content.replaceAll('max@example.com', '[EMAIL]'),
     }));
-    const completion = completionResponse();
-    const { onReview, onSent, reviews, send, sentBody } = setup({
+    const { upstream, onReview, onSent, reviews, send } = setup({
       text,
       responses: [
         reviewResponse({
@@ -278,22 +277,16 @@ describe('DLP approval flow', () => {
           messages: reviewed,
           dlp_token: 'approval-token',
         }),
-        completion,
       ],
     });
 
     const response = await send(history);
 
-    expect(response).toBe(completion);
-    expect(sentBody(1)).toEqual({
-      model: 'governed-model',
-      messages: reviewed,
-      stream: true,
-      require_user_approval: true,
-      dlp_token: 'approval-token',
-    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_malformed_response' } });
+    expect(upstream).toHaveBeenCalledTimes(1);
     expect(onReview).not.toHaveBeenCalled();
-    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onSent).not.toHaveBeenCalled();
     expect(reviews.entries.size).toBe(0);
   });
 
