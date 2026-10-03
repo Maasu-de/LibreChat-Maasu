@@ -68,6 +68,7 @@ describe('Governance DLP', () => {
         messages: [{ role: 'user', content: 'normal text' }],
       },
       userId: 'user-123',
+      groupIds: ['group-a', 'group-b'],
       http,
     });
 
@@ -83,6 +84,7 @@ describe('Governance DLP', () => {
         headers: {
           Authorization: 'Bearer server-only-credential',
           'X-LibreChat-User-ID': 'user-123',
+          'X-LibreChat-Group-IDs': '["group-a","group-b"]',
         },
       },
     });
@@ -139,6 +141,7 @@ describe('Governance DLP', () => {
     );
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
+      groupIds: ['group-a', 'group-b'],
       fetch: upstreamFetch,
       check,
     });
@@ -159,6 +162,7 @@ describe('Governance DLP', () => {
 
     expect(check).toHaveBeenCalledWith({
       userId: 'user-123',
+      groupIds: ['group-a', 'group-b'],
       request: {
         model: 'governed-model',
         messages: [{ role: 'user', content: 'normal text' }],
@@ -171,6 +175,9 @@ describe('Governance DLP', () => {
     );
     expect(new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers).get('X-LibreChat-User-ID')).toBe(
       'user-123',
+    );
+    expect(new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers).get('X-LibreChat-Group-IDs')).toBe(
+      '["group-a","group-b"]',
     );
     expect(upstreamFetch.mock.calls[0]?.[1]?.body).toBe(
       JSON.stringify({
@@ -200,6 +207,7 @@ describe('Governance DLP', () => {
       );
       const governedFetch = createGovernanceDlpFetch({
         userId: 'user-123',
+        groupIds: [],
         fetch: upstreamFetch,
         check,
       });
@@ -231,6 +239,7 @@ describe('Governance DLP', () => {
     );
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
+      groupIds: [],
       fetch: upstreamFetch,
       check,
     });
@@ -260,6 +269,7 @@ describe('Governance DLP', () => {
       );
       const governedFetch = createGovernanceDlpFetch({
         userId: 'user-123',
+        groupIds: [],
         fetch: upstreamFetch,
         check,
       });
@@ -294,6 +304,7 @@ describe('Governance DLP', () => {
     const upstreamFetch = jest.fn();
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
+      groupIds: [],
       fetch: upstreamFetch,
       check: (params) => checkDlp({ ...params, http }),
     });
@@ -316,6 +327,7 @@ describe('Governance DLP', () => {
     const check = jest.fn();
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
+      groupIds: [],
       fetch: upstreamFetch,
       check,
     });
@@ -342,6 +354,7 @@ describe('Governance DLP', () => {
     const check = jest.fn();
     const governedFetch = createGovernanceDlpFetch({
       userId: 'user-123',
+      groupIds: [],
       fetch: upstreamFetch,
       check,
     });
