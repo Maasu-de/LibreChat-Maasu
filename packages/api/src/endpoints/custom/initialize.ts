@@ -343,11 +343,7 @@ export async function initializeCustom({
       ...clientOptions,
     };
     options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
-    if (
-      req.governanceDlpEligible === true &&
-      isGovernanceDlpEnabled() &&
-      isGovernanceGatewayUrl(baseURL)
-    ) {
+    if (isGovernanceDlpEnabled() && isGovernanceGatewayUrl(baseURL)) {
       options.configOptions = {
         ...(options.configOptions ?? {}),
         fetch: createGovernanceDlpFetch({
