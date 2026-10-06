@@ -438,7 +438,10 @@ export function createGovernanceDlpFetch({
 
     const body = await getRequestBody(input, init);
     const request = body ? parseChatCompletionRequest(body) : undefined;
-    if (!request || (isGovernancePilotEnabled() && request.stream !== true)) {
+    // Non-streaming requests (LibreChat's conversation title) are allowed: the
+    // Governance Backend serves both forms through the same governed path, and
+    // both are checked and bound to a DLP token below.
+    if (!request) {
       throw new GovernanceDlpError('dlp_check_unsupported_request');
     }
 

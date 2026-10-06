@@ -135,7 +135,10 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     (/^\/admin\/(config|skills)(\/|$)/.test(path) && !readOnly) ||
     (/^\/files(\/|$)/.test(path) && !readOnly) ||
     (/^\/files\/speech(\/|$)/.test(path) && path !== '/files/speech/config') ||
-    /^\/convos\/(import|gen_title)(\/|$)/.test(path) ||
+    /^\/convos\/import(\/|$)/.test(path) ||
+    // Titles are generated server-side through the governed endpoint; this
+    // read-only route only returns the cached title for the user's own chat.
+    (/^\/convos\/gen_title(\/|$)/.test(path) && req.method !== 'GET') ||
     (/^\/messages(\/|$)/.test(path) &&
       !readOnly &&
       req.method !== 'DELETE' &&
