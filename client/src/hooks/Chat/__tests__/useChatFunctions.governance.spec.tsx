@@ -14,6 +14,7 @@ import type { SetterOrUpdater } from 'recoil';
 import type { TPendingDlpReview } from '~/common';
 import DlpInterventionDialog from '~/components/Chat/Input/DlpInterventionDialog';
 import useChatFunctions from '../useChatFunctions';
+import { ephemeralAgentByConvoId } from '~/store/agents';
 import store from '~/store';
 
 const mockShowToast = jest.fn();
@@ -167,13 +168,27 @@ function Chat({
   );
 }
 
-function renderChat(conversation: TConversation, review: TPendingDlpReview) {
+function renderChat(
+  conversation: TConversation,
+  review: TPendingDlpReview,
+  governancePilotEnabled = false,
+) {
   const queryClient = new QueryClient();
   queryClient.setQueryData([QueryKeys.endpoints], { [endpoint]: { type: EModelEndpoint.custom } });
+  queryClient.setQueryData(['startupConfig', true], { governancePilotEnabled });
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <QueryClientProvider client={queryClient}>
-        <RecoilRoot>{children}</RecoilRoot>
+        <RecoilRoot
+          initializeState={({ set }) =>
+            set(ephemeralAgentByConvoId(conversation.conversationId ?? Constants.NEW_CONVO), {
+              web_search: true,
+              execute_code: true,
+            })
+          }
+        >
+          {children}
+        </RecoilRoot>
       </QueryClientProvider>
     </MemoryRouter>
   );
@@ -205,6 +220,32 @@ it('sends a message at once, without a separate DLP check', () => {
   expect(lastSubmission().dlpReviewId).toBeUndefined();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
+
+it.each([false, true])(
+  'leaves out hidden tool selections and $ skills only in the governed pilot (%s)',
+  (governancePilotEnabled) => {
+    renderChat(
+      savedConversation,
+      maskReview(savedConversation.conversationId),
+      governancePilotEnabled,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Queue skill' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'plain text' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(setSubmission).toHaveBeenCalledTimes(1);
+    if (governancePilotEnabled) {
+      expect(lastSubmission().ephemeralAgent).toBeUndefined();
+      expect(lastSubmission().manualSkills).toBeUndefined();
+    } else {
+      expect(lastSubmission().ephemeralAgent).toMatchObject({ web_search: true });
+      expect(lastSubmission().manualSkills).toEqual(['queued-later']);
+    }
+  },
+);
 
 it.each([savedConversation, newConversation])(
   'sends the masked text with the review ID once the user confirms, in conversation $conversationId',
