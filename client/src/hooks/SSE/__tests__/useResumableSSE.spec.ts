@@ -7,6 +7,7 @@ import {
   request,
 } from 'librechat-data-provider';
 import type { TMessage, TSubmission } from 'librechat-data-provider';
+import type { TPendingDlpReview } from '~/common';
 
 type SSEEventListener = (e: Partial<MessageEvent> & { responseCode?: number }) => void;
 
@@ -58,10 +59,12 @@ const mockActiveRunAtom = { key: 'activeRun' };
 const mockAbortScrollAtom = { key: 'abortScroll' };
 const mockSubmissionAtom = { key: 'submission' };
 const mockShowStopButtonAtom = { key: 'showStopButton' };
+const mockDlpReviewAtom = { key: 'dlpReview' };
 const mockSetActiveRun = jest.fn();
 const mockSetAbortScroll = jest.fn();
 const mockSetSubmission = jest.fn();
 const mockSetShowStopButton = jest.fn();
+const mockSetDlpReview = jest.fn();
 const mockUseSetRecoilStateMock = jest.fn((atom: unknown) => {
   if (atom === mockActiveRunAtom) {
     return mockSetActiveRun;
@@ -74,6 +77,9 @@ const mockUseSetRecoilStateMock = jest.fn((atom: unknown) => {
   }
   if (atom === mockShowStopButtonAtom) {
     return mockSetShowStopButton;
+  }
+  if (atom === mockDlpReviewAtom) {
+    return mockSetDlpReview;
   }
   return jest.fn();
 });
@@ -98,6 +104,7 @@ jest.mock('~/store', () => ({
     abortScrollFamily: jest.fn(() => mockAbortScrollAtom),
     submissionByIndex: jest.fn(() => mockSubmissionAtom),
     showStopButtonByIndex: jest.fn(() => mockShowStopButtonAtom),
+    dlpReviewByIndex: jest.fn(() => mockDlpReviewAtom),
   },
 }));
 
@@ -1609,6 +1616,105 @@ describe('useResumableSSE - 404 error path', () => {
         }),
       }),
     );
+    unmount();
+  });
+});
+
+describe('useResumableSSE - approved DLP review on its way', () => {
+  const sendingReview: TPendingDlpReview = {
+    text: 'Please email max@example.com today',
+    conversationId: CONV_ID,
+    status: 'sending',
+    result: { reviewId: 'review-1', decision: 'WARN', findings: [] },
+  };
+  const openReview: TPendingDlpReview = { ...sendingReview, status: undefined };
+
+  /** Applies the hook's last DLP review update to `review`. */
+  const settle = (review: TPendingDlpReview | null) => {
+    const update = mockSetDlpReview.mock.calls.at(-1)?.[0];
+    return typeof update === 'function' ? update(review) : update;
+  };
+
+  const openStream = async () => {
+    const { unmount } = renderHook(() => useResumableSSE(buildSubmission(), buildChatHelpers()));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return { sse: getLastSSE(), unmount };
+  };
+
+  const emitFinal = (sse: MockSSEInstance, fields: Record<string, unknown> = {}) =>
+    act(async () => {
+      sse._emit('message', {
+        data: JSON.stringify({
+          final: true,
+          aborted: true,
+          earlyAbort: true,
+          conversation: null,
+          requestMessage: null,
+          responseMessage: null,
+          ...fields,
+        }),
+      });
+    });
+
+  beforeEach(() => {
+    mockSSEInstances.length = 0;
+    mockSetDlpReview.mockClear();
+    mockErrorHandler.mockClear();
+    mockFinalHandler.mockClear();
+    (request.post as jest.Mock).mockReset();
+    (request.post as jest.Mock).mockResolvedValue({ streamId: 'stream-123' });
+  });
+
+  it('reopens the review when the server kept it to be sent again', async () => {
+    const { sse, unmount } = await openStream();
+
+    await emitFinal(sse, { dlpRetryReviewId: 'review-1' });
+
+    expect(settle(sendingReview)).toEqual({ ...sendingReview, status: 'failed' });
+    expect(
+      settle({ ...sendingReview, result: { ...sendingReview.result, reviewId: 'other' } }),
+    ).toBeNull();
+    expect(settle(openReview)).toBe(openReview);
+    unmount();
+  });
+
+  it('drops the review when its turn ends without it, as after a stop', async () => {
+    const { sse, unmount } = await openStream();
+
+    await emitFinal(sse);
+
+    expect(settle(sendingReview)).toBeNull();
+    expect(settle(openReview)).toBe(openReview);
+    unmount();
+  });
+
+  it('drops the review once the approved turn starts', async () => {
+    const { sse, unmount } = await openStream();
+
+    await act(async () => {
+      sse._emit('message', {
+        data: JSON.stringify({
+          created: true,
+          message: { messageId: 'msg-1', conversationId: CONV_ID },
+        }),
+      });
+    });
+
+    expect(settle(sendingReview)).toBeNull();
+    unmount();
+  });
+
+  it('drops the review when its turn fails', async () => {
+    const { sse, unmount } = await openStream();
+
+    await act(async () => {
+      sse._emit('error', { data: JSON.stringify({ error: 'Generation failed' }) });
+    });
+
+    expect(mockErrorHandler).toHaveBeenCalledTimes(1);
+    expect(settle(sendingReview)).toBeNull();
     unmount();
   });
 });

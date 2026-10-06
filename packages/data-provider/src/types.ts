@@ -130,6 +130,8 @@ export type TPayload = Partial<TMessage> &
     manualSkills?: string[];
     /** Browser IANA timezone (e.g. `America/New_York`) used to resolve local-time prompt variables server-side. */
     timezone?: string;
+    /** Governance DLP review the user approved for this message. */
+    dlpReviewId?: string;
   };
 
 export type TEditedContent =
@@ -163,6 +165,8 @@ export type TSubmission = {
   addedConvo?: TConversation;
   /** Skills the user invoked via the `$` popover for this submission. */
   manualSkills?: string[];
+  /** Governance DLP review the user approved for this submission. */
+  dlpReviewId?: string;
 };
 
 export type EventSubmission = Omit<TSubmission, 'initialResponse'> & { initialResponse: TMessage };

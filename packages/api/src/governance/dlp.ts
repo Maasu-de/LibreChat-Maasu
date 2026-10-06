@@ -1,28 +1,34 @@
-import axios from 'axios';
-import { ErrorTypes, isEphemeralAgentId } from 'librechat-data-provider';
+import { isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
-  TEndpointOption,
   TEphemeralAgent,
-  AgentModelParameters,
   GovernanceDecision,
-  GovernanceDlpResult,
-  GovernanceFinding,
-  GovernanceMaskedContent,
+  GovernanceDlpReview,
 } from 'librechat-data-provider';
-import type { AxiosRequestConfig, AxiosResponse } from 'axios';
+import type { GatewayReview, ReviewStore } from './review';
+import type { ServerRequest } from '~/types/http';
+import {
+  maskText,
+  readReview,
+  reviewTtl,
+  getReviewStore,
+  toClientReview,
+  findSubmittedText,
+  findingsInSubmittedText,
+} from './review';
 import { isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
 
-const DLP_CHECK_PATH = '/api/v1/dlp/check';
-const DLP_TOKEN_HEADER = 'X-DLP-Token';
+const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
+/** Base path under which the gateway serves completions and models. */
+const GATEWAY_BASE_PATH = /\/api\/v1\/dlp$/;
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
-const DEFAULT_TIMEOUT_MS = 10000;
 
 const DLP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
-const DLP_BLOCKED_MESSAGE =
-  "This message was blocked by your organization's data loss prevention policy. No content was sent to the model.";
+const DLP_REVIEW_PENDING_MESSAGE = 'This message needs your review before it is sent to the model.';
+const DLP_APPROVAL_INVALID_MESSAGE =
+  'The approval for this message is no longer valid. Please send the message again.';
 const DLP_UNSUPPORTED_MESSAGE =
   'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
 
@@ -43,56 +49,31 @@ export interface GovernanceChatCompletionRequest {
   messages: GovernanceChatMessage[];
   stream?: boolean;
   temperature?: number;
-}
-
-export interface DlpCheckResult extends GovernanceDlpResult {
-  dlpToken?: string;
-}
-
-export interface DlpBlock {
-  status: number;
-  body: {
-    type: ErrorTypes;
-    reason: 'policy_blocked';
-    message: string;
-    decision: 'BLOCK';
-    policy_version?: number;
-    findings: GovernanceFinding[];
-  };
-}
-
-/** Gateway response shape. `decision` is accepted for the contract dependency's future spelling. */
-export interface DlpCheckResponse {
-  action?: string;
-  decision?: string;
-  policy_version?: number;
-  findings?: GovernanceFinding[];
-  masked_preview?: GovernanceMaskedContent[] | null;
+  /** Return a review instead of calling the model when DLP finds anything. */
+  require_user_approval?: boolean;
+  /** Approval token of the stage 1 review being completed. */
   dlp_token?: string;
 }
 
-export type HttpPoster = (
-  url: string,
-  body: GovernanceChatCompletionRequest,
-  config: AxiosRequestConfig,
-) => Promise<AxiosResponse<DlpCheckResponse>>;
-
 export type GovernanceFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-export type DlpChecker = (params: CheckDlpParams) => Promise<DlpCheckResult>;
-
-export interface CheckDlpParams {
-  request: GovernanceChatCompletionRequest;
-  userId: string;
-  http?: HttpPoster;
-}
 
 export interface GovernanceFetchParams {
   userId: string;
   fetch?: GovernanceFetch;
-  check?: DlpChecker;
+  /** The user's submitted text, which reviews and approvals are bound to. */
+  text?: string;
+  /** Review the user approved; its stored request is sent instead of the rebuilt one. */
+  reviewId?: string;
+  /** Receives a review the user has to decide on. The model call then ends without a completion. */
+  onReview?: (review: GovernanceDlpReview) => void;
+  /** Called when the gateway starts a completion, which means the request passed DLP. */
+  onSent?: () => void;
+  /** Told after each send of the approved review whether a failure put it back for another try. */
+  onApprovalKept?: (kept: boolean) => void;
+  reviews?: ReviewStore;
 }
 
+/** Raised when the DLP integration cannot be set up. A rejected completion is a 400 instead. */
 export class GovernanceDlpError extends Error {
   code: string;
 
@@ -112,7 +93,7 @@ function trimTrailingSlash(value: string): string {
 }
 
 function gatewayRoot(value: string): string {
-  return trimTrailingSlash(value).replace(/\/v1$/, '');
+  return trimTrailingSlash(value).replace(GATEWAY_BASE_PATH, '');
 }
 
 function getDlpConfiguration(): { gatewayUrl: string; serviceCredential: string } {
@@ -120,70 +101,25 @@ function getDlpConfiguration(): { gatewayUrl: string; serviceCredential: string 
   const serviceCredential = process.env.LIBRECHAT_SERVICE_CREDENTIAL ?? '';
 
   if (!gatewayUrl || !serviceCredential) {
-    throw new GovernanceDlpError('dlp_check_not_configured');
+    throw new GovernanceDlpError('dlp_not_configured');
   }
 
   return { gatewayUrl, serviceCredential };
 }
 
-function normalizeDecision(value: string | undefined): GovernanceDecision {
+function normalizeDecision(value: string | undefined): GovernanceDecision | undefined {
   const decision = value?.toUpperCase();
   if (decision === 'ALLOW' || decision === 'WARN' || decision === 'MASK' || decision === 'BLOCK') {
     return decision;
   }
-  throw new GovernanceDlpError('dlp_check_malformed_response');
+  return undefined;
 }
 
-function normalizeResponse(response: DlpCheckResponse): DlpCheckResult {
-  return {
-    decision: normalizeDecision(response.action ?? response.decision),
-    policyVersion: response.policy_version,
-    findings: response.findings ?? [],
-    maskedPreview: response.masked_preview ?? undefined,
-    dlpToken:
-      typeof response.dlp_token === 'string' && response.dlp_token.length > 0
-        ? response.dlp_token
-        : undefined,
-  };
-}
-
-const defaultHttp: HttpPoster = (url, body, config) => axios.post(url, body, config);
-
-/** Calls the Governance Backend without exposing its service credential to browser code. */
-export async function checkDlp({
-  request,
-  userId,
-  http = defaultHttp,
-}: CheckDlpParams): Promise<DlpCheckResult> {
-  const { gatewayUrl, serviceCredential } = getDlpConfiguration();
-
-  let response: AxiosResponse<DlpCheckResponse>;
-  try {
-    response = await http(`${gatewayUrl}${DLP_CHECK_PATH}`, request, {
-      timeout: DEFAULT_TIMEOUT_MS,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${serviceCredential}`,
-        'X-LibreChat-User-ID': userId,
-      },
-    });
-  } catch {
-    throw new GovernanceDlpError('dlp_check_failed');
-  }
-
-  if (response.status < 200 || response.status >= 300) {
-    throw new GovernanceDlpError('dlp_check_failed');
-  }
-
-  return normalizeResponse(response.data);
-}
-
-/** The message-form request body fields inspected by the server-side DLP preflight. */
+/** The message-form request body fields that decide whether a send takes the DLP approval flow. */
 export type GovernanceSubmissionBody = Partial<
   Pick<
     TPayload,
     | 'text'
-    | 'model'
     | 'files'
     | 'tools'
     | 'agent_id'
@@ -194,9 +130,7 @@ export type GovernanceSubmissionBody = Partial<
     | 'editedContent'
     | 'ephemeralAgent'
   >
-> & {
-  endpointOption?: Pick<TEndpointOption, 'model' | 'model_parameters' | 'modelOptions'>;
-};
+>;
 
 /** True when the ephemeral agent has any tool selected that would bypass a plain-text send. */
 export function hasSelectedTools(ephemeralAgent?: TEphemeralAgent | null): boolean {
@@ -226,74 +160,6 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
   );
 }
 
-function readModel(params?: Partial<AgentModelParameters>): string | undefined {
-  return params?.model;
-}
-
-/** Resolves the model name for the DLP check from the endpoint option, then the raw body. */
-export function getModel(body: GovernanceSubmissionBody): string {
-  return (
-    readModel(body.endpointOption?.model_parameters) ??
-    readModel(body.endpointOption?.modelOptions) ??
-    (typeof body.model === 'string' ? body.model : undefined) ??
-    'unknown'
-  );
-}
-
-/** Checks the plain text submitted through LibreChat's normal message form. */
-export function checkTextSubmission({
-  text,
-  model,
-  userId,
-  http,
-}: {
-  text: string;
-  model: string;
-  userId: string;
-  http?: HttpPoster;
-}): Promise<DlpCheckResult> {
-  return checkDlp({
-    request: {
-      model,
-      messages: [{ role: 'user', content: text }],
-    },
-    userId,
-    http,
-  });
-}
-
-/** Formats a BLOCK decision for the shared SSE deny path. Only BLOCK denies a completion. */
-export function createDlpBlock(result: DlpCheckResult): DlpBlock {
-  if (result.decision !== 'BLOCK') {
-    throw new GovernanceDlpError('dlp_block_not_applicable');
-  }
-
-  return {
-    status: 403,
-    body: {
-      type: ErrorTypes.GOVERNANCE_BLOCKED,
-      reason: 'policy_blocked',
-      decision: 'BLOCK',
-      message: DLP_BLOCKED_MESSAGE,
-      policy_version: result.policyVersion,
-      findings: result.findings,
-    },
-  };
-}
-
-export function createDlpFailure(): {
-  status: number;
-  body: { type: ErrorTypes; message: string };
-} {
-  return {
-    status: 503,
-    body: {
-      type: ErrorTypes.GOVERNANCE_UNAVAILABLE,
-      message: DLP_FAILURE_MESSAGE,
-    },
-  };
-}
-
 /** True when an OpenAI-compatible completion base URL targets the configured gateway. */
 export function isGovernanceGatewayUrl(completionBaseUrl: string): boolean {
   return gatewayRoot(completionBaseUrl) === getDlpConfiguration().gatewayUrl;
@@ -310,14 +176,15 @@ function getRequestPathname(input: RequestInfo | URL): string {
   return new URL(getRequestUrl(input), 'http://localhost').pathname;
 }
 
-function isChatCompletionsUrl(input: RequestInfo | URL): boolean {
-  return getRequestPathname(input).endsWith('/chat/completions');
+/** The gateway's only completion endpoint, which scans, masks and blocks in the same call. */
+function isDlpChatCompletionsUrl(input: RequestInfo | URL): boolean {
+  return getRequestPathname(input).endsWith(DLP_CHAT_COMPLETIONS_PATH);
 }
 
 /**
  * The OpenAI Responses API (`/responses`) sends user content in a request shape the Governance
- * Backend does not accept, so it cannot be scanned or issued an `X-DLP-Token` here. Such a
- * request must fail closed rather than reach the model without the outbound DLP check.
+ * Backend does not accept, so it cannot be scanned. Such a request is rejected rather than sent on
+ * without DLP enforcement.
  */
 function isResponsesApiUrl(input: RequestInfo | URL): boolean {
   return getRequestPathname(input).endsWith('/responses');
@@ -398,65 +265,309 @@ function withGovernanceRequest(
   init: RequestInit | undefined,
   request: GovernanceChatCompletionRequest,
   userId: string,
-  dlpToken: string,
 ): RequestInit {
   const requestHeaders =
     typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined;
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
-  headers.set(DLP_TOKEN_HEADER, dlpToken);
   return { ...init, body: JSON.stringify(request), headers };
 }
 
+type DlpRejectionCode =
+  | 'dlp_review_required'
+  | 'dlp_approval_invalid'
+  | 'dlp_malformed_response'
+  | 'dlp_unsupported_request';
+
 /**
- * Checks the exact allow-listed text request immediately before it is streamed to the Governance
- * Backend. This gives the gateway a token bound to the final message list while leaving the
- * response stream untouched. A governed completion sent through an unsupported request shape
- * (currently the Responses API) is rejected here rather than forwarded without a scan or token.
+ * Ends the model call with a 400 that carries the reason. Every rejection is returned this way
+ * and never thrown: the SDK retries a thrown fetch error and then reports it as a connection
+ * error, which hides the message.
+ */
+function rejectCompletion(code: DlpRejectionCode, message: string = DLP_FAILURE_MESSAGE): Response {
+  return new Response(JSON.stringify({ error: { message, type: 'governance_dlp_error', code } }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+interface ApprovalParams {
+  input: RequestInfo | URL;
+  init?: RequestInit;
+  request: GovernanceChatCompletionRequest;
+  userId: string;
+  text: string;
+  reviewId?: string;
+  onReview: (review: GovernanceDlpReview) => void;
+  onApprovalKept?: (kept: boolean) => void;
+  fetch: GovernanceFetch;
+  reviews: ReviewStore;
+}
+
+function withApproval(
+  { input, init, request, userId }: ApprovalParams,
+  messages: GovernanceChatMessage[],
+  dlpToken?: string,
+): RequestInit {
+  const approval: GovernanceChatCompletionRequest = {
+    ...request,
+    messages,
+    require_user_approval: true,
+    ...(dlpToken !== undefined ? { dlp_token: dlpToken } : {}),
+  };
+  return withGovernanceRequest(input, init, approval, userId);
+}
+
+/**
+ * Handles a stage 1 review: it is stored for the user's approval and handed to `onReview`, and
+ * the model call ends. The gateway reviews only findings in the submitted message, so a review
+ * without findings in the submitted text is rejected, never approved on the user's behalf.
+ */
+async function handleReview(params: ApprovalParams, review: GatewayReview): Promise<Response> {
+  const decision = normalizeDecision(review.action);
+  if (!decision) {
+    return rejectCompletion('dlp_malformed_response');
+  }
+  const submitted = findSubmittedText(params.request.messages, params.text);
+  if (!submitted) {
+    return rejectCompletion('dlp_unsupported_request');
+  }
+
+  const findings = findingsInSubmittedText(review.findings ?? [], submitted);
+  if (decision === 'BLOCK') {
+    params.onReview(toClientReview(review, decision, findings));
+    return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
+  }
+
+  const { messages, dlp_token: dlpToken } = review;
+  if (!messages || !dlpToken) {
+    return rejectCompletion('dlp_malformed_response');
+  }
+  if (findings.length === 0) {
+    return rejectCompletion('dlp_malformed_response');
+  }
+
+  const approvedText = maskText(params.text, findings);
+  if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
+    return rejectCompletion('dlp_malformed_response');
+  }
+
+  await params.reviews.set(
+    review.review_id,
+    {
+      userId: params.userId,
+      model: params.request.model,
+      text: approvedText,
+      messages,
+      dlpToken,
+      expiresAt: review.expires_at,
+    },
+    reviewTtl(review.expires_at),
+  );
+  params.onReview(toClientReview(review, decision, findings, approvedText));
+  return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
+}
+
+/** A failed send worth repeating: a timeout, a rate limit or a server error. */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * Sends the approved stage 2 request. The review is claimed before it is sent, so concurrent
+ * confirmations cannot both send it. It is restored when the send fails in a way that can be
+ * retried, by the SDK or by the user, and not when the gateway rejects the approval itself.
+ */
+async function sendApproved(params: ApprovalParams, reviewId: string): Promise<Response> {
+  const { request, userId, text, reviews, onApprovalKept } = params;
+  const stored = await reviews.get(reviewId);
+  if (
+    !stored ||
+    stored.userId !== userId ||
+    stored.model !== request.model ||
+    stored.text !== text ||
+    !(await reviews.delete(reviewId))
+  ) {
+    return rejectCompletion('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
+  }
+
+  onApprovalKept?.(false);
+  const restore = async () => {
+    await reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
+    onApprovalKept?.(true);
+  };
+  let approved: Response;
+  try {
+    approved = await params.fetch(
+      params.input,
+      withApproval(params, stored.messages, stored.dlpToken),
+    );
+  } catch (error) {
+    await restore();
+    throw error;
+  }
+  if (!approved.ok && isRetryableStatus(approved.status)) {
+    await restore();
+  }
+  return approved;
+}
+
+/** Sends the approved stage 2 request, or stage 1 with `require_user_approval`. */
+async function sendForApproval(params: ApprovalParams): Promise<Response> {
+  const { input, request, reviewId } = params;
+  if (reviewId !== undefined) {
+    return sendApproved(params, reviewId);
+  }
+
+  const stage1 = await params.fetch(input, withApproval(params, request.messages));
+  const { review, response } = await readReview(stage1);
+  if (!review) {
+    return response;
+  }
+  await response.body?.cancel();
+  return handleReview(params, review);
+}
+
+/**
+ * Reduces a governed completion to the allow-listed text request before it is streamed to the
+ * Governance Backend, leaving the response stream untouched. The gateway enforces DLP on that
+ * request itself and, with `onReview`, pauses for the user's approval. A governed completion sent
+ * through an unsupported request shape (currently the Responses API) is rejected here rather than
+ * forwarded unscanned.
  */
 export function createGovernanceDlpFetch({
   userId,
   fetch = globalThis.fetch,
-  check = checkDlp,
+  text = '',
+  reviewId,
+  onReview,
+  onSent,
+  onApprovalKept,
+  reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
     if (isGovernancePilotEnabled()) {
       const base = process.env.GOVERNANCE_API_BASE_URL?.replace(/\/+$/, '');
       const destination = new URL(getRequestUrl(input));
       if (!base || destination.href !== new URL(`${base}/chat/completions`).href) {
-        throw new GovernanceDlpError('dlp_check_unsupported_request');
+        return rejectCompletion('dlp_unsupported_request');
       }
     }
     if (isResponsesApiUrl(input)) {
-      throw new GovernanceDlpError('dlp_check_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
+      return rejectCompletion('dlp_unsupported_request', DLP_UNSUPPORTED_MESSAGE);
     }
 
-    if (!isChatCompletionsUrl(input)) {
+    if (!isDlpChatCompletionsUrl(input)) {
       return fetch(input, init);
     }
 
     const body = await getRequestBody(input, init);
     const request = body ? parseChatCompletionRequest(body) : undefined;
     // Non-streaming requests (LibreChat's conversation title) are allowed: the
-    // Governance Backend serves both forms through the same governed path, and
-    // both are checked and bound to a DLP token below.
+    // Governance Backend serves both forms through the same governed path.
     if (!request) {
-      throw new GovernanceDlpError('dlp_check_unsupported_request');
+      return rejectCompletion('dlp_unsupported_request');
     }
 
-    const result = await check({ request, userId });
-    if (result.decision === 'BLOCK') {
-      throw new GovernanceDlpError(
-        'dlp_check_intervention_required',
-        createDlpBlock(result).body.message,
-      );
+    const response = onReview
+      ? await sendForApproval({
+          input,
+          init,
+          request,
+          userId,
+          text,
+          reviewId,
+          onReview,
+          onApprovalKept,
+          fetch,
+          reviews: reviews ?? getReviewStore(),
+        })
+      : await fetch(input, withGovernanceRequest(input, init, request, userId));
+    if (response.ok) {
+      onSent?.();
     }
-
-    if (result.dlpToken === undefined) {
-      throw new GovernanceDlpError('dlp_check_malformed_response');
-    }
-
-    return fetch(input, withGovernanceRequest(input, init, request, userId, result.dlpToken));
+    return response;
   };
+}
+
+function markDlpSent(req: ServerRequest): void {
+  if (req.governanceDlpSent === true) {
+    return;
+  }
+  req.governanceDlpSent = true;
+  const callbacks = req.governanceDlpSentCallbacks ?? [];
+  req.governanceDlpSentCallbacks = undefined;
+  for (const callback of callbacks) {
+    callback();
+  }
+}
+
+/** True for a governed turn whose completion the gateway has not started: it stores nothing. */
+export function isDlpUnsent(req?: ServerRequest): boolean {
+  return req?.governanceDlpSent === false;
+}
+
+/**
+ * The approved review of an unsent turn whose send failed but put the review back, so the user
+ * can send it again. Undefined for any other turn.
+ */
+export function getRetryableDlpReviewId(req?: ServerRequest): string | undefined {
+  const reviewId = req?.body?.dlpReviewId;
+  if (!isDlpUnsent(req) || req?.governanceDlpApprovalKept !== true) {
+    return undefined;
+  }
+  return typeof reviewId === 'string' && reviewId !== '' ? reviewId : undefined;
+}
+
+/** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
+export function onDlpSent(req: ServerRequest | undefined, callback: () => void): void {
+  if (!req || !isDlpUnsent(req)) {
+    callback();
+    return;
+  }
+  req.governanceDlpSentCallbacks = [...(req.governanceDlpSentCallbacks ?? []), callback];
+}
+
+/** The approval-off fetch of each turn's governed fetch, for side calls made with its options. */
+const sideCallFetches = new WeakMap<GovernanceFetch, GovernanceFetch>();
+
+/**
+ * The governed fetch for one chat request. The turn counts as unsent until the gateway starts its
+ * completion, and a review the user has to decide on is set on `req`. Without `approval`, as for a
+ * title, the gateway masks or blocks the call itself and the turn's state is left untouched.
+ */
+export function createRequestDlpFetch(
+  req: ServerRequest,
+  fetch?: GovernanceFetch,
+  approval: boolean = true,
+): GovernanceFetch {
+  if (!approval) {
+    return createGovernanceDlpFetch({ userId: req.user?.id ?? '', fetch });
+  }
+  const { text, dlpReviewId } = req.body ?? {};
+  req.governanceDlpSent ??= false;
+  const governedFetch = createGovernanceDlpFetch({
+    userId: req.user?.id ?? '',
+    fetch,
+    text: typeof text === 'string' ? text : '',
+    reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
+    onReview: (review) => {
+      req.governanceDlpReview = review;
+    },
+    onSent: () => markDlpSent(req),
+    onApprovalKept: (kept) => {
+      req.governanceDlpApprovalKept = kept;
+    },
+  });
+  sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));
+  return governedFetch;
+}
+
+/**
+ * The approval-off fetch for a side call, such as a summarization, that reuses a turn's governed
+ * client options. Unlike the turn's own fetch, its completion does not mark the turn as sent.
+ */
+export function getDlpSideCallFetch(fetch?: GovernanceFetch): GovernanceFetch | undefined {
+  return fetch ? sideCallFetches.get(fetch) : undefined;
 }

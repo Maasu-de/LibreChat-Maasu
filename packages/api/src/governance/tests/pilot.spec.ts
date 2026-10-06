@@ -23,7 +23,7 @@ const plain = {
 beforeEach(() => {
   process.env.GOVERNANCE_PILOT_ENABLED = 'true';
   process.env.GOVERNANCE_DLP_ENABLED = 'true';
-  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
+  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.OPENAI_MODERATION = 'false';
 });
@@ -428,78 +428,72 @@ describe('pilot outbound boundary', () => {
     stream: true,
     messages: [{ role: 'user', content: 'hello' }],
   };
+  beforeEach(() => {
+    process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
+  });
   it.each([
-    ['https://external.test/v1/chat/completions', valid],
-    ['http://gateway.test/v1/responses', valid],
-    ['http://gateway.test:8080/v1/chat/completions', valid],
-    ['http://gateway.test/v2/chat/completions', valid],
-    ['http://gateway.test/v1/chat/completions?extra=true', valid],
-    ['http://gateway.test/v1/models', valid],
-    ['http://gateway.test/v1/chat/completions', { ...valid, stream: 'yes' }],
-    ['http://gateway.test/v1/chat/completions', { ...valid, tools: [{ type: 'function' }] }],
+    ['https://external.test/api/v1/dlp/chat/completions', valid],
+    ['http://gateway.test/api/v1/dlp/responses', valid],
+    ['http://gateway.test:8080/api/v1/dlp/chat/completions', valid],
+    ['http://gateway.test/api/v2/dlp/chat/completions', valid],
+    ['http://gateway.test/api/v1/dlp/chat/completions?extra=true', valid],
+    ['http://gateway.test/api/v1/dlp/models', valid],
+    ['http://gateway.test/api/v1/dlp/chat/completions', { ...valid, stream: 'yes' }],
     [
-      'http://gateway.test/v1/chat/completions',
+      'http://gateway.test/api/v1/dlp/chat/completions',
+      { ...valid, tools: [{ type: 'function' }] },
+    ],
+    [
+      'http://gateway.test/api/v1/dlp/chat/completions',
       { ...valid, messages: [{ role: 'tool', content: 'result' }] },
     ],
   ])('never forwards unsupported destination or request %s %j', async (url, body) => {
     const fetch = jest.fn();
-    const check = jest.fn();
-    const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch, check });
-    await expect(governed(url, { method: 'POST', body: JSON.stringify(body) })).rejects.toThrow();
+    const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch });
+    const response = await governed(url, { method: 'POST', body: JSON.stringify(body) });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_unsupported_request' } });
     expect(fetch).not.toHaveBeenCalled();
-    expect(check).not.toHaveBeenCalled();
   });
   it.each([
-    ['http://gateway.test/v1', 'http://gateway.test/v1/chat/completions'],
-    ['HTTP://GATEWAY.TEST/v1/', 'http://gateway.test/v1/chat/completions'],
-    ['http://gateway.test:80/v1', 'http://gateway.test/v1/chat/completions'],
-    ['HTTPS://GATEWAY.TEST:443/v1///', 'https://gateway.test/v1/chat/completions'],
-  ])('preserves streaming and the signed body with gateway URL %s', async (base, destination) => {
+    ['http://gateway.test/api/v1/dlp', 'http://gateway.test/api/v1/dlp/chat/completions'],
+    ['HTTP://GATEWAY.TEST/api/v1/dlp/', 'http://gateway.test/api/v1/dlp/chat/completions'],
+    ['http://gateway.test:80/api/v1/dlp', 'http://gateway.test/api/v1/dlp/chat/completions'],
+    ['HTTPS://GATEWAY.TEST:443/api/v1/dlp///', 'https://gateway.test/api/v1/dlp/chat/completions'],
+  ])('preserves streaming and the request body with gateway URL %s', async (base, destination) => {
     process.env.GOVERNANCE_API_BASE_URL = base;
     const upstream = new Response('data: [DONE]\n\n', {
       headers: { 'Content-Type': 'text/event-stream' },
     });
     const fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get('X-DLP-Token')).toBe('signed');
       expect(new Headers(init?.headers).get('X-LibreChat-User-ID')).toBe('user-1');
       expect(JSON.parse(String(init?.body))).toEqual(valid);
       return upstream;
     });
-    const governed = createGovernanceDlpFetch({
-      userId: 'user-1',
-      fetch,
-      check: async ({ request: body }) => {
-        expect(body).toEqual(valid);
-        return { decision: 'ALLOW', findings: [], dlpToken: 'signed' };
-      },
-    });
+    const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch });
     expect(
       await governed(destination, {
         method: 'POST',
         body: JSON.stringify(valid),
       }),
     ).toBe(upstream);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it('checks and forwards a non-streaming title request with its DLP token', async () => {
+  it('forwards a non-streaming title request to the governed endpoint', async () => {
     const title = { ...valid, stream: false };
     const upstream = new Response('{}', { headers: { 'Content-Type': 'application/json' } });
-    const check = jest.fn(async () => ({
-      decision: 'ALLOW' as const,
-      findings: [],
-      dlpToken: 'signed',
-    }));
     const fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get('X-DLP-Token')).toBe('signed');
+      expect(new Headers(init?.headers).get('X-LibreChat-User-ID')).toBe('user-1');
       expect(JSON.parse(String(init?.body))).toEqual(title);
       return upstream;
     });
-    const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch, check });
+    const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch });
     expect(
-      await governed('http://gateway.test/v1/chat/completions', {
+      await governed('http://gateway.test/api/v1/dlp/chat/completions', {
         method: 'POST',
         body: JSON.stringify(title),
       }),
     ).toBe(upstream);
-    expect(check).toHaveBeenCalledWith({ request: title, userId: 'user-1' });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

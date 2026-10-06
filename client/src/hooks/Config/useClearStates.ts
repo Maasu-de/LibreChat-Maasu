@@ -22,6 +22,7 @@ export default function useClearStates() {
           reset(store.filesByIndex(key));
           reset(store.presetByIndex(key));
           reset(store.textByIndex(key));
+          reset(store.dlpReviewByIndex(key));
           reset(store.showStopButtonByIndex(key));
           reset(store.abortScrollFamily(key));
           reset(store.isSubmittingFamily(key));
