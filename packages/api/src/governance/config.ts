@@ -1,4 +1,4 @@
-import type { TCustomConfig } from 'librechat-data-provider';
+import type { TCustomConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
@@ -23,6 +23,36 @@ function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']
     fileCitations: false,
     defaultPinnedTools: [],
   };
+}
+
+type GovernanceTitleConfig = Pick<TEndpoint, 'titleModel' | 'titleTiming' | 'titlePrompt'> & {
+  titleConvo: boolean;
+};
+
+/**
+ * Keep only the title settings the deployment configured for the governed endpoint.
+ * Title calls reuse that endpoint, so they pass the same DLP, audit, and usage path
+ * as chat. Titles stay disabled unless the deployment opts in, and `titleEndpoint`
+ * is never carried over so titles cannot be routed to another provider.
+ */
+function getGovernanceTitleConfig(config: Partial<TCustomConfig>): GovernanceTitleConfig {
+  const configured = config.endpoints?.custom?.find(
+    (endpoint) => endpoint?.name === GOVERNANCE_ENDPOINT,
+  ) as Record<string, unknown> | undefined;
+  if (configured?.titleConvo !== true) {
+    return { titleConvo: false };
+  }
+  const title: GovernanceTitleConfig = { titleConvo: true };
+  for (const key of ['titleModel', 'titlePrompt'] as const) {
+    const value = configured[key];
+    if (typeof value === 'string' && value.trim()) {
+      title[key] = value;
+    }
+  }
+  if (configured.titleTiming === 'immediate' || configured.titleTiming === 'final') {
+    title.titleTiming = configured.titleTiming;
+  }
+  return title;
 }
 
 export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partial<TCustomConfig> {
@@ -57,7 +87,7 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
           baseURL: '${GOVERNANCE_API_BASE_URL}',
           headers: { 'X-LibreChat-User-ID': '{{LIBRECHAT_USER_ID}}' },
           models: { default: [], fetch: true },
-          titleConvo: false,
+          ...getGovernanceTitleConfig(config),
         },
       ],
       agents: { capabilities: [], allowedProviders: [GOVERNANCE_ENDPOINT] },

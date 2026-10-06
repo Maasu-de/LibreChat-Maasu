@@ -158,15 +158,21 @@ describe('pilot HTTP boundary', () => {
         .send({ arg: { title: 'My title' } }),
     ).resolves.toMatchObject({ status: 204 });
   });
-  it('blocks GET title and integration endpoints', async () => {
-    for (const path of [
-      '/api/convos/gen_title/id',
-      '/api/mcp',
-      '/api/agents/v1',
-      '/api/files/speech/tts',
-    ]) {
+  it('blocks integration endpoints', async () => {
+    for (const path of ['/api/mcp', '/api/agents/v1', '/api/files/speech/tts']) {
       await expect(request(app()).get(path)).resolves.toMatchObject({ status: 403 });
     }
+  });
+  it('allows reading a generated title but blocks other title and import requests', async () => {
+    await expect(request(app()).get('/api/convos/gen_title/id')).resolves.toMatchObject({
+      status: 204,
+    });
+    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject(
+      { status: 403 },
+    );
+    await expect(request(app()).post('/api/convos/import').send({})).resolves.toMatchObject({
+      status: 403,
+    });
   });
   it('retains upstream behavior when pilot mode is disabled', async () => {
     process.env.GOVERNANCE_PILOT_ENABLED = 'false';
@@ -313,6 +319,37 @@ describe('pilot configuration', () => {
     expect(result.summarization?.enabled).toBe(false);
   });
 
+  it('keeps only the configured title settings on the governed endpoint', () => {
+    const config = restrictGovernanceConfig({
+      endpoints: {
+        custom: [
+          {
+            name: GOVERNANCE_ENDPOINT,
+            apiKey: 'user_provided',
+            baseURL: 'https://external.test',
+            models: { default: ['model'] },
+            titleConvo: true,
+            titleModel: 'title-model',
+            titleTiming: 'final',
+            titlePrompt: 'Title: {convo}',
+            titleEndpoint: 'openAI',
+          } as NonNullable<NonNullable<AppConfig['config']['endpoints']>['custom']>[number],
+        ],
+      },
+    });
+    const governed = config.endpoints?.custom?.[0];
+    expect(governed).toMatchObject({
+      apiKey: '${LIBRECHAT_SERVICE_CREDENTIAL}',
+      baseURL: '${GOVERNANCE_API_BASE_URL}',
+      titleConvo: true,
+      titleModel: 'title-model',
+      titleTiming: 'final',
+      titlePrompt: 'Title: {convo}',
+    });
+    expect(governed).not.toHaveProperty('titleEndpoint');
+    expect(restrictGovernanceConfig(config).endpoints?.custom?.[0]).toEqual(governed);
+  });
+
   it('overrides derived admin configuration and preserves unrelated settings', () => {
     const base: AppConfig = {
       config: {
@@ -401,7 +438,7 @@ describe('pilot outbound boundary', () => {
     ['http://gateway.test/api/v2/dlp/chat/completions', valid],
     ['http://gateway.test/api/v1/dlp/chat/completions?extra=true', valid],
     ['http://gateway.test/api/v1/dlp/models', valid],
-    ['http://gateway.test/api/v1/dlp/chat/completions', { ...valid, stream: false }],
+    ['http://gateway.test/api/v1/dlp/chat/completions', { ...valid, stream: 'yes' }],
     [
       'http://gateway.test/api/v1/dlp/chat/completions',
       { ...valid, tools: [{ type: 'function' }] },
@@ -438,6 +475,23 @@ describe('pilot outbound boundary', () => {
       await governed(destination, {
         method: 'POST',
         body: JSON.stringify(valid),
+      }),
+    ).toBe(upstream);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('forwards a non-streaming title request to the governed endpoint', async () => {
+    const title = { ...valid, stream: false };
+    const upstream = new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+    const fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-LibreChat-User-ID')).toBe('user-1');
+      expect(JSON.parse(String(init?.body))).toEqual(title);
+      return upstream;
+    });
+    const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch });
+    expect(
+      await governed('http://gateway.test/api/v1/dlp/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify(title),
       }),
     ).toBe(upstream);
     expect(fetch).toHaveBeenCalledTimes(1);
