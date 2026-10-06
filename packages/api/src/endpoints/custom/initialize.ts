@@ -14,16 +14,17 @@ import type {
   EndpointTokenConfig,
   AnthropicModelOptions,
 } from '~/types';
-import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm';
-import { extractDefaultParams } from '~/endpoints/openai/llm';
-import { isUserProvided, checkUserKeyExpiry } from '~/utils';
-import { getOpenAIConfig } from '~/endpoints/openai/config';
-import { getScopedTokenConfigKey } from '~/endpoints/keys';
 import {
   createGovernanceDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
 } from '~/governance/dlp';
+import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from '~/governance/mode';
+import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm';
+import { extractDefaultParams } from '~/endpoints/openai/llm';
+import { isUserProvided, checkUserKeyExpiry } from '~/utils';
+import { getOpenAIConfig } from '~/endpoints/openai/config';
+import { getScopedTokenConfigKey } from '~/endpoints/keys';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
 import { validateEndpointURL } from '~/auth';
@@ -196,6 +197,18 @@ export async function initializeCustom({
     throw new Error(`Config not found for the ${endpoint} custom endpoint.`);
   }
 
+  if (
+    isGovernancePilotEnabled() &&
+    (endpoint !== GOVERNANCE_ENDPOINT ||
+      endpointConfig.provider != null ||
+      extractEnvVariable(endpointConfig.apiKey ?? '') !==
+        process.env.LIBRECHAT_SERVICE_CREDENTIAL ||
+      extractEnvVariable(endpointConfig.baseURL ?? '') !== process.env.GOVERNANCE_API_BASE_URL ||
+      model_parameters?.useResponsesApi === true)
+  ) {
+    throw new Error('Unsupported governed endpoint configuration');
+  }
+
   const CUSTOM_API_KEY = extractEnvVariable(endpointConfig.apiKey ?? '');
   const CUSTOM_BASE_URL = extractEnvVariable(endpointConfig.baseURL ?? '');
 
@@ -343,7 +356,11 @@ export async function initializeCustom({
       ...clientOptions,
     };
     options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
-    if (isGovernanceDlpEnabled() && isGovernanceGatewayUrl(baseURL)) {
+    if (
+      (isGovernancePilotEnabled() || req.governanceDlpEligible === true) &&
+      isGovernanceDlpEnabled() &&
+      isGovernanceGatewayUrl(baseURL)
+    ) {
       options.configOptions = {
         ...(options.configOptions ?? {}),
         fetch: createGovernanceDlpFetch({
