@@ -23,7 +23,7 @@ const plain = {
 beforeEach(() => {
   process.env.GOVERNANCE_PILOT_ENABLED = 'true';
   process.env.GOVERNANCE_DLP_ENABLED = 'true';
-  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
+  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.OPENAI_MODERATION = 'false';
 });

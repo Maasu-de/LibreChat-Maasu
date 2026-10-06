@@ -1,7 +1,7 @@
 # Governance Gateway pilot
 
 Set `GOVERNANCE_PILOT_ENABLED=true`, `GOVERNANCE_DLP_ENABLED=true`,
-`GOVERNANCE_API_BASE_URL` (the gateway's `/v1` base URL), and
+`GOVERNANCE_API_BASE_URL` (the gateway's `/api/v1/dlp` base URL), and
 `LIBRECHAT_SERVICE_CREDENTIAL`. Keep `OPENAI_MODERATION=false`.
 The gateway repository's Compose deployment fixes these switches for the pilot.
 
