@@ -104,6 +104,8 @@ afterEach(() => {
   delete process.env.ANALYTICS_GTM_ID;
   delete process.env.CUSTOM_FOOTER;
   delete process.env.HELP_AND_FAQ_URL;
+  delete process.env.WEB_PUBLIC_URL;
+  delete process.env.ADMIN_PANEL_URL;
 });
 
 describe('GET /api/config', () => {
@@ -280,6 +282,41 @@ describe('GET /api/config', () => {
   });
 
   describe('authenticated (req.user exists)', () => {
+    it('exposes configured navigation only after login and admin navigation only to LibreChat admins', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test/';
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/';
+      const anonymous = await request(createApp(null)).get('/api/config');
+      const user = await request(createApp(mockUser)).get('/api/config');
+      const admin = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(anonymous.body).not.toHaveProperty('gatewayUrl');
+      expect(anonymous.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(user.body.gatewayUrl).toBe('https://gateway.example.test');
+      expect(user.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(admin.body.libreChatAdminUrl).toBe(
+        'https://gateway.example.test/api/auth/open-librechat-admin',
+      );
+    });
+
+    it('omits unsafe navigation schemes', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      process.env.WEB_PUBLIC_URL = 'javascript:alert(1)';
+      process.env.ADMIN_PANEL_URL = 'data:text/html,unsafe';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body).not.toHaveProperty('gatewayUrl');
+      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+    });
+
+    it('uses the configured LibreChat Admin URL when no Gateway entry route exists', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body.libreChatAdminUrl).toBe('https://admin.example.test/admin');
+    });
+
     it('should call getAppConfig with role, userId, and tenantId', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockGetTenantId.mockReturnValue('fallback-tenant');

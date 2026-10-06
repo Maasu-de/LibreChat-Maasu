@@ -2,14 +2,17 @@ import { useState, memo, useRef } from 'react';
 import { useSetRecoilState } from 'recoil';
 import * as Menu from '@ariakit/react/menu';
 import { GearIcon, DropdownMenuSeparator, Avatar } from '@librechat/client';
+import { SystemRoles } from 'librechat-data-provider';
 import {
   Archive,
   ChevronRight,
   CircleHelp,
   FileText,
+  Home,
   Keyboard,
   LifeBuoy,
   LogOut,
+  MessagesSquare,
   Scale,
   ShieldCheck,
 } from 'lucide-react';
@@ -176,6 +179,24 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
           <GearIcon className="icon-md" aria-hidden="true" />
           {localize('com_nav_settings')}
         </Menu.MenuItem>
+        {startupConfig?.gatewayUrl && (
+          <Menu.MenuItem
+            onClick={() => window.location.assign(startupConfig.gatewayUrl!)}
+            className="select-item text-sm"
+          >
+            <Home className="icon-md" aria-hidden="true" />
+            {localize('com_nav_gateway')}
+          </Menu.MenuItem>
+        )}
+        {user?.role === SystemRoles.ADMIN && startupConfig?.libreChatAdminUrl && (
+          <Menu.MenuItem
+            onClick={() => window.location.assign(startupConfig.libreChatAdminUrl!)}
+            className="select-item text-sm"
+          >
+            <MessagesSquare className="icon-md" aria-hidden="true" />
+            {localize('com_nav_librechat_admin')}
+          </Menu.MenuItem>
+        )}
         <DropdownMenuSeparator />
         <Menu.MenuItem onClick={() => logout()} className="select-item text-sm">
           <LogOut className="icon-md" aria-hidden="true" />

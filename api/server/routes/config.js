@@ -8,7 +8,7 @@ const {
   sanitizeModelSpecs,
   isFileSnapshotEnabled,
 } = require('@librechat/api');
-const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
+const { EModelEndpoint, SystemRoles, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
@@ -130,11 +130,38 @@ function buildPublicSharePayload() {
  * openid token-reuse marker) and are not needed on the pre-login screens, so they
  * are not exposed to unauthenticated callers.
  */
-function buildPostLoginPayload() {
+function configuredHttpUrl(value) {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      return undefined;
+    }
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function buildPostLoginPayload(user) {
+  const gatewayUrl = configuredHttpUrl(process.env.WEB_PUBLIC_URL);
+  const adminUrl = configuredHttpUrl(process.env.ADMIN_PANEL_URL);
+  let libreChatAdminUrl;
+  if (user.role === SystemRoles.ADMIN && adminUrl) {
+    libreChatAdminUrl = gatewayUrl ? `${gatewayUrl}/api/auth/open-librechat-admin` : adminUrl;
+  }
   /** @type {Partial<TStartupConfig>} */
   const payload = {
     governanceDlpEnabled: isEnabled(process.env.GOVERNANCE_DLP_ENABLED),
     governancePilotEnabled: isEnabled(process.env.GOVERNANCE_PILOT_ENABLED),
+    gatewayUrl,
+    libreChatAdminUrl,
     showBirthdayIcon:
       isBirthday() ||
       isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
@@ -258,7 +285,7 @@ router.get('/', async function (req, res) {
     const payload = {
       ...preLoginPayload,
       ...publicSharePayload,
-      ...buildPostLoginPayload(),
+      ...buildPostLoginPayload(req.user),
       sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
       interface: appConfig?.interfaceConfig,
