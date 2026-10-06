@@ -8,6 +8,7 @@ const {
   buildToolSet,
   logToolError,
   sanitizeTitle,
+  isDlpUnsent,
   payloadParser,
   createSafeUser,
   initializeAgent,
@@ -1489,6 +1490,10 @@ class AgentClient extends BaseClient {
         });
       }
     } catch (err) {
+      /** A governed turn that ends before the gateway starts its completion was never sent. */
+      if (isDlpUnsent(this.options.req)) {
+        throw err;
+      }
       if (abortController.signal.aborted) {
         logger.debug(
           '[api/server/controllers/agents/client.js #sendCompletion] Operation aborted by user',
@@ -1685,6 +1690,7 @@ class AgentClient extends BaseClient {
       req,
       endpoint,
       model_parameters: clientOptions,
+      dlpApproval: false,
       db: {
         getUserKey: db.getUserKey,
         getUserKeyValues: db.getUserKeyValues,

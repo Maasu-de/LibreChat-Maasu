@@ -1,4 +1,4 @@
-import type { TConversation, TEndpointOption } from 'librechat-data-provider';
+import type { TConversation, TEndpointOption, GovernanceDlpReview } from 'librechat-data-provider';
 import type { IUser, AppConfig } from '@librechat/data-schemas';
 import type { Request } from 'express';
 
@@ -18,6 +18,9 @@ export type RequestBody = {
   endpointOption?: Partial<TEndpointOption>;
   /** Browser IANA timezone used to resolve local-time prompt variables (e.g. `{{current_datetime}}`). */
   timezone?: string;
+  text?: string;
+  /** Governance DLP review the user approved for this message. */
+  dlpReviewId?: string;
 };
 
 export type ServerRequest = Request<unknown, unknown, RequestBody> & {
@@ -29,6 +32,17 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   resolvedConversation?: Partial<TConversation> | null;
   /** Passport strategy that populated req.user for this request. */
   authStrategy?: string;
-  /** Set only after the server-side plain-text DLP preflight allows this request. */
+  /** Set for plain-text sends, whose completion goes through the governed DLP approval flow. */
   governanceDlpEligible?: boolean;
+  /** A DLP review of this request that the user has to decide on before the model is called. */
+  governanceDlpReview?: GovernanceDlpReview;
+  /** Set when the approved review's last send failed and put it back, so it can be sent again. */
+  governanceDlpApprovalKept?: boolean;
+  /**
+   * `false` until the gateway starts this turn's governed completion, `true` from then on, and
+   * unset for a turn that is not governed. An unsent turn stores nothing.
+   */
+  governanceDlpSent?: boolean;
+  /** Run once when `governanceDlpSent` turns `true`. */
+  governanceDlpSentCallbacks?: Array<() => void>;
 };
