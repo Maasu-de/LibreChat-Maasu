@@ -5,11 +5,12 @@ const {
   getCloudFrontConfig,
   resolveBuildInfo,
   resolveTitleTiming,
+  resolveConfigNavigation,
   sanitizeModelSpecs,
   isFileSnapshotEnabled,
 } = require('@librechat/api');
 const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
-const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
+const { logger, getTenantId } = require('@librechat/data-schemas');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
@@ -124,38 +125,12 @@ function buildPublicSharePayload() {
   return payload;
 }
 
-/**
- * Post-login fields appended only when `req.user` is present. These describe the
- * authenticated UX (account-settings links, share-link feature flags, birthday icon,
- * openid token-reuse marker) and are not needed on the pre-login screens, so they
- * are not exposed to unauthenticated callers.
- */
-function configuredHttpUrl(value) {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    if (
-      !['http:', 'https:'].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    ) {
-      return undefined;
-    }
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
+/** Post-login fields are only sent to authenticated callers. */
 function buildPostLoginPayload() {
-  const gatewayUrl = configuredHttpUrl(process.env.WEB_PUBLIC_URL);
   /** @type {Partial<TStartupConfig>} */
   const payload = {
     governanceDlpEnabled: isEnabled(process.env.GOVERNANCE_DLP_ENABLED),
     governancePilotEnabled: isEnabled(process.env.GOVERNANCE_PILOT_ENABLED),
-    gatewayUrl,
     showBirthdayIcon:
       isBirthday() ||
       isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
@@ -313,28 +288,16 @@ router.get('/', async function (req, res) {
       payload.buildInfo = buildInfo;
     }
 
-    const adminUrl = configuredHttpUrl(process.env.ADMIN_PANEL_URL);
-    if (adminUrl || !payload.allowAccountDeletion) {
-      try {
-        const userId = req.user.id ?? req.user._id?.toString();
-        if (userId) {
-          const canAccessAdmin = await hasCapability(
-            { id: userId, role: req.user.role ?? '', tenantId: req.user.tenantId },
-            SystemCapabilities.ACCESS_ADMIN,
-          );
-          if (canAccessAdmin && adminUrl) {
-            payload.libreChatAdminUrl = payload.gatewayUrl
-              ? `${payload.gatewayUrl}/api/auth/open-librechat-admin`
-              : adminUrl;
-          }
-          if (canAccessAdmin && !payload.allowAccountDeletion) {
-            payload.allowAccountDeletion = true;
-          }
-        }
-      } catch (err) {
-        logger.warn(`[config] ACCESS_ADMIN capability check failed: ${err.message}`);
-      }
-    }
+    Object.assign(
+      payload,
+      await resolveConfigNavigation({
+        user: req.user,
+        webPublicUrl: process.env.WEB_PUBLIC_URL,
+        adminPanelUrl: process.env.ADMIN_PANEL_URL,
+        allowAccountDeletion: payload.allowAccountDeletion,
+        hasCapability,
+      }),
+    );
 
     return res.status(200).send(payload);
   } catch (err) {
