@@ -2,7 +2,6 @@ import { useState, memo, useRef } from 'react';
 import { useSetRecoilState } from 'recoil';
 import * as Menu from '@ariakit/react/menu';
 import { GearIcon, DropdownMenuSeparator, Avatar } from '@librechat/client';
-import { SystemRoles } from 'librechat-data-provider';
 import {
   Archive,
   ChevronRight,
@@ -188,7 +187,7 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
             {localize('com_nav_gateway')}
           </Menu.MenuItem>
         )}
-        {user?.role === SystemRoles.ADMIN && startupConfig?.libreChatAdminUrl && (
+        {startupConfig?.libreChatAdminUrl && (
           <Menu.MenuItem
             onClick={() => window.location.assign(startupConfig.libreChatAdminUrl!)}
             className="select-item text-sm"

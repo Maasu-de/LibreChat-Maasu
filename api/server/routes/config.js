@@ -8,7 +8,7 @@ const {
   sanitizeModelSpecs,
   isFileSnapshotEnabled,
 } = require('@librechat/api');
-const { EModelEndpoint, SystemRoles, defaultSocialLogins } = require('librechat-data-provider');
+const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
@@ -149,19 +149,13 @@ function configuredHttpUrl(value) {
   }
 }
 
-function buildPostLoginPayload(user) {
+function buildPostLoginPayload() {
   const gatewayUrl = configuredHttpUrl(process.env.WEB_PUBLIC_URL);
-  const adminUrl = configuredHttpUrl(process.env.ADMIN_PANEL_URL);
-  let libreChatAdminUrl;
-  if (user.role === SystemRoles.ADMIN && adminUrl) {
-    libreChatAdminUrl = gatewayUrl ? `${gatewayUrl}/api/auth/open-librechat-admin` : adminUrl;
-  }
   /** @type {Partial<TStartupConfig>} */
   const payload = {
     governanceDlpEnabled: isEnabled(process.env.GOVERNANCE_DLP_ENABLED),
     governancePilotEnabled: isEnabled(process.env.GOVERNANCE_PILOT_ENABLED),
     gatewayUrl,
-    libreChatAdminUrl,
     showBirthdayIcon:
       isBirthday() ||
       isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
@@ -285,7 +279,7 @@ router.get('/', async function (req, res) {
     const payload = {
       ...preLoginPayload,
       ...publicSharePayload,
-      ...buildPostLoginPayload(req.user),
+      ...buildPostLoginPayload(),
       sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
       interface: appConfig?.interfaceConfig,
@@ -319,15 +313,21 @@ router.get('/', async function (req, res) {
       payload.buildInfo = buildInfo;
     }
 
-    if (!payload.allowAccountDeletion) {
+    const adminUrl = configuredHttpUrl(process.env.ADMIN_PANEL_URL);
+    if (adminUrl || !payload.allowAccountDeletion) {
       try {
         const userId = req.user.id ?? req.user._id?.toString();
         if (userId) {
-          const canDelete = await hasCapability(
+          const canAccessAdmin = await hasCapability(
             { id: userId, role: req.user.role ?? '', tenantId: req.user.tenantId },
             SystemCapabilities.ACCESS_ADMIN,
           );
-          if (canDelete) {
+          if (canAccessAdmin && adminUrl) {
+            payload.libreChatAdminUrl = payload.gatewayUrl
+              ? `${payload.gatewayUrl}/api/auth/open-librechat-admin`
+              : adminUrl;
+          }
+          if (canAccessAdmin && !payload.allowAccountDeletion) {
             payload.allowAccountDeletion = true;
           }
         }
