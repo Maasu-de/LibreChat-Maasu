@@ -2,6 +2,7 @@ import { logger, SystemCapabilities } from '@librechat/data-schemas';
 import type { TStartupConfig } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { HasCapabilityFn } from '~/middleware/capabilities';
+import { getAdminPanelUrl } from '~/auth/exchange';
 
 type NavigationUser = Partial<Pick<IUser, 'id' | '_id' | 'role' | 'tenantId'>>;
 type NavigationConfig = Pick<
@@ -44,7 +45,7 @@ export async function resolveConfigNavigation({
   hasCapability: HasCapabilityFn;
 }): Promise<NavigationConfig> {
   const gatewayUrl = configuredHttpUrl(webPublicUrl);
-  const adminUrl = configuredHttpUrl(adminPanelUrl);
+  const adminUrl = configuredHttpUrl(adminPanelUrl || getAdminPanelUrl());
   const navigation: NavigationConfig = { gatewayUrl, allowAccountDeletion };
   if (!adminUrl && allowAccountDeletion) {
     return navigation;

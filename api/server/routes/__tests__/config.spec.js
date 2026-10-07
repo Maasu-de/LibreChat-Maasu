@@ -347,6 +347,28 @@ describe('GET /api/config', () => {
 
       expect(response.body).not.toHaveProperty('gatewayUrl');
       expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(mockHasCapability).not.toHaveBeenCalled();
+    });
+
+    it('uses the bundled admin panel URL when ADMIN_PANEL_URL is unset', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body.libreChatAdminUrl).toBe('http://localhost:3000');
+      expect(mockHasCapability).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the Gateway entry route when ADMIN_PANEL_URL is blank', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      process.env.ADMIN_PANEL_URL = '';
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body.libreChatAdminUrl).toBe(
+        'https://gateway.example.test/api/auth/open-librechat-admin',
+      );
     });
 
     it('uses the configured LibreChat Admin URL when no Gateway entry route exists', async () => {
@@ -580,16 +602,6 @@ describe('GET /api/config', () => {
       expect(response.body.allowAccountDeletion).toBe(true);
       expect(response.body.libreChatAdminUrl).toBe('https://admin.example.test/admin');
       expect(mockHasCapability).toHaveBeenCalledTimes(1);
-    });
-
-    it('should not call hasCapability when allowAccountDeletion is already true', async () => {
-      mockGetAppConfig.mockResolvedValue(baseAppConfig);
-      const app = createApp(mockUser);
-
-      const response = await request(app).get('/api/config');
-
-      expect(response.body.allowAccountDeletion).toBe(true);
-      expect(mockHasCapability).not.toHaveBeenCalled();
     });
 
     it('should return 500 when getAppConfig throws', async () => {
