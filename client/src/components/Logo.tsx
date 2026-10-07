@@ -1,10 +1,10 @@
 import type { CSSProperties } from 'react';
 
-const logoMask = 'url(assets/logo.svg?v=3)';
+const logoMask = 'url(assets/logo.svg?v=4)';
 
 const containerStyle: CSSProperties = {
   display: 'flex',
-  padding: 28,
+  padding: 4,
 };
 
 const logoStyle: CSSProperties = {

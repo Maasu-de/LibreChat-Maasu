@@ -137,7 +137,7 @@ function UnifiedSidebar() {
     <div className="flex h-28 flex-shrink-0 items-center justify-center bg-surface-primary-alt p-2">
       <Logo
         className="h-full w-full"
-        label={localize('com_ui_logo', { 0: 'Maasu' })}
+        label={localize('com_ui_logo', { 0: 'AIMO' })}
       />
     </div>
   );
