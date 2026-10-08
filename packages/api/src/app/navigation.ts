@@ -1,4 +1,5 @@
 import { logger, SystemCapabilities } from '@librechat/data-schemas';
+import { SystemRoles } from 'librechat-data-provider';
 import type { TStartupConfig } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { HasCapabilityFn } from '~/middleware/capabilities';
@@ -64,7 +65,7 @@ export async function resolveConfigNavigation({
     if (!canAccessAdmin) {
       return navigation;
     }
-    if (adminUrl) {
+    if (adminUrl && user.role === SystemRoles.ADMIN) {
       navigation.libreChatAdminUrl = gatewayUrl
         ? `${gatewayUrl}/api/auth/open-librechat-admin`
         : adminUrl;

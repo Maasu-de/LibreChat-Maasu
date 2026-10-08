@@ -282,7 +282,7 @@ describe('GET /api/config', () => {
   });
 
   describe('authenticated (req.user exists)', () => {
-    it('exposes admin navigation only to users with ACCESS_ADMIN', async () => {
+    it('exposes admin navigation only to ADMIN users with ACCESS_ADMIN', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       process.env.WEB_PUBLIC_URL = 'https://gateway.example.test/';
       process.env.ADMIN_PANEL_URL = 'https://admin.example.test/';
@@ -305,17 +305,19 @@ describe('GET /api/config', () => {
       );
     });
 
-    it('includes admin navigation for a non-ADMIN role with ACCESS_ADMIN', async () => {
+    it('omits admin navigation for a non-ADMIN role with ACCESS_ADMIN', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockHasCapability.mockResolvedValue(true);
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
       process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
-      const response = await request(createApp({ ...mockUser, tenantId: 'tenant-abc' })).get(
-        '/api/config',
-      );
+      const response = await request(
+        createApp({ ...mockUser, role: 'CUSTOM_ADMIN', tenantId: 'tenant-abc' }),
+      ).get('/api/config');
 
-      expect(response.body.libreChatAdminUrl).toBe('https://admin.example.test/admin');
+      expect(response.body.gatewayUrl).toBe('https://gateway.example.test');
+      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
       expect(mockHasCapability).toHaveBeenCalledWith(
-        { id: mockUser.id, role: 'USER', tenantId: 'tenant-abc' },
+        { id: mockUser.id, role: 'CUSTOM_ADMIN', tenantId: 'tenant-abc' },
         'access:admin',
       );
     });
@@ -597,7 +599,7 @@ describe('GET /api/config', () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockHasCapability.mockResolvedValue(true);
 
-      const response = await request(createApp(mockUser)).get('/api/config');
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
 
       expect(response.body.allowAccountDeletion).toBe(true);
       expect(response.body.libreChatAdminUrl).toBe('https://admin.example.test/admin');
