@@ -9,8 +9,13 @@ const { Permissions, PermissionTypes } = require('librechat-data-provider');
 const { requireJwtAuth } = require('~/server/middleware');
 const { getRoleByName, findUsers } = require('~/models');
 const { Group } = require('~/db/models');
+const governanceGroups = require('./governanceGroups');
 
 const router = express.Router();
+
+// The Governance Admin server authenticates with its own Keycloak token, not a
+// LibreChat session, so this route is mounted before requireJwtAuth.
+router.use('/groups', governanceGroups);
 
 router.use(requireJwtAuth);
 

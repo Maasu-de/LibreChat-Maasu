@@ -749,6 +749,8 @@
   "com_ui_admin": "Admin",
   "com_ui_admin_access_warning": "Disabling Admin access to this feature may cause unexpected UI issues requiring refresh. If saved, the only way to revert is via the interface setting in librechat.yaml config which affects all roles.",
   "com_ui_admin_panel": "Admin Panel",
+  "com_nav_gateway": "Gateway",
+  "com_nav_librechat_admin": "LibreChat Admin",
   "com_ui_admin_settings": "Admin Settings",
   "com_ui_admin_settings_section": "Admin Settings - {{section}}",
   "com_ui_advanced": "Advanced",

@@ -34,6 +34,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   authStrategy?: string;
   /** Set for plain-text sends, whose completion goes through the governed DLP approval flow. */
   governanceDlpEligible?: boolean;
+  /** Server-resolved LibreChat group IDs used by the governed completion. */
+  governanceGroupIds?: string[];
   /** A DLP review of this request that the user has to decide on before the model is called. */
   governanceDlpReview?: GovernanceDlpReview;
   /** Set when the approved review's last send failed and put it back, so it can be sent again. */
