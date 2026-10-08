@@ -1,20 +1,12 @@
 const express = require('express');
 const request = require('supertest');
 
-const mockCheckTextSubmission = jest.fn();
 const mockCheckFinanceRead = jest.fn();
 const mockGetGovernanceUsage = jest.fn();
-const mockIsGovernanceDlpEnabled = jest.fn();
 const mockTestGovernanceConnection = jest.fn();
-const mockGetUserGroups = jest.fn();
 let mockUser = { id: 'user-123', role: 'USER' };
 
 jest.mock('@librechat/api', () => ({
-  checkTextSubmission: (...args) => mockCheckTextSubmission(...args),
-  createDlpFailure: () => ({
-    status: 503,
-    body: { type: 'governance_unavailable', message: 'DLP unavailable' },
-  }),
   generateCheckAccess: (config) => async (req, res, next) => {
     const hasAccess = await mockCheckFinanceRead(config, req);
     if (hasAccess) {
@@ -26,12 +18,7 @@ jest.mock('@librechat/api', () => ({
     () =>
     (...args) =>
       mockGetGovernanceUsage(...args),
-  isGovernanceDlpEnabled: () => mockIsGovernanceDlpEnabled(),
   testGovernanceConnection: (...args) => mockTestGovernanceConnection(...args),
-}));
-
-jest.mock('@librechat/data-schemas', () => ({
-  logger: { error: jest.fn() },
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -44,7 +31,6 @@ jest.mock('~/server/middleware', () => ({
 jest.mock('~/models', () => ({
   getRoleByName: jest.fn(),
   findUsers: jest.fn(),
-  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 
 jest.mock('~/db/models', () => ({
@@ -59,24 +45,16 @@ app.use('/api/governance', governanceRoute);
 
 beforeEach(() => {
   mockUser = { id: 'user-123', role: 'USER' };
-  mockCheckTextSubmission.mockReset();
   mockCheckFinanceRead.mockReset();
   mockGetGovernanceUsage.mockReset();
-  mockIsGovernanceDlpEnabled.mockReset();
   mockTestGovernanceConnection.mockReset();
-  mockGetUserGroups.mockReset();
   mockCheckFinanceRead.mockResolvedValue(false);
   mockGetGovernanceUsage.mockImplementation((_req, res) =>
     res.status(200).json({ totals: { request_count: 0 } }),
   );
-  mockIsGovernanceDlpEnabled.mockReturnValue(true);
   mockTestGovernanceConnection.mockImplementation((_req, res) =>
     res.status(200).json({ status: 'connected' }),
   );
-  mockGetUserGroups.mockResolvedValue([
-    { _id: { toString: () => 'group-1' } },
-    { _id: { toString: () => 'group-2' } },
-  ]);
 });
 
 describe('GET /api/governance/usage', () => {
@@ -117,88 +95,5 @@ describe('GET /api/governance/health', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'connected' });
     expect(mockTestGovernanceConnection).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('POST /api/governance/dlp/check', () => {
-  it('returns a disabled response without contacting the gateway', async () => {
-    mockIsGovernanceDlpEnabled.mockReturnValue(false);
-
-    const response = await request(app)
-      .post('/api/governance/dlp/check')
-      .send({ text: 'hello', model: 'company-assistant' });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ enabled: false });
-    expect(mockCheckTextSubmission).not.toHaveBeenCalled();
-  });
-
-  it('returns safe finding and preview data without exposing the DLP token', async () => {
-    mockCheckTextSubmission.mockResolvedValue({
-      decision: 'MASK',
-      policyVersion: 4,
-      findings: [
-        {
-          location: '/messages/0/content',
-          start: 8,
-          end: 20,
-          category: 'PROJECT_NAME',
-          action: 'MASK',
-          replacement: '[CONFIDENTIAL]',
-        },
-      ],
-      maskedPreview: [{ location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' }],
-      dlpToken: 'server-only-token',
-    });
-
-    const response = await request(app)
-      .post('/api/governance/dlp/check')
-      .send({
-        text: 'Discuss Project Acme now',
-        model: 'company-assistant',
-        groupIds: ['browser-supplied-group'],
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({
-      enabled: true,
-      decision: 'MASK',
-      policyVersion: 4,
-      maskedPreview: [{ location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' }],
-    });
-    expect(response.body).not.toHaveProperty('dlpToken');
-    expect(mockCheckTextSubmission).toHaveBeenCalledWith({
-      text: 'Discuss Project Acme now',
-      model: 'company-assistant',
-      userId: 'user-123',
-      groupIds: ['group-1', 'group-2'],
-    });
-  });
-
-  it.each([
-    [undefined, 'Text'],
-    [{ text: '', model: 'company-assistant' }, 'Text'],
-    [{ text: 'hello', model: '' }, 'Model'],
-  ])('rejects invalid input %#', async (body, field) => {
-    const response = await request(app).post('/api/governance/dlp/check').send(body);
-
-    expect(response.status).toBe(400);
-    expect(response.body.message).toContain(field);
-    expect(mockCheckTextSubmission).not.toHaveBeenCalled();
-  });
-
-  it('fails closed without exposing internal errors', async () => {
-    mockCheckTextSubmission.mockRejectedValue(new Error('gateway secret detail'));
-
-    const response = await request(app)
-      .post('/api/governance/dlp/check')
-      .send({ text: 'hello', model: 'company-assistant' });
-
-    expect(response.status).toBe(503);
-    expect(response.body).toEqual({
-      type: 'governance_unavailable',
-      message: 'DLP unavailable',
-    });
-    expect(JSON.stringify(response.body)).not.toContain('gateway secret detail');
   });
 });

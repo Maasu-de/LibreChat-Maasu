@@ -25,7 +25,7 @@ import type {
 } from 'librechat-data-provider';
 import type { EventHandlerParams } from './useEventHandlers';
 import type { ActiveJobsResponse } from '~/data-provider';
-import type { TResData } from '~/common';
+import type { TResData, TPendingDlpReview } from '~/common';
 import {
   clearAllDrafts,
   removeConvoFromAllQueries,
@@ -192,6 +192,19 @@ const isOAuthStepEvent = (data: unknown) => {
 
   return false;
 };
+
+/**
+ * Settles a review whose approved turn was on its way, once that turn starts or ends: reopened
+ * when the server kept it to be sent again, otherwise dropped. Other reviews are left as they are.
+ */
+const settleSentDlpReview =
+  (retryReviewId?: string) =>
+  (review: TPendingDlpReview | null): TPendingDlpReview | null => {
+    if (review?.status !== 'sending') {
+      return review;
+    }
+    return review.result.reviewId === retryReviewId ? { ...review, status: 'failed' } : null;
+  };
 
 const replaceNewConversationUrl = (conversationId: string) => {
   if (window.location.pathname !== `/c/${Constants.NEW_CONVO}`) {
@@ -440,6 +453,7 @@ export default function useResumableSSE(
   const [streamId, setStreamId] = useState<string | null>(null);
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
+  const setDlpReview = useSetRecoilState(store.dlpReviewByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
 
   const sseRef = useRef<SSE | null>(null);
@@ -452,7 +466,7 @@ export default function useResumableSSE(
   const {
     stepHandler,
     finalHandler,
-    errorHandler,
+    errorHandler: showError,
     clearStepMaps,
     messageHandler,
     contentHandler,
@@ -471,6 +485,15 @@ export default function useResumableSSE(
     newConversation,
     setShowStopButton,
   });
+
+  /** A failed turn also ends an approved review on its way, which is then dropped. */
+  const errorHandler = useCallback(
+    (params: Parameters<typeof showError>[0]) => {
+      setDlpReview(settleSentDlpReview());
+      showError(params);
+    },
+    [setDlpReview, showError],
+  );
 
   const { data: startupConfig } = useGetStartupConfig();
   const balanceQuery = useGetUserBalance({
@@ -543,6 +566,16 @@ export default function useResumableSSE(
             }
             try {
               finalHandler(data, currentSubmission as EventSubmission);
+              if (data.dlpReview != null) {
+                setDlpReview({
+                  result: data.dlpReview,
+                  text: data.requestMessage?.text ?? userMessage.text,
+                  conversationId: currentSubmission.conversation?.conversationId ?? null,
+                  manualSkills: data.requestMessage?.manualSkills ?? currentSubmission.manualSkills,
+                });
+              } else {
+                setDlpReview(settleSentDlpReview(data.dlpRetryReviewId));
+              }
               finalizeUsage(data, { ...currentSubmission, userMessage });
             } catch (error) {
               console.error('[ResumableSSE] Error in finalHandler:', error);
@@ -567,6 +600,7 @@ export default function useResumableSSE(
               conversationId: data.message?.conversationId,
             });
             createdStreamIdsRef.current.add(currentStreamId);
+            setDlpReview(settleSentDlpReview());
             const runId = v4();
             setActiveRunId(runId);
             userMessage = {
@@ -1072,6 +1106,7 @@ export default function useResumableSSE(
       setAbortScroll,
       setActiveRunId,
       setShowStopButton,
+      setDlpReview,
       finalHandler,
       createdHandler,
       attachmentHandler,

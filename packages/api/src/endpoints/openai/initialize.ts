@@ -13,7 +13,7 @@ import {
   getAzureCredentials,
 } from '~/utils';
 import {
-  createGovernanceDlpFetch,
+  createRequestDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
 } from '~/governance/dlp';
@@ -33,6 +33,7 @@ export async function initializeOpenAI({
   endpoint,
   model_parameters,
   db,
+  dlpApproval,
 }: BaseInitializeParams): Promise<InitializeResultBase> {
   const appConfig = req.config;
   const openAIConfig = appConfig?.endpoints?.[EModelEndpoint.openAI];
@@ -203,11 +204,7 @@ export async function initializeOpenAI({
   ) {
     options.configOptions = {
       ...(options.configOptions ?? {}),
-      fetch: createGovernanceDlpFetch({
-        userId: req.user?.id ?? '',
-        groupIds: req.governanceGroupIds,
-        fetch: options.configOptions?.fetch,
-      }),
+      fetch: createRequestDlpFetch(req, options.configOptions?.fetch, dlpApproval),
     };
   }
 

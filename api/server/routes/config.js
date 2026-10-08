@@ -133,7 +133,7 @@ function buildPublicSharePayload() {
 function buildPostLoginPayload() {
   /** @type {Partial<TStartupConfig>} */
   const payload = {
-    governanceDlpEnabled: isEnabled(process.env.GOVERNANCE_DLP_ENABLED),
+    governancePilotEnabled: isEnabled(process.env.GOVERNANCE_PILOT_ENABLED),
     showBirthdayIcon:
       isBirthday() ||
       isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||

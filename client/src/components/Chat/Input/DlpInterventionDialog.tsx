@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
+import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type {
   GovernanceDlpResult,
@@ -12,7 +13,6 @@ import { cn } from '~/utils';
 
 type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: boolean };
 
-const MESSAGE_LOCATION = '/messages/0/content';
 const label = (category: string) => category.replaceAll('_', ' ');
 
 const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
@@ -53,7 +53,7 @@ export function buildFindingSegments(text: string, findings: GovernanceFinding[]
   const relevant = findings
     .filter(
       (f) =>
-        f.location === MESSAGE_LOCATION &&
+        f.location === GOVERNANCE_DLP_TEXT_LOCATION &&
         f.start >= 0 &&
         f.end > f.start &&
         f.start < chars.length,
@@ -102,11 +102,14 @@ export function buildReplacementSegments(
 export default function DlpInterventionDialog({
   result,
   originalText,
+  sendFailed = false,
   onCancel,
   onConfirm,
 }: {
   result: GovernanceDlpResult;
   originalText: string;
+  /** The approved message could not be sent, and can be sent again. */
+  sendFailed?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -120,7 +123,9 @@ export default function DlpInterventionDialog({
     () => buildFindingSegments(originalText, result.findings),
     [originalText, result.findings],
   );
-  const maskedText = result.maskedPreview?.find((m) => m.location === MESSAGE_LOCATION)?.text;
+  const maskedText = result.maskedPreview?.find(
+    (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
+  )?.text;
   const maskedSegments = useMemo(
     () => buildReplacementSegments(maskedText ?? '', result.findings),
     [maskedText, result.findings],
@@ -155,6 +160,14 @@ export default function DlpInterventionDialog({
         showCancelButton={false}
         main={
           <div className="flex max-h-[65vh] flex-col gap-4 overflow-y-auto px-1" role="document">
+            {sendFailed && (
+              <p
+                role="alert"
+                className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+              >
+                {localize('com_ui_dlp_send_failed')}
+              </p>
+            )}
             {textBlock(
               localize('com_ui_dlp_original_prompt'),
               'border-border-light bg-surface-secondary text-text-primary',

@@ -8,6 +8,7 @@ const { Strategy: OpenIDStrategy } = require('openid-client/passport');
 const { CacheKeys, ErrorTypes, SystemRoles } = require('librechat-data-provider');
 const {
   isEnabled,
+  isGovernancePilotEnabled,
   logHeaders,
   safeStringify,
   findOpenIDUser,
@@ -887,7 +888,7 @@ const setupOpenIdAdmin = (openidConfig) => {
         clockTolerance: process.env.OPENID_CLOCK_TOLERANCE || 300,
         callbackURL: process.env.DOMAIN_SERVER + '/api/admin/oauth/openid/callback',
       },
-      createOpenIDCallback(true),
+      createOpenIDCallback(!isGovernancePilotEnabled()),
     );
 
     passport.use('openidAdmin', openidAdminLogin);

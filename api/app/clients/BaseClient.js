@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { logger } = require('@librechat/data-schemas');
 const {
+  onDlpSent,
   countTokens,
+  isDlpUnsent,
   checkBalance,
   getBalanceConfig,
   buildMessageFiles,
@@ -652,18 +654,21 @@ class BaseClient {
           userMessage.alwaysAppliedSkills = names;
         }
       }
-      userMessagePromise = this.saveMessageToDatabase(userMessage, saveOptions, user).catch(
-        (err) => {
-          logger.error('[BaseClient] Failed to save user message:', err);
-          return {};
-        },
-      );
-      this.savedMessageIds.add(userMessage.messageId);
-      if (typeof opts?.getReqData === 'function') {
-        opts.getReqData({
-          userMessagePromise,
-        });
-      }
+      /** A governed turn is stored only once the gateway starts its completion. */
+      onDlpSent(this.options.req, () => {
+        userMessagePromise = this.saveMessageToDatabase(userMessage, saveOptions, user).catch(
+          (err) => {
+            logger.error('[BaseClient] Failed to save user message:', err);
+            return {};
+          },
+        );
+        this.savedMessageIds.add(userMessage.messageId);
+        if (typeof opts?.getReqData === 'function') {
+          opts.getReqData({
+            userMessagePromise,
+          });
+        }
+      });
     }
 
     const balanceConfig = getBalanceConfig(appConfig);
@@ -696,6 +701,9 @@ class BaseClient {
     }
 
     const { completion, metadata } = await this.sendCompletion(payload, opts);
+    if (isDlpUnsent(this.options.req)) {
+      throw new Error('The message was not sent to the model.');
+    }
     if (this.abortController) {
       this.abortController.requestCompleted = true;
     }

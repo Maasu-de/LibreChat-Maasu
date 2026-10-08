@@ -374,9 +374,26 @@ export type TOptions = {
   overrideQuotes?: string[];
   /** Added conversation for multi-convo feature - sent to server as part of submission payload */
   addedConvo?: t.TConversation;
+  /** Governance DLP review the user approved for this message */
+  dlpReviewId?: string;
 };
 
 export type TAskFunction = (props: TAskProps, options?: TOptions) => false | void;
+
+/** A DLP review the user has to decide on before their message is sent to the model. */
+export type TPendingDlpReview = {
+  result: t.GovernanceDlpReview;
+  /** The text the user sent, which the review's findings refer to. */
+  text: string;
+  conversationId: string | null;
+  /** The `$` skills the reviewed turn was sent with, sent again with the approved text. */
+  manualSkills?: string[];
+  /**
+   * `sending` from the user's approval until the approved turn starts, while the dialog is
+   * hidden; `failed` once that send failed and the review can be sent again.
+   */
+  status?: 'sending' | 'failed';
+};
 
 /**
  * Stable context object passed from non-memo'd wrapper components (Message, MessageContent)

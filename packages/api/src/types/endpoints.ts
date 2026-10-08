@@ -48,6 +48,11 @@ export interface BaseInitializeParams {
   model_parameters?: Record<string, unknown>;
   /** Database methods for user key operations */
   db: EndpointDbMethods;
+  /**
+   * Whether a governed call asks the user to approve DLP findings (default `true`). With `false`,
+   * as for a title, the gateway masks or blocks the call itself.
+   */
+  dlpApproval?: boolean;
 }
 
 /**

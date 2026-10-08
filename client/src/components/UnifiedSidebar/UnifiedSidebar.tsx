@@ -8,6 +8,7 @@ import { ChatContext, ChatFormProvider, ActivePanelProvider } from '~/Providers'
 import useUnifiedSidebarLinks from '~/hooks/Nav/useUnifiedSidebarLinks';
 import { useChatHelpers, useLocalize } from '~/hooks';
 import SidePanelNav from '~/components/SidePanel/Nav';
+import Logo from '~/components/Logo';
 import ExpandedPanel from './ExpandedPanel';
 import Sidebar from './Sidebar';
 import { cn } from '~/utils';
@@ -134,10 +135,9 @@ function UnifiedSidebar() {
 
   const logo = (
     <div className="flex h-28 flex-shrink-0 items-center justify-center bg-surface-primary-alt p-2">
-      <img
-        src="assets/logo.svg?v=2"
-        className="h-full max-w-full object-contain"
-        alt={localize('com_ui_logo', { 0: 'Maasu' })}
+      <Logo
+        className="h-full w-full"
+        label={localize('com_ui_logo', { 0: 'Maasu' })}
       />
     </div>
   );

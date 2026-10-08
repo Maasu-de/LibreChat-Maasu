@@ -1,18 +1,23 @@
 const express = require('express');
-const { createMessageFilterPii, generateCheckAccess, skipAgentCheck } = require('@librechat/api');
+const {
+  createMessageFilterPii,
+  generateCheckAccess,
+  skipAgentCheck,
+  createGovernanceHistoryGuard,
+} = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
 const {
   moderateText,
   // validateModel,
   validateConvoAccess,
   buildEndpointOption,
-  checkGovernanceDlp,
+  markGovernanceDlp,
   canAccessAgentFromBody,
 } = require('~/server/middleware');
 const { initializeClient } = require('~/server/services/Endpoints/agents');
 const AgentController = require('~/server/controllers/agents/request');
 const addTitle = require('~/server/services/Endpoints/agents/title');
-const { getRoleByName } = require('~/models');
+const { getRoleByName, getMessages } = require('~/models');
 
 const router = express.Router();
 
@@ -31,8 +36,9 @@ router.use(moderateText);
 router.use(checkAgentAccess);
 router.use(checkAgentResourceAccess);
 router.use(validateConvoAccess);
+router.use(createGovernanceHistoryGuard(getMessages));
 router.use(buildEndpointOption);
-router.use(checkGovernanceDlp);
+router.use(markGovernanceDlp);
 
 const controller = async (req, res, next) => {
   await AgentController(req, res, next, initializeClient, addTitle);

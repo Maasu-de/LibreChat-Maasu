@@ -24,12 +24,13 @@ jest.mock('@tanstack/react-query', () => ({
 
 jest.mock('recoil', () => ({
   useRecoilValue: () => false,
+  useRecoilState: () => [null, jest.fn()],
   useSetRecoilState: (atom: unknown) =>
     String(atom).includes('isSubmitting') ? mockSetIsSubmitting : mockSetShowStopButton,
   useRecoilCallback: (factory: any) =>
     factory({
       snapshot: {
-        getLoadable: () => ({ state: 'hasValue', contents: [] }),
+        getLoadable: () => ({ state: 'hasValue', contents: [], valueMaybe: () => null }),
       },
       set: jest.fn(),
       reset: jest.fn(),
@@ -41,6 +42,7 @@ jest.mock('~/hooks/Conversations/useGetSender', () => () => mockGetSender);
 jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: mockGetExpiry }));
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: null }),
+  useLocalize: () => (key: string) => key,
 }));
 jest.mock('~/store', () => ({
   __esModule: true,
@@ -50,6 +52,7 @@ jest.mock('~/store', () => ({
     showStopButtonByIndex: () => 'showStopButton',
     pendingManualSkillsByConvoId: () => 'pendingManualSkills',
     messagesSiblingIdxFamily: () => 'messagesSiblingIdx',
+    dlpReviewByIndex: () => 'dlpReview',
   },
   useGetEphemeralAgent: () => mockGetEphemeralAgent,
 }));

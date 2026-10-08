@@ -40,6 +40,7 @@ import { extractDefaultParams } from '~/endpoints/openai/llm';
 import { resolveHeaders, createSafeUser } from '~/utils/env';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
 import { resolveConfigHeaders } from '~/utils/headers';
+import { getDlpSideCallFetch } from '~/governance/dlp';
 import { applyTestRunHook } from '~/agents/testHook';
 import { isUserProvided } from '~/utils/common';
 
@@ -635,6 +636,32 @@ function shapeSummarizationConfig(
 }
 
 /**
+ * A summarization on the agent's own provider inherits the agent's client
+ * options, including a governed turn's fetch, whose completion marks the turn
+ * as sent before the agent's own call is checked. Gives it the turn's
+ * approval-off fetch instead. The SDK replaces `configuration` as a whole, so
+ * the agent's is copied with only `fetch` swapped.
+ */
+function withDlpSideCallFetch(
+  config: AgentSummarizationConfig,
+  agentProvider: Providers,
+  configuration?: t.OpenAIConfiguration,
+): AgentSummarizationConfig {
+  const fetch = getDlpSideCallFetch(configuration?.fetch);
+  if (
+    !fetch ||
+    (config.provider ?? agentProvider) !== agentProvider ||
+    config.parameters?.configuration !== undefined
+  ) {
+    return config;
+  }
+  return {
+    ...config,
+    parameters: { ...config.parameters, configuration: { ...configuration, fetch } },
+  };
+}
+
+/**
  * Applies `reserveRatio` against the pre-ratio base context budget, falling
  * back to the pre-computed `maxContextTokens` from initializeAgent.
  */
@@ -1087,7 +1114,11 @@ export async function createRun({
       discoveredTools:
         !isSubagent && discoveredTools.size > 0 ? Array.from(discoveredTools) : undefined,
       summarizationEnabled: summarization.enabled,
-      summarizationConfig: summarization.config,
+      summarizationConfig: withDlpSideCallFetch(
+        summarization.config,
+        provider,
+        llmConfig.configuration,
+      ),
       initialSummary: isSubagent ? undefined : initialSummary,
       contextPruningConfig: summarization.contextPruning,
       maxToolResultChars: agent.maxToolResultChars,

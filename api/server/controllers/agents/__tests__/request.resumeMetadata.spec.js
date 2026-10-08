@@ -1,4 +1,5 @@
 const { EventEmitter } = require('events');
+const { Constants } = require('librechat-data-provider');
 
 const mockLogger = {
   debug: jest.fn(),
@@ -8,7 +9,10 @@ const mockLogger = {
 };
 
 const mockGenerationJobManager = {
+  getJob: jest.fn(),
   createJob: jest.fn(),
+  emitDone: jest.fn(),
+  emitChunk: jest.fn(),
   emitError: jest.fn(),
   completeJob: jest.fn(),
   getResumeState: jest.fn(),
@@ -82,6 +86,12 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
+  onDlpSent: (...args) => jest.requireActual('@librechat/api').onDlpSent(...args),
+  isDlpUnsent: (...args) => jest.requireActual('@librechat/api').isDlpUnsent(...args),
+  getRetryableDlpReviewId: (...args) =>
+    jest.requireActual('@librechat/api').getRetryableDlpReviewId(...args),
+  createApprovalRetryEvent: (...args) =>
+    jest.requireActual('@librechat/api').createApprovalRetryEvent(...args),
   getViolationInfo: jest.fn(),
   buildMessageFiles: jest.fn(() => []),
   resolveTitleTiming: jest.fn(() => 'immediate'),
@@ -186,6 +196,8 @@ describe('ResumableAgentController resume metadata', () => {
     mockGenerationJobManager.getResumeState.mockResolvedValue(null);
     mockGenerationJobManager.updateMetadata.mockResolvedValue(undefined);
     mockGenerationJobManager.emitError.mockResolvedValue(undefined);
+    mockGenerationJobManager.getJob.mockResolvedValue({ createdAt: 1000 });
+    mockGenerationJobManager.emitDone.mockResolvedValue(undefined);
     mockSaveMessage.mockResolvedValue({});
   });
 
@@ -617,5 +629,197 @@ describe('ResumableAgentController resume metadata', () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it('announces a governed turn as created only once the gateway starts its completion', async () => {
+    const { createRequestDlpFetch } = jest.requireActual('@librechat/api');
+    const conversationId = 'conversation-123';
+    const userMessage = {
+      messageId: 'user-message',
+      parentMessageId: 'parent-message',
+      conversationId,
+      text: 'A governed message',
+    };
+    let chunksBeforeSent;
+    const initializeClient = jest.fn(async ({ req }) => {
+      const governedFetch = createRequestDlpFetch(
+        req,
+        async () =>
+          new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+      );
+      const sendMessage = async (_text, opts) => {
+        opts.onStart(userMessage, 'response-message');
+        chunksBeforeSent = mockGenerationJobManager.emitChunk.mock.calls.length;
+        await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'governed-model',
+            messages: [{ role: 'user', content: userMessage.text }],
+            stream: true,
+          }),
+        });
+        throw new Error('stop after the gateway started');
+      };
+      return { client: { sendMessage } };
+    });
+    const req = {
+      user: { id: 'user-123' },
+      body: {
+        text: userMessage.text,
+        messageId: userMessage.messageId,
+        parentMessageId: userMessage.parentMessageId,
+        conversationId,
+        endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+      },
+      config: {},
+    };
+    const res = createResumableResponse();
+
+    await AgentController(req, res, jest.fn(), initializeClient, null);
+    for (let i = 0; i < 50 && mockGenerationJobManager.emitError.mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(chunksBeforeSent).toBe(0);
+    expect(mockGenerationJobManager.emitChunk).toHaveBeenCalledTimes(1);
+    expect(mockGenerationJobManager.emitChunk).toHaveBeenCalledWith(conversationId, {
+      created: true,
+      message: userMessage,
+      streamId: conversationId,
+    });
+    expect(mockGenerationJobManager.emitError).toHaveBeenCalledWith(
+      conversationId,
+      'stop after the gateway started',
+    );
+  });
+
+  it('shows a kept DLP approval again when its send fails, instead of an error', async () => {
+    const conversationId = 'conversation-123';
+    const userMessage = {
+      messageId: 'user-message',
+      parentMessageId: 'parent-message',
+      conversationId,
+      text: 'Please email [EMAIL] today',
+    };
+    const initializeClient = jest.fn(async ({ req }) => {
+      const sendMessage = async (_text, opts) => {
+        opts.onStart(userMessage, 'response-message');
+        req.governanceDlpSent = false;
+        req.governanceDlpApprovalKept = true;
+        throw new Error('503 Service Unavailable');
+      };
+      return { client: { sendMessage } };
+    });
+    const req = {
+      user: { id: 'user-123' },
+      body: {
+        text: userMessage.text,
+        messageId: userMessage.messageId,
+        parentMessageId: userMessage.parentMessageId,
+        conversationId,
+        dlpReviewId: 'review-1',
+        endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+      },
+      config: {},
+    };
+
+    await AgentController(req, createResumableResponse(), jest.fn(), initializeClient, null);
+    for (let i = 0; i < 50 && mockGenerationJobManager.completeJob.mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(mockGenerationJobManager.emitError).not.toHaveBeenCalled();
+    expect(mockGenerationJobManager.emitDone).toHaveBeenCalledWith(
+      conversationId,
+      expect.objectContaining({
+        final: true,
+        earlyAbort: true,
+        dlpRetryReviewId: 'review-1',
+        requestMessage: expect.objectContaining({ text: userMessage.text }),
+      }),
+    );
+    expect(mockGenerationJobManager.completeJob).toHaveBeenCalledWith(conversationId);
+  });
+
+  describe('title timing for a new conversation', () => {
+    const text = 'A first message';
+
+    const completion = async () =>
+      new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+
+    async function runFirstTurn({ governed }) {
+      const { createRequestDlpFetch } = jest.requireActual('@librechat/api');
+      const addTitle = jest.fn(async () => {});
+      let titlesBeforeResponse;
+      const initializeClient = jest.fn(async ({ req }) => {
+        const modelFetch = governed ? createRequestDlpFetch(req, completion) : completion;
+        const sendMessage = async () => {
+          await modelFetch('http://governance.test/api/v1/dlp/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'governed-model',
+              messages: [{ role: 'user', content: text }],
+              stream: true,
+            }),
+          });
+          titlesBeforeResponse = addTitle.mock.calls.length;
+          return {
+            messageId: 'response-message',
+            databasePromise: Promise.resolve({
+              conversation: { conversationId: req.body.conversationId },
+            }),
+          };
+        };
+        return { client: { sendMessage } };
+      });
+      const req = {
+        user: { id: 'user-123' },
+        body: {
+          text,
+          parentMessageId: Constants.NO_PARENT,
+          endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+        },
+        config: {},
+      };
+
+      await AgentController(req, createResumableResponse(), jest.fn(), initializeClient, addTitle);
+      for (let i = 0; i < 50 && mockGenerationJobManager.completeJob.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await nextTick();
+      return { req, addTitle, titlesBeforeResponse };
+    }
+
+    it('titles a governed turn only after its response', async () => {
+      const { req, addTitle, titlesBeforeResponse } = await runFirstTurn({ governed: true });
+
+      expect(titlesBeforeResponse).toBe(0);
+      expect(addTitle).toHaveBeenCalledTimes(1);
+      expect(addTitle).toHaveBeenCalledWith(req, {
+        text,
+        response: expect.objectContaining({ messageId: 'response-message' }),
+        client: expect.any(Object),
+      });
+      expect(mockGenerationJobManager.emitDone.mock.invocationCallOrder[0]).toBeLessThan(
+        addTitle.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('keeps titling a turn that is not governed alongside its response', async () => {
+      const { req, addTitle, titlesBeforeResponse } = await runFirstTurn({ governed: false });
+
+      expect(titlesBeforeResponse).toBe(1);
+      expect(addTitle).toHaveBeenCalledTimes(1);
+      expect(addTitle).toHaveBeenCalledWith(
+        req,
+        expect.objectContaining({ text, immediate: true }),
+      );
+    });
   });
 });

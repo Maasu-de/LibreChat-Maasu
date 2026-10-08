@@ -2,9 +2,14 @@ const { logger } = require('@librechat/data-schemas');
 const { Constants, ViolationTypes, isEphemeralAgentId } = require('librechat-data-provider');
 const {
   sendEvent,
+  onDlpSent,
+  isDlpUnsent,
   getViolationInfo,
   buildMessageFiles,
+  createReviewEvent,
   getReferencedQuotes,
+  createApprovalRetryEvent,
+  getRetryableDlpReviewId,
   resolveTitleTiming,
   GenerationJobManager,
   filterPersistableAbortContent,
@@ -346,11 +351,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
     client = result.client;
 
     // Resolve title timing from the public agents endpoint first, then fall
-    // back to the agent's actual backing provider/custom endpoint.
-    titleTiming = resolveTitleTiming({
-      appConfig: req.config,
-      endpoint: [endpointOption?.endpoint, client?.options?.agent?.endpoint],
-    });
+    // back to the agent's actual backing provider/custom endpoint. A governed
+    // turn is titled only after its response, once the gateway has sent it.
+    titleTiming = isDlpUnsent(req)
+      ? 'final'
+      : resolveTitleTiming({
+          appConfig: req.config,
+          endpoint: [endpointOption?.endpoint, client?.options?.agent?.endpoint],
+        });
 
     if (client?.sender) {
       GenerationJobManager.updateMetadata(streamId, { sender: client.sender });
@@ -453,11 +461,15 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
             },
           });
 
-          GenerationJobManager.emitChunk(streamId, {
-            created: true,
-            message: userMessage,
-            streamId,
-          });
+          /** A governed turn is only announced as created once the gateway starts its
+           *  completion: until then nothing is stored, and a stop is an early abort. */
+          onDlpSent(req, () =>
+            GenerationJobManager.emitChunk(streamId, {
+              created: true,
+              message: userMessage,
+              streamId,
+            }),
+          );
         };
 
         const messageOptions = {
@@ -695,9 +707,26 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
         // Check if this was an abort (not a real error)
         const wasAborted = job.abortController.signal.aborted || error.message?.includes('abort');
 
-        if (wasAborted) {
+        const retryReviewId = getRetryableDlpReviewId(req);
+        if (req.governanceDlpReview) {
+          await GenerationJobManager.emitDone(
+            streamId,
+            createReviewEvent(req.governanceDlpReview, userMessage),
+          );
+          GenerationJobManager.completeJob(streamId);
+        } else if (wasAborted) {
           logger.debug(`[ResumableAgentController] Generation aborted for ${streamId}`);
           // abortJob already handled emitDone and completeJob
+        } else if (retryReviewId) {
+          logger.error(
+            `[ResumableAgentController] Approved DLP review not sent for ${streamId}:`,
+            error,
+          );
+          await GenerationJobManager.emitDone(
+            streamId,
+            createApprovalRetryEvent(retryReviewId, userMessage),
+          );
+          GenerationJobManager.completeJob(streamId);
         } else {
           logger.error(`[ResumableAgentController] Generation error for ${streamId}:`, error);
           await GenerationJobManager.emitError(streamId, error.message || 'Generation failed');

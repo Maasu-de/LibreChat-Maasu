@@ -12,7 +12,7 @@ import {
   useRecoilCallback,
 } from 'recoil';
 import type { EModelEndpoint, TConversation, TSubmission, TPreset } from 'librechat-data-provider';
-import type { TOptionSettings, ExtendedFile } from '~/common';
+import type { TOptionSettings, ExtendedFile, TPendingDlpReview } from '~/common';
 import {
   clearModelForNonEphemeralAgent,
   createChatSearchParams,
@@ -28,6 +28,11 @@ const submissionKeysAtom = atom<(string | number)[]>({
 
 const submissionByIndex = atomFamily<TSubmission | null, string | number>({
   key: 'submissionByIndex',
+  default: null,
+});
+
+const dlpReviewByIndex = atomFamily<TPendingDlpReview | null, string | number>({
+  key: 'dlpReviewByIndex',
   default: null,
 });
 
@@ -433,6 +438,7 @@ export default {
   filesByIndex,
   presetByIndex,
   submissionByIndex,
+  dlpReviewByIndex,
   textByIndex,
   showStopButtonByIndex,
   abortScrollFamily,

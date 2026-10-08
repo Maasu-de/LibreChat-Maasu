@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import { v4 } from 'uuid';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
 import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
-import { useSetRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
+import { useSetRecoilState, useRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
 import {
   Constants,
   QueryKeys,
@@ -15,8 +15,8 @@ import {
   parseCompactConvo,
   replaceSpecialVars,
   isAssistantsEndpoint,
-  isEphemeralAgentId,
   getDefaultParamsEndpoint,
+  GOVERNANCE_DLP_TEXT_LOCATION,
 } from 'librechat-data-provider';
 import type {
   TMessage,
@@ -26,7 +26,6 @@ import type {
   TEndpointOption,
   TEndpointsConfig,
   EndpointSchemaKey,
-  GovernanceDlpResult,
 } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
 import type { TAskFunction, ExtendedFile } from '~/common';
@@ -42,16 +41,11 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
 import store, { useGetEphemeralAgent } from '~/store';
 import { startupConfigKey } from '~/data-provider';
 import useUserKey from '~/hooks/Input/useUserKey';
-import { hasSelectedEphemeralTools } from '~/hooks/Chat/governance';
-import { useGovernanceDlpCheckMutation } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
 
-type PendingDlpSubmission = {
-  result: GovernanceDlpResult;
-  props: Parameters<TAskFunction>[0];
-  options?: Parameters<TAskFunction>[1];
-  conversationId: string | null;
-};
+/** A review is kept while the chat stays on its conversation; a new chat has no ID yet. */
+const dlpConversationKey = (conversationId?: string | null) =>
+  conversationId == null || conversationId === '' ? Constants.NEW_CONVO : conversationId;
 
 const logChatRequest = (request: Record<string, unknown>) => {
   logger.log('=====================================\nAsk function called with:');
@@ -222,13 +216,9 @@ export default function useChatFunctions({
   const { showToast } = useToastContext();
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
-  const dlpCheckMutation = useGovernanceDlpCheckMutation();
-  const [pendingDlpSubmission, setPendingDlpSubmission] = useState<PendingDlpSubmission | null>(
-    null,
-  );
-  const activeConversationIdRef = useRef<string | null>(
-    immutableConversation?.conversationId ?? null,
-  );
+  const [dlpReview, setDlpReview] = useRecoilState(store.dlpReviewByIndex(index));
+  /** The review the user has to decide on, hidden while its approved turn is on its way. */
+  const pendingDlpReview = dlpReview?.status === 'sending' ? null : dlpReview;
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
   const isTemporary = useRecoilValue(store.isTemporary);
@@ -280,7 +270,7 @@ export default function useChatFunctions({
     [],
   );
 
-  const submitMessageUnchecked: TAskFunction = (
+  const ask: TAskFunction = (
     {
       text,
       overrideConvoId,
@@ -301,6 +291,7 @@ export default function useChatFunctions({
       overrideManualSkills,
       overrideQuotes,
       addedConvo,
+      dlpReviewId,
     } = {},
   ) => {
     setShowStopButton(false);
@@ -493,7 +484,10 @@ export default function useChatFunctions({
        * off the message so there's no Recoil state to clean up. Runtime
        * skill resolution reads the top-level `manualSkills` payload field.
        */
-      manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
+      manualSkills:
+        !startupConfig?.governancePilotEnabled && manualSkills.length > 0
+          ? manualSkills
+          : undefined,
       /**
        * Quoted excerpts the user referenced this turn. Persisted on the
        * message (backend echoes it back on `req.body.quotes`) so `MessageQuotes`
@@ -558,7 +552,10 @@ export default function useChatFunctions({
        * spreads) and drops out naturally at `finalHandler` when the
        * server-backed `responseMessage` replacement takes over.
        */
-      manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
+      manualSkills:
+        !startupConfig?.governancePilotEnabled && manualSkills.length > 0
+          ? manualSkills
+          : undefined,
     };
 
     if (isAssistantsEndpoint(endpoint)) {
@@ -638,10 +635,14 @@ export default function useChatFunctions({
       isRegenerate,
       initialResponse,
       isTemporary,
-      ephemeralAgent,
+      ephemeralAgent: startupConfig?.governancePilotEnabled ? undefined : ephemeralAgent,
       editedContent,
       addedConvo,
-      manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
+      manualSkills:
+        !startupConfig?.governancePilotEnabled && manualSkills.length > 0
+          ? manualSkills
+          : undefined,
+      dlpReviewId,
     };
 
     if (isRegenerate) {
@@ -655,97 +656,63 @@ export default function useChatFunctions({
     logger.dir('message_stream', submission, { depth: null });
   };
 
-  const dlpUnavailable = () =>
-    showToast({ message: localize('com_error_governance_unavailable'), status: 'error' });
-
-  const ask: TAskFunction = (props, options) => {
-    const text = props.text.trim();
-    if (isSubmitting || dlpCheckMutation.isLoading || text === '') {
-      return;
-    }
-
-    const send = () => submitMessageUnchecked({ ...props, text }, options);
-    const targetConversationId =
-      props.conversationId ?? immutableConversation?.conversationId ?? null;
-    const startupConfig = queryClient.getQueryData<TStartupConfig>(startupConfigKey(true));
-    const ephemeralAgent = getEphemeralAgent(targetConversationId ?? Constants.NEW_CONVO);
-    const isPlainTextSubmission =
-      options?.editedContent == null &&
-      options?.isContinued !== true &&
-      options?.isRegenerate !== true &&
-      options?.addedConvo == null &&
-      isEphemeralAgentId(immutableConversation?.agent_id) &&
-      immutableConversation?.assistant_id == null &&
-      !(files && files.size) &&
-      !(options?.overrideFiles && options.overrideFiles.length) &&
-      !(immutableConversation?.tools && immutableConversation.tools.length) &&
-      !hasSelectedEphemeralTools(ephemeralAgent);
-
-    if (startupConfig?.governanceDlpEnabled === false || !isPlainTextSubmission) {
-      return send();
-    }
-
-    dlpCheckMutation.mutate(
-      { text, model: immutableConversation?.model ?? 'unknown' },
-      {
-        onSuccess: (result) => {
-          if (activeConversationIdRef.current !== targetConversationId) {
-            return;
-          }
-          if (!result.enabled || result.decision === 'ALLOW') {
-            send();
-            return;
-          }
-          setPendingDlpSubmission({
-            result,
-            props: { ...props, text },
-            options,
-            conversationId: targetConversationId,
-          });
-        },
-        onError: () => {
-          if (activeConversationIdRef.current !== targetConversationId) {
-            return;
-          }
-          dlpUnavailable();
-          send();
-        },
+  /**
+   * Drops the review, unless it belongs to `keepForConversation`. Its submit drained the `$`
+   * queue, so its skills go back to the front of that queue for the edited message; a review
+   * on its way already sent them.
+   */
+  const dropDlpReview = useRecoilCallback(
+    ({ snapshot, set }) =>
+      (keepForConversation?: string) => {
+        const review = snapshot.getLoadable(store.dlpReviewByIndex(index)).valueMaybe();
+        const conversationKey = dlpConversationKey(review?.conversationId);
+        if (!review || conversationKey === keepForConversation) {
+          return;
+        }
+        set(store.dlpReviewByIndex(index), null);
+        const skills = review.status === 'sending' ? [] : (review.manualSkills ?? []);
+        if (skills.length > 0) {
+          set(store.pendingManualSkillsByConvoId(conversationKey), (queued) => [
+            ...skills,
+            ...queued.filter((skill) => !skills.includes(skill)),
+          ]);
+        }
       },
-    );
-  };
+    [index],
+  );
 
-  const cancelDlpIntervention = () => setPendingDlpSubmission(null);
+  const cancelDlpIntervention = () => dropDlpReview();
 
   useEffect(() => {
-    const currentConversationId = immutableConversation?.conversationId ?? null;
-    activeConversationIdRef.current = currentConversationId;
-    setPendingDlpSubmission((pending) =>
-      pending && pending.conversationId !== currentConversationId ? null : pending,
+    dropDlpReview(dlpConversationKey(immutableConversation?.conversationId));
+  }, [immutableConversation?.conversationId, dropDlpReview]);
+
+  /**
+   * Sends the reviewed text (masked where the review masks it) as approved by the user, and
+   * returns whether it did. A review without approved text stays open so it can be cancelled.
+   * The review is kept, hidden, until the approved turn starts, so a failed send can reopen it.
+   */
+  const confirmDlpIntervention = (): boolean => {
+    if (!pendingDlpReview || pendingDlpReview.result.decision === 'BLOCK') {
+      return false;
+    }
+    const { result } = pendingDlpReview;
+    const approved = result.maskedPreview?.find(
+      (item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION,
     );
-  }, [immutableConversation?.conversationId]);
-
-  const confirmDlpIntervention = () => {
-    if (!pendingDlpSubmission || pendingDlpSubmission.result.decision === 'BLOCK') {
-      return;
-    }
-    if (pendingDlpSubmission.conversationId !== activeConversationIdRef.current) {
-      setPendingDlpSubmission(null);
-      return;
+    if (!approved) {
+      showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
+      return false;
     }
 
-    const { result, props, options } = pendingDlpSubmission;
-    let { text } = props;
-    if (result.decision === 'MASK') {
-      const masked = result.maskedPreview?.find((item) => item.location === '/messages/0/content');
-      if (!masked || masked.text.trim() === '') {
-        dlpUnavailable();
-        return;
-      }
-      text = masked.text;
-    }
-
-    setPendingDlpSubmission(null);
-    submitMessageUnchecked({ ...props, text }, options);
+    setDlpReview({ ...pendingDlpReview, status: 'sending' });
+    /** The reviewed submit already drained the `$` queue, so its skills come from the review.
+     *  An explicit list also keeps skills queued since then for the next message. */
+    ask(
+      { text: approved.text },
+      { dlpReviewId: result.reviewId, overrideManualSkills: pendingDlpReview.manualSkills ?? [] },
+    );
+    return true;
   };
 
   const regenerate = (
@@ -787,9 +754,8 @@ export default function useChatFunctions({
   return {
     ask,
     regenerate,
-    pendingDlpSubmission,
+    pendingDlpReview,
     cancelDlpIntervention,
     confirmDlpIntervention,
-    isDlpChecking: dlpCheckMutation.isLoading,
   };
 }
