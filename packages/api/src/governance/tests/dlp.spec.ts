@@ -85,6 +85,36 @@ describe('Governance DLP', () => {
     expect(result).toBe(upstreamResponse);
   });
 
+  it('sends the server-resolved group IDs with every governed request', async () => {
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+        new Response('ok'),
+    );
+    const req = {
+      body: { text: 'normal text' },
+      user: { id: 'user-123' },
+      governanceGroupIds: ['group-1', 'group-2'],
+    } as unknown as ServerRequest;
+    const send = (governedFetch: GovernanceFetch) =>
+      governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'governed-model',
+          messages: [{ role: 'user', content: 'normal text' }],
+          stream: true,
+        }),
+      });
+
+    await send(createRequestDlpFetch(req, upstreamFetch));
+    await send(createRequestDlpFetch(req, upstreamFetch, false));
+    await send(createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch }));
+
+    const groupHeaders = upstreamFetch.mock.calls.map(([, init]) =>
+      new Headers(init?.headers).get('X-LibreChat-Group-IDs'),
+    );
+    expect(groupHeaders).toEqual(['["group-1","group-2"]', '["group-1","group-2"]', '[]']);
+  });
+
   it('rejects an unsupported request to the DLP completions API instead of forwarding it', async () => {
     const upstreamFetch = jest.fn();
     const governedFetch = createGovernanceDlpFetch({

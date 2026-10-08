@@ -23,6 +23,7 @@ const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
 /** Base path under which the gateway serves completions and models. */
 const GATEWAY_BASE_PATH = /\/api\/v1\/dlp$/;
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
+const LIBRECHAT_GROUPS_HEADER = 'X-LibreChat-Group-IDs';
 
 const DLP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
@@ -59,6 +60,8 @@ export type GovernanceFetch = (input: RequestInfo | URL, init?: RequestInit) => 
 
 export interface GovernanceFetchParams {
   userId: string;
+  /** The user's LibreChat group IDs, so the gateway can apply group-scoped policy overrides. */
+  groupIds?: string[];
   fetch?: GovernanceFetch;
   /** The user's submitted text, which reviews and approvals are bound to. */
   text?: string;
@@ -265,12 +268,14 @@ function withGovernanceRequest(
   init: RequestInit | undefined,
   request: GovernanceChatCompletionRequest,
   userId: string,
+  groupIds: string[],
 ): RequestInit {
   const requestHeaders =
     typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined;
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
+  headers.set(LIBRECHAT_GROUPS_HEADER, JSON.stringify(groupIds));
   return { ...init, body: JSON.stringify(request), headers };
 }
 
@@ -297,6 +302,7 @@ interface ApprovalParams {
   init?: RequestInit;
   request: GovernanceChatCompletionRequest;
   userId: string;
+  groupIds: string[];
   text: string;
   reviewId?: string;
   onReview: (review: GovernanceDlpReview) => void;
@@ -306,7 +312,7 @@ interface ApprovalParams {
 }
 
 function withApproval(
-  { input, init, request, userId }: ApprovalParams,
+  { input, init, request, userId, groupIds }: ApprovalParams,
   messages: GovernanceChatMessage[],
   dlpToken?: string,
 ): RequestInit {
@@ -316,7 +322,7 @@ function withApproval(
     require_user_approval: true,
     ...(dlpToken !== undefined ? { dlp_token: dlpToken } : {}),
   };
-  return withGovernanceRequest(input, init, approval, userId);
+  return withGovernanceRequest(input, init, approval, userId, groupIds);
 }
 
 /**
@@ -438,6 +444,7 @@ async function sendForApproval(params: ApprovalParams): Promise<Response> {
  */
 export function createGovernanceDlpFetch({
   userId,
+  groupIds = [],
   fetch = globalThis.fetch,
   text = '',
   reviewId,
@@ -476,6 +483,7 @@ export function createGovernanceDlpFetch({
           init,
           request,
           userId,
+          groupIds,
           text,
           reviewId,
           onReview,
@@ -483,7 +491,7 @@ export function createGovernanceDlpFetch({
           fetch,
           reviews: reviews ?? getReviewStore(),
         })
-      : await fetch(input, withGovernanceRequest(input, init, request, userId));
+      : await fetch(input, withGovernanceRequest(input, init, request, userId, groupIds));
     if (response.ok) {
       onSent?.();
     }
@@ -543,12 +551,17 @@ export function createRequestDlpFetch(
   approval: boolean = true,
 ): GovernanceFetch {
   if (!approval) {
-    return createGovernanceDlpFetch({ userId: req.user?.id ?? '', fetch });
+    return createGovernanceDlpFetch({
+      userId: req.user?.id ?? '',
+      groupIds: req.governanceGroupIds,
+      fetch,
+    });
   }
   const { text, dlpReviewId } = req.body ?? {};
   req.governanceDlpSent ??= false;
   const governedFetch = createGovernanceDlpFetch({
     userId: req.user?.id ?? '',
+    groupIds: req.governanceGroupIds,
     fetch,
     text: typeof text === 'string' ? text : '',
     reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
