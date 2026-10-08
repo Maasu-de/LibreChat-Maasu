@@ -33,47 +33,19 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
 
-      - name: Pull all three repositories and redeploy
+      - name: Deploy verified revisions
         env:
           DEPLOY_HOST: ${{ secrets.DEV_SERVER_HOST }}
           DEPLOY_USER: ${{ secrets.DEV_SERVER_USER }}
           GATEWAY_PATH: ${{ secrets.DEV_SERVER_PATH }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile=~/.ssh/known_hosts \
-            "$DEPLOY_USER@$DEPLOY_HOST" "bash -se -- '$GATEWAY_PATH'" <<'REMOTE'
+            "$DEPLOY_USER@$DEPLOY_HOST" "bash -se -- '$GATEWAY_PATH' '$SOURCE_SHA'" <<'REMOTE'
           set -euo pipefail
           gateway_path=$1
-          repos_path=$(dirname "$gateway_path")
-          librechat_path="$repos_path/LibreChat-Maasu"
-          admin_path="$repos_path/LibreChat-admin-panel-Maasu"
-
-          exec 9>/tmp/ai-governance-development-deploy.lock
-          flock -w 3600 9
-
-          for repo_path in "$gateway_path" "$librechat_path" "$admin_path"; do
-            test -d "$repo_path/.git" || { echo "Missing repository: $repo_path" >&2; exit 1; }
-            test -z "$(git -C "$repo_path" status --porcelain)" || {
-              echo "Local changes prevent deployment: $repo_path" >&2
-              exit 1
-            }
-          done
-
-          git -C "$gateway_path" switch main
-          git -C "$gateway_path" pull --ff-only origin main
-          git -C "$librechat_path" switch governed-v0.8.7
-          git -C "$librechat_path" pull --ff-only origin governed-v0.8.7
-          git -C "$admin_path" switch governed-v1.0.0
-          git -C "$admin_path" pull --ff-only origin governed-v1.0.0
-          bash "$gateway_path/deploy/scripts/deploy.sh"
-
-          for attempt in 1 2 3 4 5; do
-            if curl -fsS -o /dev/null http://localhost:3001; then
-              exit 0
-            fi
-            sleep 3
-          done
-          echo 'Development application health check failed' >&2
-          exit 1
+          source_sha=$2
+          bash "$gateway_path/deploy/scripts/deploy-verified.sh" LibreChat-Maasu "$source_sha"
           REMOTE
