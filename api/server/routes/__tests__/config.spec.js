@@ -104,6 +104,8 @@ afterEach(() => {
   delete process.env.ANALYTICS_GTM_ID;
   delete process.env.CUSTOM_FOOTER;
   delete process.env.HELP_AND_FAQ_URL;
+  delete process.env.WEB_PUBLIC_URL;
+  delete process.env.ADMIN_PANEL_URL;
 });
 
 describe('GET /api/config', () => {
@@ -280,6 +282,106 @@ describe('GET /api/config', () => {
   });
 
   describe('authenticated (req.user exists)', () => {
+    it('exposes admin navigation only to ADMIN users with ACCESS_ADMIN', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test/';
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/';
+      const anonymous = await request(createApp(null)).get('/api/config');
+      mockHasCapability.mockResolvedValueOnce(false);
+      const user = await request(createApp(mockUser)).get('/api/config');
+      mockHasCapability.mockResolvedValueOnce(true);
+      const admin = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(anonymous.body).not.toHaveProperty('gatewayUrl');
+      expect(anonymous.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(user.body.gatewayUrl).toBe('https://gateway.example.test');
+      expect(user.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(admin.body.libreChatAdminUrl).toBe(
+        'https://gateway.example.test/api/auth/open-librechat-admin',
+      );
+      expect(mockHasCapability).toHaveBeenCalledWith(
+        { id: mockUser.id, role: 'ADMIN', tenantId: undefined },
+        'access:admin',
+      );
+    });
+
+    it('omits admin navigation for a non-ADMIN role with ACCESS_ADMIN', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
+      const response = await request(
+        createApp({ ...mockUser, role: 'CUSTOM_ADMIN', tenantId: 'tenant-abc' }),
+      ).get('/api/config');
+
+      expect(response.body.gatewayUrl).toBe('https://gateway.example.test');
+      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(mockHasCapability).toHaveBeenCalledWith(
+        { id: mockUser.id, role: 'CUSTOM_ADMIN', tenantId: 'tenant-abc' },
+        'access:admin',
+      );
+    });
+
+    it('omits admin navigation for an ADMIN role without ACCESS_ADMIN', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(false);
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+    });
+
+    it('omits admin navigation when the capability check fails', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockRejectedValue(new Error('Grant lookup failed'));
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+    });
+
+    it('omits unsafe navigation schemes', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      process.env.WEB_PUBLIC_URL = 'javascript:alert(1)';
+      process.env.ADMIN_PANEL_URL = 'data:text/html,unsafe';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body).not.toHaveProperty('gatewayUrl');
+      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+      expect(mockHasCapability).not.toHaveBeenCalled();
+    });
+
+    it('uses the bundled admin panel URL when ADMIN_PANEL_URL is unset', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body.libreChatAdminUrl).toBe('http://localhost:3000');
+      expect(mockHasCapability).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the Gateway entry route when ADMIN_PANEL_URL is blank', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      process.env.ADMIN_PANEL_URL = '';
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body.libreChatAdminUrl).toBe(
+        'https://gateway.example.test/api/auth/open-librechat-admin',
+      );
+    });
+
+    it('uses the configured LibreChat Admin URL when no Gateway entry route exists', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+
+      expect(response.body.libreChatAdminUrl).toBe('https://admin.example.test/admin');
+    });
+
     it('should call getAppConfig with role, userId, and tenantId', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockGetTenantId.mockReturnValue('fallback-tenant');
@@ -491,14 +593,17 @@ describe('GET /api/config', () => {
       expect(mockHasCapability).toHaveBeenCalled();
     });
 
-    it('should not call hasCapability when allowAccountDeletion is already true', async () => {
+    it('uses one ACCESS_ADMIN check for admin navigation and account deletion', async () => {
+      process.env.ALLOW_ACCOUNT_DELETION = 'false';
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
-      const app = createApp(mockUser);
+      mockHasCapability.mockResolvedValue(true);
 
-      const response = await request(app).get('/api/config');
+      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
 
       expect(response.body.allowAccountDeletion).toBe(true);
-      expect(mockHasCapability).not.toHaveBeenCalled();
+      expect(response.body.libreChatAdminUrl).toBe('https://admin.example.test/admin');
+      expect(mockHasCapability).toHaveBeenCalledTimes(1);
     });
 
     it('should return 500 when getAppConfig throws', async () => {

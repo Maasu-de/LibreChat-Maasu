@@ -1,5 +1,6 @@
 export * from './service';
 export * from './config';
+export * from './navigation';
 export * from './metrics';
 export * from './permissions';
 export * from './cdn';

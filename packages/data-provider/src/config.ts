@@ -1361,6 +1361,8 @@ export type StartupConfigContext = 'share';
 export type TStartupConfig = {
   appTitle: string;
   governancePilotEnabled?: boolean;
+  gatewayUrl?: string;
+  libreChatAdminUrl?: string;
   socialLogins?: string[];
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
