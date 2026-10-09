@@ -1,10 +1,11 @@
 import type { CSSProperties } from 'react';
 
-const logoMask = 'url(assets/logo.svg?v=3)';
+const logoMask = 'url(assets/logo.svg?v=4)';
+const compactLogoMask = 'url(assets/logo_small.svg?v=4)';
 
 const containerStyle: CSSProperties = {
   display: 'flex',
-  padding: 28,
+  padding: 4,
 };
 
 const logoStyle: CSSProperties = {
@@ -20,10 +21,24 @@ const logoStyle: CSSProperties = {
   maskSize: 'contain',
 };
 
-function Logo({ className, label }: { className: string; label: string }) {
+const compactLogoStyle: CSSProperties = {
+  ...logoStyle,
+  maskImage: compactLogoMask,
+  WebkitMaskImage: compactLogoMask,
+};
+
+function Logo({
+  className,
+  label,
+  compact = false,
+}: {
+  className: string;
+  label: string;
+  compact?: boolean;
+}) {
   return (
     <div role="img" aria-label={label} className={className} style={containerStyle}>
-      <div aria-hidden="true" style={logoStyle} />
+      <div aria-hidden="true" style={compact ? compactLogoStyle : logoStyle} />
     </div>
   );
 }

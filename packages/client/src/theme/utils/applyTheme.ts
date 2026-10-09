@@ -93,11 +93,11 @@ function mapTheme(rgb: IThemeRGB): Partial<IThemeVariables> {
  * Applies theme to the document root
  * Sets CSS variables as rgb() values for compatibility with existing CSS
  */
-export default function applyTheme(themeRGB?: IThemeRGB): void {
-  if (!themeRGB) return;
+export default function applyTheme(themeRGB: IThemeRGB): () => void {
 
   const themeObject = mapTheme(themeRGB);
   const root = document.documentElement;
+  const previousValues = new Map<string, { value: string; priority: string }>();
 
   Object.entries(themeObject).forEach(([cssVar, value]) => {
     if (!value) return;
@@ -108,8 +108,22 @@ export default function applyTheme(themeRGB?: IThemeRGB): void {
       return;
     }
 
+    previousValues.set(cssVar, {
+      value: root.style.getPropertyValue(cssVar),
+      priority: root.style.getPropertyPriority(cssVar),
+    });
     // Set the CSS variable as rgb() value for compatibility
     // This ensures existing CSS that expects color values (not space-separated RGB) continues to work
     root.style.setProperty(cssVar, `rgb(${value})`);
   });
+
+  return () => {
+    previousValues.forEach(({ value, priority }, cssVar) => {
+      if (value) {
+        root.style.setProperty(cssVar, value, priority);
+      } else {
+        root.style.removeProperty(cssVar);
+      }
+    });
+  };
 }

@@ -3,14 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <base href="/" />
-    <meta name="theme-color" content="#171717" />
+    <meta name="theme-color" content="#191970" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="description" content="LibreChat - An open source chat application with support for multiple AI models" />
-    <title>LibreChat</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
+    <meta name="description" content="AIMO Chat - an AI workspace with governed access" />
+    <title>AIMO Chat</title>
+    <link rel="icon" type="image/svg+xml" href="assets/logo_small.svg" />
     <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <style>
@@ -27,14 +26,14 @@
       let backgroundColor;
 
       if (theme === 'dark') {
-        backgroundColor = '#0d0d0d';
+        backgroundColor = '#010001';
       } else if (theme === 'light') {
-        backgroundColor = '#ffffff';
+        backgroundColor = '#fefeff';
       } else if (theme === 'system') {
         const prefersDarkScheme = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        backgroundColor = prefersDarkScheme ? '#0d0d0d' : '#ffffff';
+        backgroundColor = prefersDarkScheme ? '#010001' : '#fefeff';
       } else {
-        backgroundColor = '#ffffff';
+        backgroundColor = '#fefeff';
       }
 
       loadingContainerStyle.innerHTML = `
