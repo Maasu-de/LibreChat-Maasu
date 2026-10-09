@@ -133,11 +133,16 @@ function UnifiedSidebar() {
     return () => document.removeEventListener('keydown', handler);
   }, [isSmallScreen, expanded, handleCollapse]);
 
-  const logo = (
-    <div className="flex h-28 flex-shrink-0 items-center justify-center bg-surface-primary-alt p-2">
+  const logo = (showFullLogo: boolean) => (
+    <div className="flex h-14 flex-shrink-0 items-center bg-surface-primary-alt px-2">
       <Logo
-        className="h-full w-full"
+        className={
+          showFullLogo
+            ? 'h-9 w-[120px] flex-none'
+            : 'ml-px h-[37px] w-[37px] flex-none -translate-y-px'
+        }
         label={localize('com_ui_logo', { 0: 'AIMO' })}
+        compact={!showFullLogo}
       />
     </div>
   );
@@ -147,7 +152,7 @@ function UnifiedSidebar() {
       <>
         <div
           className={cn(
-            'fixed left-0 top-0 z-[110] flex h-full flex-col bg-surface-primary-alt',
+            'aimo-sidebar fixed left-0 top-0 z-[110] flex h-full flex-col bg-surface-primary-alt',
             expanded ? 'translate-x-0' : '-translate-x-full',
           )}
           style={{
@@ -156,7 +161,7 @@ function UnifiedSidebar() {
           }}
           inert={!expanded ? '' : undefined}
         >
-          {logo}
+          {logo(true)}
           <div className="flex min-h-0 flex-1">
             <SidebarChatProvider>
               <ActivePanelProvider>
@@ -191,7 +196,7 @@ function UnifiedSidebar() {
     <SidebarChatProvider>
       <ActivePanelProvider>
         <aside
-          className="relative flex h-full flex-shrink-0 flex-col overflow-hidden"
+          className="aimo-sidebar relative flex h-full flex-shrink-0 flex-col overflow-hidden"
           style={{
             width: expanded ? sidebarWidth : COLLAPSED_WIDTH,
             minWidth: expanded ? EXPANDED_MIN : COLLAPSED_WIDTH,
@@ -202,7 +207,7 @@ function UnifiedSidebar() {
           }}
           aria-label={localize('com_nav_control_panel')}
         >
-          {expanded && logo}
+          {logo(expanded)}
           <div className="relative min-h-0 flex-1">
             <Sidebar
               links={links}

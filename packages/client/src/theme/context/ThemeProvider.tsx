@@ -128,6 +128,10 @@ export function ThemeProvider({
   const [theme, setThemeState] = useState<string>(getInitialTheme);
   const [themeRGB, setThemeRGBState] = useState<IThemeRGB | undefined>(getInitialThemeColors);
   const [themeName, setThemeNameState] = useState<string | undefined>(getInitialThemeName);
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  const darkMode = theme === 'dark' || (theme === 'system' && systemDark);
 
   // Track if props have been initialized
   const initialized = useRef(false);
@@ -192,9 +196,8 @@ export function ThemeProvider({
   }, [initialTheme, propThemeRGB, propThemeName, setTheme, setThemeRGB, setThemeName]);
 
   // Apply class-based dark mode
-  const applyThemeMode = useCallback((currentTheme: string) => {
+  const applyThemeMode = useCallback((darkMode: boolean) => {
     const root = window.document.documentElement;
-    const darkMode = isDark(currentTheme);
 
     root.classList.remove(darkMode ? 'light' : 'dark');
     root.classList.add(darkMode ? 'dark' : 'light');
@@ -202,38 +205,33 @@ export function ThemeProvider({
 
   // Apply theme mode whenever theme changes
   useEffect(() => {
-    applyThemeMode(theme);
-  }, [theme, applyThemeMode]);
+    applyThemeMode(darkMode);
+  }, [darkMode, applyThemeMode]);
 
-  // Listen for system theme changes when theme is 'system'
+  // Track system theme changes for the system preference
   useEffect(() => {
-    if (theme !== 'system') return;
-
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = () => {
-      applyThemeMode('system');
+      setSystemDark(mediaQuery.matches);
     };
 
+    handleChange();
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [theme, applyThemeMode]);
+  }, []);
 
   // Apply dynamic color theme
   useEffect(() => {
-    if (themeRGB) {
-      applyTheme(themeRGB);
+    if (themeRGB && !darkMode) {
+      return applyTheme(themeRGB);
     }
-  }, [themeRGB]);
+  }, [darkMode, themeRGB]);
 
   // Reset theme function
   const resetTheme = useCallback(() => {
     setTheme('system');
     setThemeRGB(undefined);
     setThemeName(undefined);
-    // Remove any custom CSS variables
-    const root = document.documentElement;
-    const customProps = Array.from(root.style).filter((prop) => prop.startsWith('--'));
-    customProps.forEach((prop) => root.style.removeProperty(prop));
   }, [setTheme, setThemeRGB, setThemeName]);
 
   const value = useMemo(
