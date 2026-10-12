@@ -2,71 +2,71 @@ import { IThemeRGB } from '../types';
 
 /**
  * Default light theme
- * RGB values extracted from the existing CSS variables
+ * AIMO brand palette, kept in sync with client/src/style.css
  */
 export const defaultTheme: IThemeRGB = {
   // Text colors
-  'rgb-text-primary': '33 33 33', // #212121 (gray-800)
-  'rgb-text-secondary': '66 66 66', // #424242 (gray-600)
-  'rgb-text-secondary-alt': '89 89 89', // #595959 (gray-500)
-  'rgb-text-tertiary': '89 89 89', // #595959 (gray-500)
+  'rgb-text-primary': '1 0 1',
+  'rgb-text-secondary': '61 66 99',
+  'rgb-text-secondary-alt': '94 99 128',
+  'rgb-text-tertiary': '94 99 128',
   'rgb-text-warning': '245 158 11', // #f59e0b (amber-500)
 
   // Ring colors
-  'rgb-ring-primary': '89 89 89', // #595959 (gray-500)
+  'rgb-ring-primary': '1 21 233',
 
   // Header colors
-  'rgb-header-primary': '255 255 255', // #fff (white)
-  'rgb-header-hover': '247 247 248', // #f7f7f8 (gray-50)
-  'rgb-header-button-hover': '247 247 248', // #f7f7f8 (gray-50)
+  'rgb-header-primary': '254 254 255',
+  'rgb-header-hover': '245 248 255',
+  'rgb-header-button-hover': '245 248 255',
 
   // Surface colors
-  'rgb-surface-active': '236 236 236', // #ececec (gray-100)
-  'rgb-surface-active-alt': '227 227 227', // #e3e3e3 (gray-200)
-  'rgb-surface-hover': '227 227 227', // #e3e3e3 (gray-200)
-  'rgb-surface-hover-alt': '205 205 205', // #cdcdcd (gray-300)
-  'rgb-surface-primary': '255 255 255', // #fff (white)
-  'rgb-surface-primary-alt': '247 247 248', // #f7f7f8 (gray-50)
-  'rgb-surface-primary-contrast': '236 236 236', // #ececec (gray-100)
-  'rgb-surface-secondary': '247 247 248', // #f7f7f8 (gray-50)
-  'rgb-surface-secondary-alt': '227 227 227', // #e3e3e3 (gray-200)
-  'rgb-surface-tertiary': '236 236 236', // #ececec (gray-100)
-  'rgb-surface-tertiary-alt': '255 255 255', // #fff (white)
-  'rgb-surface-dialog': '255 255 255', // #fff (white)
-  'rgb-surface-submit': '4 120 87', // #047857 (green-700)
-  'rgb-surface-submit-hover': '6 95 70', // #065f46 (green-800)
+  'rgb-surface-active': '234 245 252',
+  'rgb-surface-active-alt': '214 235 250',
+  'rgb-surface-hover': '234 245 252',
+  'rgb-surface-hover-alt': '214 235 250',
+  'rgb-surface-primary': '254 254 255',
+  'rgb-surface-primary-alt': '245 248 255',
+  'rgb-surface-primary-contrast': '234 245 252',
+  'rgb-surface-secondary': '245 248 255',
+  'rgb-surface-secondary-alt': '217 225 238',
+  'rgb-surface-tertiary': '234 245 252',
+  'rgb-surface-tertiary-alt': '254 254 255',
+  'rgb-surface-dialog': '254 254 255',
+  'rgb-surface-submit': '1 21 233',
+  'rgb-surface-submit-hover': '25 25 112',
   'rgb-surface-destructive': '185 28 28', // #b91c1c (red-700)
   'rgb-surface-destructive-hover': '153 27 27', // #991b1b (red-800)
-  'rgb-surface-chat': '255 255 255', // #fff (white)
+  'rgb-surface-chat': '254 254 255',
 
   // Border colors
-  'rgb-border-light': '227 227 227', // #e3e3e3 (gray-200)
-  'rgb-border-medium': '205 205 205', // #cdcdcd (gray-300)
-  'rgb-border-medium-alt': '205 205 205', // #cdcdcd (gray-300)
-  'rgb-border-heavy': '153 150 150', // #999696 (gray-400)
-  'rgb-border-xheavy': '89 89 89', // #595959 (gray-500)
+  'rgb-border-light': '217 225 238',
+  'rgb-border-medium': '192 192 192',
+  'rgb-border-medium-alt': '192 192 192',
+  'rgb-border-heavy': '144 149 170',
+  'rgb-border-xheavy': '94 99 128',
 
   // Brand colors
-  'rgb-brand-purple': '171 104 255', // #ab68ff
+  'rgb-brand-purple': '1 21 233',
 
   // Presentation
-  'rgb-presentation': '255 255 255', // #fff (white)
+  'rgb-presentation': '254 254 255',
 
   // Utility colors (mapped to existing colors for backwards compatibility)
-  'rgb-background': '255 255 255', // Same as surface-primary
-  'rgb-foreground': '17 17 17', // Same as text-primary
-  'rgb-primary': '235 235 235', // Same as surface-active
-  'rgb-primary-foreground': '0 0 0', // Same as surface-primary-contrast
-  'rgb-secondary': '247 247 248', // Same as surface-secondary
-  'rgb-secondary-foreground': '66 66 66', // Same as text-secondary
-  'rgb-muted': '250 250 250', // Same as surface-tertiary
-  'rgb-muted-foreground': '120 120 120', // Same as text-tertiary
-  'rgb-accent': '245 245 245', // Same as surface-active-alt
-  'rgb-accent-foreground': '17 17 17', // Same as text-primary
-  'rgb-destructive-foreground': '17 17 17', // Same as text-primary
-  'rgb-border': '215 215 215', // Same as border-medium
-  'rgb-input': '230 230 230', // Same as border-light
-  'rgb-ring': '180 180 180', // Same as ring-primary
-  'rgb-card': '247 247 248', // Same as surface-secondary
-  'rgb-card-foreground': '17 17 17', // Same as text-primary
+  'rgb-background': '254 254 255',
+  'rgb-foreground': '1 0 1',
+  'rgb-primary': '1 21 233',
+  'rgb-primary-foreground': '254 254 255',
+  'rgb-secondary': '245 248 255',
+  'rgb-secondary-foreground': '1 0 1',
+  'rgb-muted': '234 245 252',
+  'rgb-muted-foreground': '94 99 128',
+  'rgb-accent': '234 245 252',
+  'rgb-accent-foreground': '1 0 1',
+  'rgb-destructive-foreground': '254 254 255',
+  'rgb-border': '192 192 192',
+  'rgb-input': '192 192 192',
+  'rgb-ring': '1 21 233',
+  'rgb-card': '254 254 255',
+  'rgb-card-foreground': '1 0 1',
 };

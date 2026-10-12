@@ -1,5 +1,21 @@
 // const { fontFamily } = require('tailwindcss/defaultTheme');
 
+// Legacy utility classes use several hue names for UI accents.
+// Keep them on one brand scale while preserving red and amber status colors.
+const brandScale = {
+  50: '#f5f8ff',
+  100: '#eaf5fc',
+  200: '#d9eefa',
+  300: '#b8e4f8',
+  400: '#89cff0',
+  500: '#0115e9',
+  600: '#0115c4',
+  700: '#191970',
+  800: '#14145b',
+  900: '#10133c',
+  950: '#010001',
+};
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -11,7 +27,7 @@ module.exports = {
   darkMode: ['class'],
   theme: {
     fontFamily: {
-      sans: ['Inter', 'sans-serif'],
+      sans: ['Inter', 'Arial', 'sans-serif'],
       mono: ['Roboto Mono', 'monospace'],
     },
     // fontFamily: {
@@ -64,6 +80,13 @@ module.exports = {
         'shortcut-shake': 'shortcut-shake 0.25s ease-in-out',
       },
       colors: {
+        blue: brandScale,
+        cyan: brandScale,
+        indigo: brandScale,
+        pink: brandScale,
+        purple: brandScale,
+        sky: brandScale,
+        violet: brandScale,
         gray: {
           20: '#f0f4fb',
           50: '#f5f8ff',

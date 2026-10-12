@@ -7,12 +7,12 @@ import {
   ChevronRight,
   CircleHelp,
   FileText,
-  Home,
   Keyboard,
   LifeBuoy,
   LogOut,
   MessagesSquare,
   Scale,
+  Shield,
   ShieldCheck,
 } from 'lucide-react';
 import { ArchivedChatsModal } from '~/components/Nav/SettingsTabs/General/ArchivedChatsModal';
@@ -178,23 +178,28 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
           <GearIcon className="icon-md" aria-hidden="true" />
           {localize('com_nav_settings')}
         </Menu.MenuItem>
-        {startupConfig?.gatewayUrl && (
-          <Menu.MenuItem
-            onClick={() => window.location.assign(startupConfig.gatewayUrl!)}
-            className="select-item text-sm"
-          >
-            <Home className="icon-md" aria-hidden="true" />
-            {localize('com_nav_gateway')}
-          </Menu.MenuItem>
-        )}
-        {startupConfig?.libreChatAdminUrl && (
-          <Menu.MenuItem
-            onClick={() => window.location.assign(startupConfig.libreChatAdminUrl!)}
-            className="select-item text-sm"
-          >
-            <MessagesSquare className="icon-md" aria-hidden="true" />
-            {localize('com_nav_librechat_admin')}
-          </Menu.MenuItem>
+        {(startupConfig?.governanceAdminUrl || startupConfig?.libreChatAdminUrl) && (
+          <>
+            <DropdownMenuSeparator />
+            {startupConfig.governanceAdminUrl && (
+              <Menu.MenuItem
+                onClick={() => window.location.assign(startupConfig.governanceAdminUrl!)}
+                className="select-item text-sm"
+              >
+                <Shield className="icon-md" aria-hidden="true" />
+                {localize('com_nav_governance_admin')}
+              </Menu.MenuItem>
+            )}
+            {startupConfig.libreChatAdminUrl && (
+              <Menu.MenuItem
+                onClick={() => window.location.assign(startupConfig.libreChatAdminUrl!)}
+                className="select-item text-sm"
+              >
+                <MessagesSquare className="icon-md" aria-hidden="true" />
+                {localize('com_nav_librechat_admin')}
+              </Menu.MenuItem>
+            )}
+          </>
         )}
         <DropdownMenuSeparator />
         <Menu.MenuItem onClick={() => logout()} className="select-item text-sm">

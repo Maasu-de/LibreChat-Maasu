@@ -1362,6 +1362,7 @@ export type TStartupConfig = {
   appTitle: string;
   governancePilotEnabled?: boolean;
   gatewayUrl?: string;
+  governanceAdminUrl?: string;
   libreChatAdminUrl?: string;
   socialLogins?: string[];
   interface?: TInterfaceConfig;

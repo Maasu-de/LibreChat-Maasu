@@ -137,9 +137,9 @@ const Dropdown: React.FC<DropdownProps> = ({
         store={selectProps}
         disabled={disabled}
         className={cn(
-          'focus:ring-offset-ring-offset relative inline-flex items-center justify-between rounded-xl border border-input bg-background px-3 py-2 text-sm text-text-primary transition-all duration-200 ease-in-out hover:bg-accent hover:text-accent-foreground focus:ring-ring-primary',
+          'relative inline-flex min-h-[42px] items-center justify-between rounded-lg border border-border-medium bg-surface-primary px-3 py-2 text-sm font-semibold text-text-primary transition-colors duration-150 hover:border-ring-primary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary',
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-text-primary',
-          iconOnly ? 'size-10' : 'w-fit gap-2',
+          iconOnly ? 'size-[42px]' : 'w-fit gap-2',
           className,
         )}
         data-testid={testId}

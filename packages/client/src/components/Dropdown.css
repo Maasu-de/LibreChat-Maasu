@@ -4,7 +4,7 @@
   flex-direction: column;
   overflow: auto;
   overscroll-behavior: contain;
-  border-radius: 1rem;
+  border-radius: 8px;
   border-width: 1px;
   border-style: solid;
   border-color: var(--border-light);
@@ -58,7 +58,11 @@
   align-items: center;
   gap: 0.5rem;
   border-radius: 0.5rem;
-  padding: 0.5rem;
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.5;
   outline: none !important;
 }
 

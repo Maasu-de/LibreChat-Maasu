@@ -1,7 +1,9 @@
 import type { CSSProperties } from 'react';
+import logoUrl from '~/assets/brand/logo.svg?url';
+import compactLogoUrl from '~/assets/brand/logo_small.svg?url';
 
-const logoMask = 'url(assets/logo.svg?v=4)';
-const compactLogoMask = 'url(assets/logo_small.svg?v=4)';
+const logoMask = `url("${logoUrl}")`;
+const compactLogoMask = `url("${compactLogoUrl}")`;
 
 const containerStyle: CSSProperties = {
   display: 'flex',
