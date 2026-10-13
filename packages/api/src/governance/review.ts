@@ -198,12 +198,15 @@ const MESSAGE_CONTENT_LOCATION = /^\/messages\/(\d+)\/content$/;
 
 /**
  * Findings inside files attached to user messages, counted per file, category and action.
- * Findings in the submitted text are left to `findingsInSubmittedText`.
+ * Findings in the submitted text are left to `findingsInSubmittedText`. `fileIds` lists the
+ * files of the submitted message's attached-document block in order; a finding in one of them
+ * names its file, unless the block's files cannot be matched to them one to one.
  */
 export function findingsInFiles(
   messages: GovernanceChatMessage[],
   findings: GovernanceFinding[],
   submitted: SubmittedText,
+  fileIds: string[] = [],
 ): GovernanceFileFinding[] {
   const segmentsByMessage = new Map<number, FileContextSegment[]>();
   const counted = new Map<string, GovernanceFileFinding>();
@@ -226,18 +229,26 @@ export function findingsInFiles(
       segments = findFileContextSegments(content);
       segmentsByMessage.set(messageIndex, segments);
     }
-    const file = segments.find(({ start, end }) => finding.start >= start && finding.start < end);
-    if (!file) {
+    const fileIndex = segments.findIndex(
+      ({ start, end }) => finding.start >= start && finding.start < end,
+    );
+    if (fileIndex === -1) {
       continue;
     }
-    const key = JSON.stringify([file.filename, finding.category, finding.action]);
+    const { filename } = segments[fileIndex];
+    const fileId =
+      messageIndex === submitted.messageIndex && segments.length === fileIds.length
+        ? fileIds[fileIndex]
+        : undefined;
+    const key = JSON.stringify([fileId ?? null, filename, finding.category, finding.action]);
     const entry = counted.get(key);
     if (entry) {
       entry.count += 1;
       continue;
     }
     counted.set(key, {
-      filename: file.filename,
+      filename,
+      ...(fileId !== undefined ? { fileId } : {}),
       category: finding.category,
       action: finding.action,
       count: 1,

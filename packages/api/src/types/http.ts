@@ -36,6 +36,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpEligible?: boolean;
   /** Server-resolved LibreChat group IDs used by the governed completion. */
   governanceGroupIds?: string[];
+  /** IDs of the files in the submitted message's attached-document block, in order. */
+  governanceDlpFileIds?: string[];
   /** A DLP review of this request that the user has to decide on before the model is called. */
   governanceDlpReview?: GovernanceDlpReview;
   /** Set when the approved review's last send failed and put it back, so it can be sent again. */

@@ -392,9 +392,10 @@ export type TPendingDlpReview = {
   files?: t.TMessage['files'];
   /**
    * `sending` from the user's approval until the approved turn starts, while the dialog is
-   * hidden; `failed` once that send failed and the review can be sent again.
+   * hidden; `failed` once that send failed and the review can be sent again; `rejected` once it
+   * failed for good, when the review is closed like a cancel.
    */
-  status?: 'sending' | 'failed';
+  status?: 'sending' | 'failed' | 'rejected';
 };
 
 /**

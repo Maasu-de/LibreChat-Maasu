@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { v4 } from 'uuid';
 import { cloneDeep } from 'lodash';
 import { useNavigate } from 'react-router-dom';
@@ -32,14 +32,15 @@ import type { TAskFunction, ExtendedFile } from '~/common';
 import {
   logger,
   hasStreamStartFailed,
-  createDualMessageContent,
+  settleDlpReviewFiles,
   getRouteChatProjectId,
+  createDualMessageContent,
 } from '~/utils';
 import useFocusRegeneratedResponse from '~/hooks/Chat/useFocusRegeneratedResponse';
+import { startupConfigKey, useDeleteFilesMutation } from '~/data-provider';
 import useSetFilesToDelete from '~/hooks/Files/useSetFilesToDelete';
 import useGetSender from '~/hooks/Conversations/useGetSender';
 import store, { useGetEphemeralAgent } from '~/store';
-import { startupConfigKey } from '~/data-provider';
 import useUserKey from '~/hooks/Input/useUserKey';
 import { useAuthContext, useLocalize } from '~/hooks';
 
@@ -217,8 +218,11 @@ export default function useChatFunctions({
   const { user } = useAuthContext();
   const queryClient = useQueryClient();
   const [dlpReview, setDlpReview] = useRecoilState(store.dlpReviewByIndex(index));
+  const setSubmittedFiles = useSetRecoilState(store.submittedFilesByIndex(index));
   /** The review the user has to decide on, hidden while its approved turn is on its way. */
-  const pendingDlpReview = dlpReview?.status === 'sending' ? null : dlpReview;
+  const pendingDlpReview =
+    dlpReview?.status === 'sending' || dlpReview?.status === 'rejected' ? null : dlpReview;
+  const { mutate: deleteFiles } = useDeleteFilesMutation();
   const setFilesToDelete = useSetFilesToDelete();
   const getEphemeralAgent = useGetEphemeralAgent();
   const isTemporary = useRecoilValue(store.isTemporary);
@@ -515,8 +519,11 @@ export default function useChatFunctions({
         height: file.height,
         width: file.width,
       }));
+      setSubmittedFiles(new Map(files));
       setFiles(new Map());
       setFilesToDelete({});
+    } else {
+      setSubmittedFiles(null);
     }
 
     const responseMessageId =
@@ -657,34 +664,53 @@ export default function useChatFunctions({
   };
 
   /**
-   * Drops the review, unless it belongs to `keepForConversation`. Its submit drained the `$`
-   * queue, so its skills go back to the front of that queue for the edited message; a review
-   * on its way already sent them.
+   * Drops the review, unless it belongs to `keepForConversation`. A review on its way already
+   * sent its skills and files. Otherwise its submit drained the `$` queue, so its skills go back
+   * to the front of that queue for the edited message. Its uploads with findings are deleted, and
+   * its other files go back to the composer with `restore`, or else its uploads are deleted too.
    */
   const dropDlpReview = useRecoilCallback(
     ({ snapshot, set }) =>
-      (keepForConversation?: string) => {
+      (restore: boolean, keepForConversation?: string) => {
         const review = snapshot.getLoadable(store.dlpReviewByIndex(index)).valueMaybe();
         const conversationKey = dlpConversationKey(review?.conversationId);
         if (!review || conversationKey === keepForConversation) {
           return;
         }
         set(store.dlpReviewByIndex(index), null);
-        const skills = review.status === 'sending' ? [] : (review.manualSkills ?? []);
+        if (review.status === 'sending') {
+          return;
+        }
+
+        const skills = review.manualSkills ?? [];
         if (skills.length > 0) {
           set(store.pendingManualSkillsByConvoId(conversationKey), (queued) => [
             ...skills,
             ...queued.filter((skill) => !skills.includes(skill)),
           ]);
         }
+
+        const submitted = snapshot.getLoadable(store.submittedFilesByIndex(index)).valueMaybe();
+        set(store.submittedFilesByIndex(index), null);
+        const { restored, deleted } = settleDlpReviewFiles(review, submitted, restore);
+        if (restored.size > 0) {
+          set(store.filesByIndex(index), (current) => new Map([...restored, ...current]));
+        }
+        if (deleted.length === 0) {
+          return;
+        }
+        deleteFiles({ files: deleted });
+        if (restore) {
+          showToast({ message: localize('com_ui_dlp_files_removed'), status: 'warning' });
+        }
       },
-    [index],
+    [index, deleteFiles, showToast, localize],
   );
 
-  const cancelDlpIntervention = () => dropDlpReview();
+  const cancelDlpIntervention = useCallback(() => dropDlpReview(true), [dropDlpReview]);
 
   useEffect(() => {
-    dropDlpReview(dlpConversationKey(immutableConversation?.conversationId));
+    dropDlpReview(false, dlpConversationKey(immutableConversation?.conversationId));
   }, [immutableConversation?.conversationId, dropDlpReview]);
 
   /**

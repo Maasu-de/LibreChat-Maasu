@@ -5,6 +5,7 @@ import type {
   GovernanceDecision,
   GovernanceDlpReview,
 } from 'librechat-data-provider';
+import type { IMongoFile } from '@librechat/data-schemas';
 import type { GatewayReview, ReviewStore } from './review';
 import type { ServerRequest } from '~/types/http';
 import {
@@ -17,6 +18,7 @@ import {
   findingsInFiles,
   findingsInSubmittedText,
 } from './review';
+import { getFileContextFiles } from '~/files/context';
 import { isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
 
@@ -68,6 +70,8 @@ export interface GovernanceFetchParams {
   text?: string;
   /** Review the user approved; its stored request is sent instead of the rebuilt one. */
   reviewId?: string;
+  /** IDs of the files in the submitted message's attached-document block, in order. */
+  fileIds?: () => string[];
   /** Receives a review the user has to decide on. The model call then ends without a completion. */
   onReview?: (review: GovernanceDlpReview) => void;
   /** Called when the gateway starts a completion, which means the request passed DLP. */
@@ -331,6 +335,7 @@ interface ApprovalParams {
   groupIds: string[];
   text: string;
   reviewId?: string;
+  fileIds: () => string[];
   onReview: (review: GovernanceDlpReview) => void;
   onApprovalKept?: (kept: boolean) => void;
   fetch: GovernanceFetch;
@@ -368,7 +373,12 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   }
 
   const findings = findingsInSubmittedText(review.findings ?? [], submitted);
-  const fileFindings = findingsInFiles(params.request.messages, review.findings ?? [], submitted);
+  const fileFindings = findingsInFiles(
+    params.request.messages,
+    review.findings ?? [],
+    submitted,
+    params.fileIds(),
+  );
   if (decision === 'BLOCK') {
     params.onReview(toClientReview(review, decision, findings, undefined, fileFindings));
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
@@ -476,6 +486,7 @@ export function createGovernanceDlpFetch({
   fetch = globalThis.fetch,
   text = '',
   reviewId,
+  fileIds = () => [],
   onReview,
   onSent,
   onApprovalKept,
@@ -514,6 +525,7 @@ export function createGovernanceDlpFetch({
           groupIds,
           text,
           reviewId,
+          fileIds,
           onReview,
           onApprovalKept,
           fetch,
@@ -573,6 +585,13 @@ export function getRetryableDlpReviewId(req?: ServerRequest): string | undefined
   return typeof reviewId === 'string' && reviewId !== '' ? reviewId : undefined;
 }
 
+/** Records which attachments fill the submitted message's attached-document block, in order. */
+export function setDlpFileContext(req: ServerRequest | undefined, attachments: IMongoFile[]): void {
+  if (req) {
+    req.governanceDlpFileIds = getFileContextFiles(attachments).map((file) => file.file_id);
+  }
+}
+
 /** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
 export function onDlpSent(req: ServerRequest | undefined, callback: () => void): void {
   if (!req || !isDlpUnsent(req)) {
@@ -610,6 +629,7 @@ export function createRequestDlpFetch(
     fetch,
     text: typeof text === 'string' ? text : '',
     reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
+    fileIds: () => req.governanceDlpFileIds ?? [],
     onReview: (review) => {
       req.governanceDlpReview = review;
     },

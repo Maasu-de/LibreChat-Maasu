@@ -1,23 +1,25 @@
 import React, { useState } from 'react';
-import { RecoilRoot, useSetRecoilState } from 'recoil';
+import { RecoilRoot, useRecoilState, useSetRecoilState } from 'recoil';
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   Constants,
   QueryKeys,
+  FileSources,
   EModelEndpoint,
   encodeEphemeralAgentId,
 } from 'librechat-data-provider';
 import type { TMessage, TSubmission, TConversation } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
-import type { TPendingDlpReview } from '~/common';
+import type { ExtendedFile, TPendingDlpReview } from '~/common';
 import DlpInterventionDialog from '~/components/Chat/Input/DlpInterventionDialog';
 import useChatFunctions from '../useChatFunctions';
 import { ephemeralAgentByConvoId } from '~/store/agents';
 import store from '~/store';
 
 const mockShowToast = jest.fn();
+const mockDeleteFiles = jest.fn();
 
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: { id: 'user-1' } }),
@@ -31,6 +33,7 @@ jest.mock('@librechat/client', () => ({
 
 jest.mock('~/data-provider', () => ({
   startupConfigKey: (loggedIn: boolean) => ['startupConfig', loggedIn],
+  useDeleteFilesMutation: () => ({ mutate: mockDeleteFiles }),
 }));
 
 jest.mock('~/hooks/Files/useSetFilesToDelete', () => () => jest.fn());
@@ -80,6 +83,53 @@ const maskReview = (conversationId: string | null): TPendingDlpReview => ({
   },
 });
 
+const upload = (file_id: string, filename: string): ExtendedFile => ({
+  file_id,
+  temp_file_id: `temp-${file_id}`,
+  filename,
+  filepath: `/uploads/${file_id}`,
+  source: FileSources.local,
+  type: 'text/plain',
+  size: 10,
+  progress: 1,
+});
+const flaggedUpload = upload('flagged', 'iban.txt');
+const cleanUpload = upload('clean', 'notes.txt');
+const libraryFile: ExtendedFile = {
+  file_id: 'library',
+  filename: 'contract.txt',
+  filepath: '/uploads/library',
+  source: FileSources.local,
+  type: 'text/plain',
+  size: 10,
+  progress: 1,
+  attached: true,
+};
+const composerFiles = [flaggedUpload, cleanUpload, libraryFile];
+
+/** A review of a message sent with an upload and a library file that have findings, and one without. */
+const fileReview = (conversationId: string | null): TPendingDlpReview => {
+  const review = maskReview(conversationId);
+  return {
+    ...review,
+    files: composerFiles.map(({ file_id, filepath }) => ({ file_id, filepath })),
+    result: {
+      ...review.result,
+      fileFindings: [
+        { filename: 'iban.txt', fileId: 'flagged', category: 'IBAN', action: 'MASK', count: 1 },
+        { filename: 'contract.txt', fileId: 'library', category: 'IBAN', action: 'MASK', count: 1 },
+      ],
+    },
+  };
+};
+
+const flaggedUploadDeletion = {
+  file_id: 'flagged',
+  filepath: '/uploads/flagged',
+  source: FileSources.local,
+  embedded: false,
+};
+
 const blockReview: TPendingDlpReview = {
   text: 'My IBAN is DE89370400440532013000',
   conversationId: savedConversation.conversationId,
@@ -99,7 +149,6 @@ const blockReview: TPendingDlpReview = {
 };
 
 const setSubmission = jest.fn<void, Parameters<SetterOrUpdater<TSubmission | null>>>();
-const setFiles = jest.fn();
 const setMessages = jest.fn<void, [TMessage[]]>();
 
 /** Stands in for the stream handler, which stores the review a turn ended with. */
@@ -135,11 +184,13 @@ function Chat({
   review: TPendingDlpReview;
 }) {
   const [text, setText] = useState('');
+  const [files, setFiles] = useRecoilState(store.filesByIndex(0));
   const { ask, pendingDlpReview, cancelDlpIntervention, confirmDlpIntervention } = useChatFunctions(
     {
       conversation,
       getMessages: () => [],
       setMessages,
+      files,
       setFiles,
       setSubmission,
       isSubmitting: false,
@@ -150,7 +201,19 @@ function Chat({
   return (
     <>
       <input aria-label="Prompt" value={text} onChange={(event) => setText(event.target.value)} />
+      <button
+        aria-label="Attach files"
+        onClick={() =>
+          setFiles(new Map(composerFiles.map((file) => [file.temp_file_id ?? file.file_id, file])))
+        }
+      />
+      <ul aria-label="Composer files">
+        {Array.from(files.values(), (file) => (
+          <li key={file.file_id}>{file.file_id}</li>
+        ))}
+      </ul>
       <button aria-label="Send" onClick={() => ask({ text })} />
+      <button aria-label="Close review" onClick={cancelDlpIntervention} />
       <ReviewFromStream review={review} />
       <FailedSendFromStream />
       <QueueSkill
@@ -209,7 +272,22 @@ beforeEach(() => {
   setSubmission.mockClear();
   setMessages.mockClear();
   mockShowToast.mockClear();
+  mockDeleteFiles.mockClear();
 });
+
+/** Sends a message with the composer files, which the stream then holds for `review`. */
+function sendWithFilesForReview() {
+  fireEvent.click(screen.getByRole('button', { name: 'Attach files' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: email } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+}
+
+const composerFileIds = () =>
+  Array.from(
+    screen.getByRole('list', { name: 'Composer files', hidden: true }).querySelectorAll('li'),
+    (item) => item.textContent,
+  );
 
 it('sends a message at once, without a separate DLP check', () => {
   renderChat(savedConversation, maskReview(savedConversation.conversationId));
@@ -423,4 +501,65 @@ it('drops a review once the chat moves to another conversation', () => {
   );
 
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('deletes the uploads with findings of a cancelled review and puts its other files back', () => {
+  renderChat(savedConversation, fileReview(savedConversation.conversationId));
+
+  sendWithFilesForReview();
+  expect(composerFileIds()).toEqual([]);
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
+
+  expect(mockDeleteFiles).toHaveBeenCalledTimes(1);
+  expect(mockDeleteFiles).toHaveBeenCalledWith({ files: [flaggedUploadDeletion] });
+  expect(composerFileIds()).toEqual(['clean']);
+  expect(mockShowToast).toHaveBeenCalledWith({
+    message: 'com_ui_dlp_files_removed',
+    status: 'warning',
+  });
+});
+
+it("deletes all of an unsent review's uploads, but no library file, when the chat moves away", () => {
+  const review = fileReview(savedConversation.conversationId);
+  const { rerender } = renderChat(savedConversation, review);
+
+  sendWithFilesForReview();
+  rerender(
+    <Chat conversation={{ ...savedConversation, conversationId: 'other' }} review={review} />,
+  );
+
+  expect(mockDeleteFiles).toHaveBeenCalledWith({
+    files: [
+      flaggedUploadDeletion,
+      { file_id: 'clean', filepath: '/uploads/clean', source: FileSources.local, embedded: false },
+    ],
+  });
+  expect(composerFileIds()).toEqual([]);
+  expect(mockShowToast).not.toHaveBeenCalled();
+});
+
+it('keeps the files of an approved review, which were sent with it', () => {
+  const review = fileReview(savedConversation.conversationId);
+  const { rerender } = renderChat(savedConversation, review);
+
+  sendWithFilesForReview();
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+  rerender(
+    <Chat conversation={{ ...savedConversation, conversationId: 'other' }} review={review} />,
+  );
+
+  expect(lastSubmission().userMessage.files).toEqual(review.files);
+  expect(mockDeleteFiles).not.toHaveBeenCalled();
+});
+
+it('hides a review whose approved send failed for good, which is then closed like a cancel', () => {
+  const review = fileReview(savedConversation.conversationId);
+  renderChat(savedConversation, { ...review, status: 'rejected' });
+
+  sendWithFilesForReview();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Close review' }));
+
+  expect(mockDeleteFiles).toHaveBeenCalledWith({ files: [flaggedUploadDeletion] });
+  expect(composerFileIds()).toEqual(['clean']);
 });

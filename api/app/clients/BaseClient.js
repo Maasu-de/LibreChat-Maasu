@@ -8,6 +8,7 @@ const {
   checkBalance,
   getBalanceConfig,
   buildMessageFiles,
+  setDlpFileContext,
   sanitizeFileForTransmit,
   extractFileContext,
   getReferencedQuotes,
@@ -1335,6 +1336,7 @@ class BaseClient {
 
     if (fileContext) {
       message.fileContext = fileContext;
+      setDlpFileContext(this.options?.req, attachments);
     }
   }
 

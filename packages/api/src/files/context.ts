@@ -54,6 +54,13 @@ export function findFileContextSegments(content: string): FileContextSegment[] {
   return segments;
 }
 
+/** The attachments whose text `extractFileContext` adds to a message, in the order it adds them. */
+export function getFileContextFiles(attachments: IMongoFile[]): IMongoFile[] {
+  return attachments.filter(
+    (file) => (file.source ?? FileSources.local) === FileSources.text && Boolean(file.text),
+  );
+}
+
 /**
  * Extracts text context from attachments and returns formatted text.
  * This handles text that was already extracted from files (OCR, transcriptions, document text, etc.)
@@ -86,23 +93,20 @@ export async function extractFileContext({
 
   let resultText = '';
 
-  for (const file of attachments) {
-    const source = file.source ?? FileSources.local;
-    if (source === FileSources.text && file.text) {
-      const { text: limitedText, wasTruncated } = await processTextWithTokenLimit({
-        text: file.text,
-        tokenLimit: fileTokenLimit,
-        tokenCountFn,
-      });
+  for (const file of getFileContextFiles(attachments)) {
+    const { text: limitedText, wasTruncated } = await processTextWithTokenLimit({
+      text: file.text ?? '',
+      tokenLimit: fileTokenLimit,
+      tokenCountFn,
+    });
 
-      if (wasTruncated) {
-        logger.debug(
-          `[extractFileContext] Text content truncated for file: ${file.filename} due to token limits`,
-        );
-      }
-
-      resultText += `${!resultText ? FILE_CONTEXT_START : FILE_SEPARATOR}${FILE_HEADER_START}${file.filename}${FILE_HEADER_END}${limitedText}\n`;
+    if (wasTruncated) {
+      logger.debug(
+        `[extractFileContext] Text content truncated for file: ${file.filename} due to token limits`,
+      );
     }
+
+    resultText += `${!resultText ? FILE_CONTEXT_START : FILE_SEPARATOR}${FILE_HEADER_START}${file.filename}${FILE_HEADER_END}${limitedText}\n`;
   }
 
   if (resultText) {

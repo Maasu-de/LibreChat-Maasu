@@ -1672,21 +1672,32 @@ describe('useResumableSSE - approved DLP review on its way', () => {
 
     await emitFinal(sse, { dlpRetryReviewId: 'review-1' });
 
+    const otherReview = {
+      ...sendingReview,
+      result: { ...sendingReview.result, reviewId: 'other' },
+    };
     expect(settle(sendingReview)).toEqual({ ...sendingReview, status: 'failed' });
-    expect(
-      settle({ ...sendingReview, result: { ...sendingReview.result, reviewId: 'other' } }),
-    ).toBeNull();
+    expect(settle(otherReview)).toEqual({ ...otherReview, status: 'rejected' });
     expect(settle(openReview)).toBe(openReview);
     unmount();
   });
 
-  it('drops the review when its turn ends without it, as after a stop', async () => {
+  it('rejects the review when its turn ends unsent, as after a stop', async () => {
     const { sse, unmount } = await openStream();
 
     await emitFinal(sse);
 
-    expect(settle(sendingReview)).toBeNull();
+    expect(settle(sendingReview)).toEqual({ ...sendingReview, status: 'rejected' });
     expect(settle(openReview)).toBe(openReview);
+    unmount();
+  });
+
+  it('drops the review when its turn ends after it was sent', async () => {
+    const { sse, unmount } = await openStream();
+
+    await emitFinal(sse, { aborted: false, earlyAbort: false });
+
+    expect(settle(sendingReview)).toBeNull();
     unmount();
   });
 
@@ -1706,7 +1717,7 @@ describe('useResumableSSE - approved DLP review on its way', () => {
     unmount();
   });
 
-  it('drops the review when its turn fails', async () => {
+  it('rejects the review when its turn fails', async () => {
     const { sse, unmount } = await openStream();
 
     await act(async () => {
@@ -1714,7 +1725,7 @@ describe('useResumableSSE - approved DLP review on its way', () => {
     });
 
     expect(mockErrorHandler).toHaveBeenCalledTimes(1);
-    expect(settle(sendingReview)).toBeNull();
+    expect(settle(sendingReview)).toEqual({ ...sendingReview, status: 'rejected' });
     unmount();
   });
 });

@@ -17,6 +17,8 @@ export interface GovernanceMaskedContent {
 /** Findings in an attached file, counted by category and action. The file's text is not sent. */
 export interface GovernanceFileFinding {
   filename: string;
+  /** Set for a file attached to the submitted message, which the user can still withdraw. */
+  fileId?: string;
   category: string;
   action: GovernanceDecision;
   count: number;

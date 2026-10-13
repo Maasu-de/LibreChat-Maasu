@@ -195,15 +195,19 @@ const isOAuthStepEvent = (data: unknown) => {
 
 /**
  * Settles a review whose approved turn was on its way, once that turn starts or ends: reopened
- * when the server kept it to be sent again, otherwise dropped. Other reviews are left as they are.
+ * when the server kept it to be sent again, rejected when the turn ended `unsent`, otherwise
+ * dropped. Other reviews are left as they are.
  */
 const settleSentDlpReview =
-  (retryReviewId?: string) =>
+  ({ retryReviewId, unsent = false }: { retryReviewId?: string; unsent?: boolean } = {}) =>
   (review: TPendingDlpReview | null): TPendingDlpReview | null => {
     if (review?.status !== 'sending') {
       return review;
     }
-    return review.result.reviewId === retryReviewId ? { ...review, status: 'failed' } : null;
+    if (review.result.reviewId === retryReviewId) {
+      return { ...review, status: 'failed' };
+    }
+    return unsent ? { ...review, status: 'rejected' } : null;
   };
 
 const replaceNewConversationUrl = (conversationId: string) => {
@@ -486,10 +490,10 @@ export default function useResumableSSE(
     setShowStopButton,
   });
 
-  /** A failed turn also ends an approved review on its way, which is then dropped. */
+  /** A failed turn also ends an approved review on its way, which then counts as not sent. */
   const errorHandler = useCallback(
     (params: Parameters<typeof showError>[0]) => {
-      setDlpReview(settleSentDlpReview());
+      setDlpReview(settleSentDlpReview({ unsent: true }));
       showError(params);
     },
     [setDlpReview, showError],
@@ -575,7 +579,12 @@ export default function useResumableSSE(
                   files: userMessage.files,
                 });
               } else {
-                setDlpReview(settleSentDlpReview(data.dlpRetryReviewId));
+                setDlpReview(
+                  settleSentDlpReview({
+                    retryReviewId: data.dlpRetryReviewId,
+                    unsent: data.earlyAbort === true,
+                  }),
+                );
               }
               finalizeUsage(data, { ...currentSubmission, userMessage });
             } catch (error) {

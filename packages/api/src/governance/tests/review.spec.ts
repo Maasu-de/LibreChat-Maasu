@@ -76,11 +76,13 @@ function setup({
   responses,
   text = SUBMITTED,
   reviewId,
+  fileIds,
   reviews = memoryStore(),
 }: {
   responses: Response[];
   text?: string;
   reviewId?: string;
+  fileIds?: string[];
   reviews?: ReturnType<typeof memoryStore>;
 }) {
   const upstream = jest.fn(
@@ -100,6 +102,7 @@ function setup({
     fetch: upstream,
     text,
     reviewId,
+    fileIds: fileIds ? () => fileIds : undefined,
     onReview,
     onSent,
     onApprovalKept,
@@ -191,6 +194,43 @@ describe('submitted text helpers', () => {
     expect(findingsInFiles(messages, findings, submitted)).toEqual([
       { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 3 },
       { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'MASK', count: 1 },
+    ]);
+  });
+
+  it("names the submitted message's files by ID, also when two share a filename", () => {
+    const twins = ATTACHED.replace('"notes.txt"', '"report.pdf"');
+    const messages = [
+      { role: 'user', content: ATTACHED },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: `${twins}\n${SUBMITTED}` },
+    ];
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/2/content', twins.indexOf(IBAN)),
+      emailFinding('/messages/2/content', twins.indexOf('max@')),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, ['file-1', 'file-2'])).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', fileId: 'file-1', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-2',
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        count: 1,
+      },
+    ]);
+  });
+
+  it('leaves files unnamed when the block does not match the attached files', () => {
+    const messages = [{ role: 'user', content: WITH_FILES }];
+    const findings = [ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN))];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, ['file-1'])).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
     ]);
   });
 
@@ -365,6 +405,7 @@ describe('DLP approval flow', () => {
       { role: 'user', content: WITH_FILES.replaceAll(IBAN, '[IBAN]') },
     ];
     const { onReview, reviews, send } = setup({
+      fileIds: ['file-report', 'file-notes'],
       responses: [
         reviewResponse({
           review_id: 'review-files',
@@ -388,7 +429,15 @@ describe('DLP approval flow', () => {
         reviewId: 'review-files',
         decision: 'MASK',
         findings: [],
-        fileFindings: [{ filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 2 }],
+        fileFindings: [
+          {
+            filename: 'report.pdf',
+            fileId: 'file-report',
+            category: 'IBAN_CODE',
+            action: 'MASK',
+            count: 2,
+          },
+        ],
         maskedPreview: [{ location: '/messages/0/content', text: SUBMITTED }],
       }),
     );

@@ -1,9 +1,9 @@
 import { FileSources } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
-import { extractFileContext, findFileContextSegments } from './context';
+import { extractFileContext, getFileContextFiles, findFileContextSegments } from './context';
 
-const textFile = (filename: string, text: string) =>
-  ({ filename, text, source: FileSources.text }) as IMongoFile;
+const textFile = (filename: string, text: string, file_id = filename) =>
+  ({ file_id, filename, text, source: FileSources.text }) as IMongoFile;
 
 const sliceCodePoints = (text: string, start: number, end: number) =>
   Array.from(text).slice(start, end).join('');
@@ -32,5 +32,25 @@ describe('findFileContextSegments', () => {
 
   it('returns no segments for a message without attached documents', () => {
     expect(findFileContextSegments('# "not a file"\njust text')).toEqual([]);
+  });
+});
+
+describe('getFileContextFiles', () => {
+  it('lists the files of the attached-document block in its order, one per segment', async () => {
+    const attachments = [
+      textFile('report.pdf', 'first', 'file-1'),
+      { file_id: 'image-1', filename: 'photo.png', source: FileSources.local } as IMongoFile,
+      textFile('empty.txt', '', 'file-2'),
+      textFile('report.pdf', 'second', 'file-3'),
+    ];
+    const fileContext = await extractFileContext({
+      attachments,
+      tokenCountFn: (text) => text.length,
+    });
+
+    const files = getFileContextFiles(attachments);
+
+    expect(files.map(({ file_id }) => file_id)).toEqual(['file-1', 'file-3']);
+    expect(findFileContextSegments(fileContext ?? '')).toHaveLength(files.length);
   });
 });
