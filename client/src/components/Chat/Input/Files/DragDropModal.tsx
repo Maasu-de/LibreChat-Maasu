@@ -24,6 +24,7 @@ import {
   useLocalize,
 } from '~/hooks';
 import { ephemeralAgentByConvoId } from '~/store';
+import { SHOW_PROVIDER_UPLOAD } from '~/common';
 import { useDragDropContext } from '~/Providers';
 
 interface DragDropModalProps {
@@ -105,7 +106,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         label: localize('com_ui_upload_provider'),
         value: undefined,
         icon: <FileImageIcon className="icon-md" />,
-        condition: validFileTypes,
+        condition: SHOW_PROVIDER_UPLOAD && validFileTypes,
       });
     } else {
       // Only show image upload option if all files are images and provider doesn't support documents

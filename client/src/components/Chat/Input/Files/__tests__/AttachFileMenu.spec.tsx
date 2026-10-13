@@ -55,13 +55,15 @@ jest.mock('@librechat/client', () => {
           R.createElement(
             'div',
             { 'data-testid': 'dropdown-menu' },
-            props.items.map((item, idx) =>
-              R.createElement(
-                'button',
-                { key: idx, onClick: item.onClick, 'data-testid': `menu-item-${idx}` },
-                item.label,
+            props.items
+              .filter((item) => item.show !== false)
+              .map((item, idx) =>
+                R.createElement(
+                  'button',
+                  { key: idx, onClick: item.onClick, 'data-testid': `menu-item-${idx}` },
+                  item.label,
+                ),
               ),
-            ),
           ),
       ),
     AttachmentIcon: () => R.createElement('span', { 'data-testid': 'attachment-icon' }),
@@ -100,7 +102,7 @@ function setupMocks(overrides: { provider?: string } = {}) {
     com_ui_upload_code_environment: 'Upload to Code Environment',
     com_ui_upload_file_search: 'Upload for File Search',
     com_ui_upload_image_input: 'Upload Image',
-    com_ui_upload_ocr_text: 'Upload as Text',
+    com_ui_upload_ocr_text: 'Upload File',
     com_ui_upload_provider: 'Upload to Provider',
   };
   mockUseLocalize.mockReturnValue((key: string) => translations[key] || key);
@@ -152,33 +154,33 @@ describe('AttachFileMenu', () => {
   beforeEach(jest.clearAllMocks);
 
   describe('Upload to Provider vs Upload Image', () => {
-    it('shows "Upload to Provider" when endpointType is custom (resolved from agent provider)', () => {
+    it('hides "Upload to Provider" when endpointType is custom (resolved from agent provider)', () => {
       setupMocks({ provider: 'Moonshot' });
       renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
       expect(screen.queryByText('Upload Image')).not.toBeInTheDocument();
     });
 
-    it('shows "Upload to Provider" when endpointType is openAI', () => {
+    it('hides "Upload to Provider" when endpointType is openAI', () => {
       setupMocks({ provider: EModelEndpoint.openAI });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
     });
 
-    it('shows "Upload to Provider" when endpointType is anthropic', () => {
+    it('hides "Upload to Provider" when endpointType is anthropic', () => {
       setupMocks({ provider: EModelEndpoint.anthropic });
       renderMenu({ endpointType: EModelEndpoint.anthropic });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
     });
 
-    it('shows "Upload to Provider" when endpointType is google', () => {
+    it('hides "Upload to Provider" when endpointType is google', () => {
       setupMocks({ provider: Providers.GOOGLE });
       renderMenu({ endpointType: EModelEndpoint.google });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
     });
 
     it('shows "Upload Image" when endpointType is agents (no provider resolution)', () => {
@@ -196,14 +198,14 @@ describe('AttachFileMenu', () => {
       expect(screen.getByText('Upload Image')).toBeInTheDocument();
     });
 
-    it('shows "Upload to Provider" for azureOpenAI with useResponsesApi', () => {
+    it('hides "Upload to Provider" for azureOpenAI with useResponsesApi', () => {
       setupMocks({ provider: EModelEndpoint.azureOpenAI });
       renderMenu({ endpointType: EModelEndpoint.azureOpenAI, useResponsesApi: true });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
     });
 
-    it('shows "Upload to Provider" for azureOpenAI endpointType with useResponsesApi', () => {
+    it('hides "Upload to Provider" for azureOpenAI endpointType with useResponsesApi', () => {
       setupMocks();
       renderMenu({
         endpoint: EModelEndpoint.agents,
@@ -211,7 +213,7 @@ describe('AttachFileMenu', () => {
         useResponsesApi: true,
       });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
     });
 
     it('shows "Upload Image" for azureOpenAI without useResponsesApi', () => {
@@ -223,14 +225,14 @@ describe('AttachFileMenu', () => {
   });
 
   describe('agent provider resolution scenario', () => {
-    it('shows "Upload to Provider" when agents endpoint has custom endpointType from provider', () => {
+    it('hides "Upload to Provider" when agents endpoint has custom endpointType from provider', () => {
       setupMocks({ provider: 'Moonshot' });
       renderMenu({
         endpoint: EModelEndpoint.agents,
         endpointType: EModelEndpoint.custom,
       });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
     });
 
     it('shows "Upload Image" when agents endpoint has no resolved provider type', () => {
@@ -274,7 +276,7 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.getByText('Upload File')).toBeInTheDocument();
     });
 
     it('shows File Search option when enabled and allowed by agent', () => {
@@ -337,8 +339,8 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
+      expect(screen.getByText('Upload File')).toBeInTheDocument();
       expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
       expect(screen.getByText('Upload to Code Environment')).toBeInTheDocument();
     });
@@ -373,18 +375,13 @@ describe('AttachFileMenu', () => {
       try {
         renderMenu({ endpointType: EModelEndpoint.openAI });
         openMenu();
-        fireEvent.click(screen.getByText('Upload to Provider'));
         fireEvent.click(screen.getByText('Upload for File Search'));
       } finally {
         HTMLInputElement.prototype.click = originalClick;
       }
 
-      expect(handleFileChange).toHaveBeenNthCalledWith(1, expect.any(Object), undefined);
-      expect(handleFileChange).toHaveBeenNthCalledWith(
-        2,
-        expect.any(Object),
-        EToolResources.file_search,
-      );
+      expect(handleFileChange).toHaveBeenCalledTimes(1);
+      expect(handleFileChange).toHaveBeenCalledWith(expect.any(Object), EToolResources.file_search);
     });
   });
 

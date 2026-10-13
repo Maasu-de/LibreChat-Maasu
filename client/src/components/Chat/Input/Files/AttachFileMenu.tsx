@@ -38,7 +38,7 @@ import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcut
 import { SharePointPickerDialog } from '~/components/SharePoint';
 import { useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
-import { MenuItemProps } from '~/common';
+import { MenuItemProps, SHOW_PROVIDER_UPLOAD } from '~/common';
 import { cn } from '~/utils';
 
 type FileUploadType =
@@ -171,6 +171,7 @@ const AttachFileMenu = ({
       ) {
         items.push({
           label: localize('com_ui_upload_provider'),
+          show: SHOW_PROVIDER_UPLOAD,
           onClick: () => {
             setToolResource(undefined);
             let fileType: Exclude<FileUploadType, 'image' | 'document'> = 'image_document';
