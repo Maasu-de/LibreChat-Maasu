@@ -3,9 +3,12 @@ import type {
   GovernanceFinding,
   GovernanceDecision,
   GovernanceDlpReview,
+  GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
+import type { FileContextSegment } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
+import { findFileContextSegments } from '~/files/context';
 import { standardCache } from '~/cache';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
@@ -191,6 +194,58 @@ export function findingsInSubmittedText(
     }));
 }
 
+const MESSAGE_CONTENT_LOCATION = /^\/messages\/(\d+)\/content$/;
+
+/**
+ * Findings inside files attached to user messages, counted per file, category and action.
+ * Findings in the submitted text are left to `findingsInSubmittedText`.
+ */
+export function findingsInFiles(
+  messages: GovernanceChatMessage[],
+  findings: GovernanceFinding[],
+  submitted: SubmittedText,
+): GovernanceFileFinding[] {
+  const segmentsByMessage = new Map<number, FileContextSegment[]>();
+  const counted = new Map<string, GovernanceFileFinding>();
+  for (const finding of findings) {
+    const match = MESSAGE_CONTENT_LOCATION.exec(finding.location);
+    const messageIndex = match ? Number(match[1]) : -1;
+    const message = messages[messageIndex];
+    if (
+      message?.role !== 'user' ||
+      (messageIndex === submitted.messageIndex && finding.end > submitted.offset)
+    ) {
+      continue;
+    }
+    let segments = segmentsByMessage.get(messageIndex);
+    if (!segments) {
+      const content =
+        messageIndex === submitted.messageIndex
+          ? Array.from(message.content).slice(0, submitted.offset).join('')
+          : message.content;
+      segments = findFileContextSegments(content);
+      segmentsByMessage.set(messageIndex, segments);
+    }
+    const file = segments.find(({ start, end }) => finding.start >= start && finding.start < end);
+    if (!file) {
+      continue;
+    }
+    const key = JSON.stringify([file.filename, finding.category, finding.action]);
+    const entry = counted.get(key);
+    if (entry) {
+      entry.count += 1;
+      continue;
+    }
+    counted.set(key, {
+      filename: file.filename,
+      category: finding.category,
+      action: finding.action,
+      count: 1,
+    });
+  }
+  return Array.from(counted.values());
+}
+
 /** Applies each finding's replacement to the text, using code-point offsets like the gateway. */
 export function maskText(text: string, findings: GovernanceFinding[]): string {
   const chars = Array.from(text);
@@ -261,12 +316,14 @@ export function toClientReview(
   decision: GovernanceDecision,
   findings: GovernanceFinding[],
   approvedText?: string,
+  fileFindings: GovernanceFileFinding[] = [],
 ): GovernanceDlpReview {
   return {
     reviewId: review.review_id,
     decision,
     policyVersion: review.policy_version,
     findings,
+    fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
     maskedPreview:
       approvedText === undefined
         ? undefined

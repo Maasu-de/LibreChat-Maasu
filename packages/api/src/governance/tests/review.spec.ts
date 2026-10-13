@@ -5,6 +5,7 @@ import {
   maskText,
   readReview,
   createReviewEvent,
+  findingsInFiles,
   findSubmittedText,
   findingsInSubmittedText,
   createApprovalRetryEvent,
@@ -14,6 +15,25 @@ import { createGovernanceDlpFetch } from '../dlp';
 const DLP_COMPLETIONS_URL = 'http://governance.test/api/v1/dlp/chat/completions';
 const SUBMITTED = 'Please email max@example.com today';
 const MASKED = 'Please email [EMAIL] today';
+
+const IBAN = 'DE89370400440532013000';
+const ATTACHED = [
+  'Attached document(s):\n```md# "report.pdf"\n',
+  `Pay ${IBAN} or ${IBAN}\n`,
+  '\n\n---\n\n# "notes.txt"\n',
+  'mail max@example.com\n',
+  '\n```',
+].join('');
+const WITH_FILES = `${ATTACHED}\n${SUBMITTED}`;
+
+const ibanFinding = (location: string, start: number): GovernanceFinding => ({
+  location,
+  start,
+  end: start + IBAN.length,
+  category: 'IBAN_CODE',
+  action: 'MASK',
+  replacement: '[IBAN]',
+});
 
 const emailFinding = (location: string, start: number): GovernanceFinding => ({
   location,
@@ -147,6 +167,30 @@ describe('submitted text helpers', () => {
     ];
     expect(findingsInSubmittedText(findings, { messageIndex: 2, offset: 20 })).toEqual([
       emailFinding('/messages/0/content', 5),
+    ]);
+  });
+
+  it('counts findings in attached files per file, category and action', () => {
+    const messages = [
+      { role: 'user', content: ATTACHED },
+      { role: 'assistant', content: `ok ${IBAN}` },
+      { role: 'user', content: `> ${IBAN}\n\n${WITH_FILES}` },
+    ];
+    const quoted = IBAN.length + 4;
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/1/content', 3),
+      ibanFinding('/messages/2/content', 2),
+      ibanFinding('/messages/2/content', quoted + ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/2/content', quoted + ATTACHED.lastIndexOf(IBAN)),
+      emailFinding('/messages/2/content', quoted + ATTACHED.indexOf('max@')),
+      emailFinding('/messages/2/content', quoted + WITH_FILES.indexOf('max@', ATTACHED.length)),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted)).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 3 },
+      { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'MASK', count: 1 },
     ]);
   });
 
@@ -312,6 +356,46 @@ describe('DLP approval flow', () => {
     expect(onReview).not.toHaveBeenCalled();
     expect(onSent).not.toHaveBeenCalled();
     expect(reviews.entries.size).toBe(0);
+  });
+
+  it('stores a review whose findings are only in an attached file and lists them per file', async () => {
+    const withFiles = [messages[0], { role: 'user', content: WITH_FILES }];
+    const maskedMessages = [
+      messages[0],
+      { role: 'user', content: WITH_FILES.replaceAll(IBAN, '[IBAN]') },
+    ];
+    const { onReview, reviews, send } = setup({
+      responses: [
+        reviewResponse({
+          review_id: 'review-files',
+          action: 'MASK',
+          findings: [
+            ibanFinding('/messages/1/content', WITH_FILES.indexOf(IBAN)),
+            ibanFinding('/messages/1/content', WITH_FILES.lastIndexOf(IBAN)),
+          ],
+          messages: maskedMessages,
+          dlp_token: 'approval-token',
+        }),
+      ],
+    });
+
+    const response = await send(withFiles);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
+    expect(onReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewId: 'review-files',
+        decision: 'MASK',
+        findings: [],
+        fileFindings: [{ filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 2 }],
+        maskedPreview: [{ location: '/messages/0/content', text: SUBMITTED }],
+      }),
+    );
+    expect(reviews.entries.get('review-files')).toMatchObject({
+      text: SUBMITTED,
+      messages: maskedMessages,
+    });
   });
 
   it('hands a BLOCK review to the user without storing an approval', async () => {

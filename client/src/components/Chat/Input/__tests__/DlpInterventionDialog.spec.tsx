@@ -95,6 +95,39 @@ describe('DlpInterventionDialog', () => {
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
   });
 
+  it('lists findings in attached files without a masked prompt when the text has none', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [],
+          fileFindings: [
+            { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 2 },
+            { filename: 'report.pdf', category: 'PHONE_NUMBER', action: 'WARN', count: 1 },
+            { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'MASK', count: 1 },
+          ],
+          maskedPreview: [{ location: '/messages/0/content', text: 'Summarize' }],
+        }}
+        originalText="Summarize"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText('com_ui_dlp_file_findings')).toBeInTheDocument();
+    expect(screen.getByText('report.pdf')).toBeInTheDocument();
+    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+    expect(
+      screen.getByText('com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask × 2'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('com_ui_dlp_category_phone_number · com_ui_dlp_decision_warn'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('com_ui_dlp_findings')).not.toBeInTheDocument();
+    expect(screen.queryByText('com_ui_dlp_masked_prompt')).not.toBeInTheDocument();
+    expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
+  });
+
   it('falls back to a readable label for an unknown finding category', () => {
     render(
       <DlpInterventionDialog

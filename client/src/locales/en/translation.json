@@ -1085,6 +1085,7 @@
   "com_ui_dlp_decision_block": "Block",
   "com_ui_dlp_decision_mask": "Mask",
   "com_ui_dlp_decision_warn": "Warn",
+  "com_ui_dlp_file_findings": "Findings in attached files",
   "com_ui_dlp_findings": "Sensitive findings",
   "com_ui_dlp_mask_description": "Review the complete masked prompt before it is sent.",
   "com_ui_dlp_mask_title": "Sensitive information will be masked",

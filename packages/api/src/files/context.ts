@@ -5,6 +5,55 @@ import type { ServerRequest } from '~/types';
 import { processTextWithTokenLimit } from '~/utils/text';
 import type { TokenCountFn } from '~/utils/text';
 
+const FILE_CONTEXT_START = 'Attached document(s):\n```md';
+const FILE_SEPARATOR = '\n\n---\n\n';
+const FILE_CONTEXT_END = '\n```';
+const FILE_HEADER_START = '# "';
+const FILE_HEADER_END = '"\n';
+
+/** One attached file's span within a message, in code points like the gateway's DLP findings. */
+export interface FileContextSegment {
+  filename: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * Finds the files in the attached-document block that `extractFileContext` adds to a message.
+ * The last file runs to the last closing fence, so pass only the content before the message's
+ * own text when it is known: a fence in that text would otherwise extend the last file.
+ */
+export function findFileContextSegments(content: string): FileContextSegment[] {
+  const blockStart = content.indexOf(FILE_CONTEXT_START);
+  if (blockStart === -1) {
+    return [];
+  }
+
+  const closing = content.lastIndexOf(`\n${FILE_CONTEXT_END}`);
+  const blockEnd = closing > blockStart ? closing + 1 : content.length;
+  const codePoints = (index: number) => Array.from(content.slice(0, index)).length;
+  const segments: FileContextSegment[] = [];
+  let cursor = blockStart + FILE_CONTEXT_START.length;
+  while (content.startsWith(FILE_HEADER_START, cursor)) {
+    const nameEnd = content.indexOf(FILE_HEADER_END, cursor + FILE_HEADER_START.length);
+    if (nameEnd === -1 || nameEnd >= blockEnd) {
+      break;
+    }
+    const next = content.indexOf(`${FILE_SEPARATOR}${FILE_HEADER_START}`, nameEnd);
+    const end = next === -1 || next >= blockEnd ? blockEnd : next;
+    segments.push({
+      filename: content.slice(cursor + FILE_HEADER_START.length, nameEnd),
+      start: codePoints(cursor),
+      end: codePoints(end),
+    });
+    if (end === blockEnd) {
+      break;
+    }
+    cursor = end + FILE_SEPARATOR.length;
+  }
+  return segments;
+}
+
 /**
  * Extracts text context from attachments and returns formatted text.
  * This handles text that was already extracted from files (OCR, transcriptions, document text, etc.)
@@ -52,12 +101,12 @@ export async function extractFileContext({
         );
       }
 
-      resultText += `${!resultText ? 'Attached document(s):\n```md' : '\n\n---\n\n'}# "${file.filename}"\n${limitedText}\n`;
+      resultText += `${!resultText ? FILE_CONTEXT_START : FILE_SEPARATOR}${FILE_HEADER_START}${file.filename}${FILE_HEADER_END}${limitedText}\n`;
     }
   }
 
   if (resultText) {
-    resultText += '\n```';
+    resultText += FILE_CONTEXT_END;
     return resultText;
   }
 

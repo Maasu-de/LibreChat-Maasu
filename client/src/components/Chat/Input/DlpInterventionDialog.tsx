@@ -6,6 +6,7 @@ import type {
   GovernanceDlpResult,
   GovernanceFinding,
   GovernanceDecision,
+  GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { TranslationKeys } from '~/hooks';
 import { useLocalize } from '~/hooks';
@@ -80,6 +81,17 @@ export function buildFindingSegments(text: string, findings: GovernanceFinding[]
   return segments.length ? segments : [{ text }];
 }
 
+/** Groups file findings by file, keeping the order in which the files first appear. */
+export function groupFileFindings(
+  fileFindings: GovernanceFileFinding[] = [],
+): [string, GovernanceFileFinding[]][] {
+  const byFile = new Map<string, GovernanceFileFinding[]>();
+  for (const finding of fileFindings) {
+    byFile.set(finding.filename, [...(byFile.get(finding.filename) ?? []), finding]);
+  }
+  return Array.from(byFile.entries());
+}
+
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export function buildReplacementSegments(
@@ -126,6 +138,7 @@ export default function DlpInterventionDialog({
   const maskedText = result.maskedPreview?.find(
     (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
   )?.text;
+  const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
   const maskedSegments = useMemo(
     () => buildReplacementSegments(maskedText ?? '', result.findings),
     [maskedText, result.findings],
@@ -206,7 +219,37 @@ export default function DlpInterventionDialog({
               </section>
             )}
 
-            {decision === 'MASK' && maskedText && (
+            {files.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold text-text-primary">
+                  {localize('com_ui_dlp_file_findings')}
+                </h3>
+                <ul className="flex flex-col gap-3">
+                  {files.map(([filename, findings]) => (
+                    <li key={filename}>
+                      <p className="mb-1 break-all text-sm text-text-primary">{filename}</p>
+                      <ul className="flex flex-wrap gap-2">
+                        {findings.map((finding) => (
+                          <li
+                            key={`${finding.category}-${finding.action}`}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-xs font-medium',
+                              ACTION_CLASS[finding.action],
+                            )}
+                          >
+                            {categoryLabel(finding.category)} ·{' '}
+                            {localize(DECISION_COPY[finding.action])}
+                            {finding.count > 1 ? ` × ${finding.count}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {decision === 'MASK' && maskedText && result.findings.length > 0 && (
               <>
                 {textBlock(
                   localize('com_ui_dlp_masked_prompt'),
