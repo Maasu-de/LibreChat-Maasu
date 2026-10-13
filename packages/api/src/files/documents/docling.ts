@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import FormData from 'form-data';
+import { logger } from '@librechat/data-schemas';
 import type { AxiosRequestConfig } from 'axios';
 import { applyAxiosProxyConfig } from '~/utils/proxy';
 import { createAxiosInstance } from '~/utils/axios';
@@ -42,7 +43,7 @@ export function getDoclingURL(): string | undefined {
  * Converts a PDF to Markdown with Docling Serve's synchronous file endpoint.
  * Embedded images are replaced by placeholders so no base64 reaches the prompt.
  *
- * @throws {Error} if the request fails or Docling reports a failed conversion.
+ * @throws {Error} if the request fails, Docling reports a failed conversion, or returns no content.
  */
 export async function doclingPdfToMarkdown(
   file: Express.Multer.File,
@@ -69,13 +70,21 @@ export async function doclingPdfToMarkdown(
   applyAxiosProxyConfig(config, url);
 
   const { data } = await axios.post<DoclingConvertResponse>(url, form, config);
+  const reasons = (data.errors ?? []).map((e) => e.error_message).filter(Boolean);
+  const detail = reasons.length ? `: ${reasons.join('; ')}` : '';
 
   if (data.status !== 'success' && data.status !== 'partial_success') {
-    const reasons = (data.errors ?? []).map((e) => e.error_message).filter(Boolean);
-    throw new Error(
-      `Docling conversion ${data.status}${reasons.length ? `: ${reasons.join('; ')}` : ''}`,
-    );
+    throw new Error(`Docling conversion ${data.status}${detail}`);
   }
 
-  return data.document?.md_content ?? '';
+  const markdown = data.document?.md_content;
+  if (!markdown?.trim()) {
+    throw new Error(`Docling conversion ${data.status} returned no content${detail}`);
+  }
+
+  if (data.status === 'partial_success') {
+    logger.warn(`[Docling] Partial conversion of "${file.originalname}"${detail}`);
+  }
+
+  return markdown;
 }

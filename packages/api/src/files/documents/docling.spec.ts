@@ -93,9 +93,31 @@ describe('Docling PDF extraction', () => {
     expect(captured?.body).toMatch(/name="image_export_mode"\r\n\r\nplaceholder\r\n/);
   });
 
-  test('doclingPdfToMarkdown() accepts partial_success', async () => {
-    respond = json(200, { status: 'partial_success', document: { md_content: 'page 1' } });
+  test('doclingPdfToMarkdown() accepts partial_success and logs the errors', async () => {
+    respond = json(200, {
+      status: 'partial_success',
+      document: { md_content: 'page 1' },
+      errors: [{ error_message: 'page 2 timed out' }],
+    });
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+
     await expect(doclingPdfToMarkdown(pdfFile(), baseURL)).resolves.toBe('page 1');
+
+    expect(warn).toHaveBeenCalledWith(
+      '[Docling] Partial conversion of "report.pdf": page 2 timed out',
+    );
+  });
+
+  test('doclingPdfToMarkdown() throws when Docling returns no content', async () => {
+    respond = json(200, { status: 'success', document: { md_content: '  \n' } });
+    await expect(doclingPdfToMarkdown(pdfFile(), baseURL)).rejects.toThrow(
+      'Docling conversion success returned no content',
+    );
+
+    respond = json(200, { status: 'success' });
+    await expect(doclingPdfToMarkdown(pdfFile(), baseURL)).rejects.toThrow(
+      'Docling conversion success returned no content',
+    );
   });
 
   test('doclingPdfToMarkdown() throws with Docling errors on a failed conversion', async () => {
@@ -122,6 +144,20 @@ describe('Docling PDF extraction', () => {
       text: '# Report\n\n| a | b |',
       images: [],
     });
+  });
+
+  test('parseDocument() falls back to pdfjs when Docling returns no content', async () => {
+    process.env.DOCLING_URL = baseURL;
+    respond = json(200, { status: 'success', document: { md_content: '' } });
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+    await expect(parseDocument({ file: pdfFile() })).rejects.toThrow();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /Docling failed for "report\.pdf", falling back to pdfjs: .*no content/,
+      ),
+    );
   });
 
   test('parseDocument() falls back to pdfjs when Docling fails', async () => {
