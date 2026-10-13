@@ -1,7 +1,13 @@
 const { logger } = require('@librechat/data-schemas');
-const { isPlainTextSubmission, isGovernanceDlpEnabled } = require('@librechat/api');
-const { getUserGroupIds } = require('~/server/services/governanceGroups');
+const {
+  createGetUserGroupIds,
+  isPlainTextSubmission,
+  isGovernanceDlpEnabled,
+} = require('@librechat/api');
+const { getUserGroups } = require('~/models');
 const denyRequest = require('./denyRequest');
+
+const getUserGroupIds = createGetUserGroupIds({ getUserGroups });
 
 const GROUP_LOOKUP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
