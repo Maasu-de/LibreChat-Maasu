@@ -802,7 +802,7 @@
   "com_ui_untitled": "Sense títol",
   "com_ui_update": "Actualitza",
   "com_ui_upload": "Puja",
-  "com_ui_upload_delay": "La pujada de \"{{0}}\" triga més del previst. Espera mentre el fitxer acaba d'indexar-se per a la recuperació.",
+  "com_ui_upload_delay": "La pujada de \"{{0}}\" triga més del previst. Espera, si us plau!",
   "com_ui_upload_error": "S'ha produït un error en pujar el teu fitxer",
   "com_ui_upload_file_context": "Puja context de fitxer",
   "com_ui_upload_file_search": "Puja per a cerca de fitxers",

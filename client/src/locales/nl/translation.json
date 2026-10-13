@@ -680,7 +680,7 @@
   "com_ui_update": "Bijwerken",
   "com_ui_upload": "Uploaden",
   "com_ui_upload_agent_avatar": "Agent avatar succesvol bijgewerkt",
-  "com_ui_upload_delay": "Uploaden van \"{{0}}\" duurt langer dan verwacht. Wacht terwijl het bestand wordt geïndexeerd voor opvraging.",
+  "com_ui_upload_delay": "Uploaden van \"{{0}}\" duurt langer dan verwacht. Even geduld!",
   "com_ui_upload_error": "Er is een fout opgetreden bij het uploaden van je bestand",
   "com_ui_upload_file_context": "Upload Bestandscontext",
   "com_ui_upload_files": "Bestanden uploaden",

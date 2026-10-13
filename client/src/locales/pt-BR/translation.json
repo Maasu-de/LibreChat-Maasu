@@ -1485,7 +1485,7 @@
   "com_ui_upload_agent_avatar": "Avatar do agente atualizado com sucesso",
   "com_ui_upload_agent_avatar_label": "Carregar imagem de avatar do agente",
   "com_ui_upload_avatar_label": "Carregar imagem de avatar",
-  "com_ui_upload_delay": "O upload de \"{{0}}\" está demorando mais do que o esperado. Por favor, aguarde enquanto o arquivo termina de ser indexado para recuperação.",
+  "com_ui_upload_delay": "O upload de \"{{0}}\" está demorando mais do que o esperado. Por favor, aguarde!",
   "com_ui_upload_error": "Houve um erro ao carregar seu arquivo",
   "com_ui_upload_file_context": "Contexto de upload de arquivo",
   "com_ui_upload_file_search": "Upload para pesquisa de arquivos",

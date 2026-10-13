@@ -1412,7 +1412,7 @@
   "com_ui_upload_agent_avatar": "Pomyślnie zaktualizowano awatar agenta",
   "com_ui_upload_agent_avatar_label": "Prześlij obraz awatara agenta",
   "com_ui_upload_avatar_label": "Prześlij obraz awatara",
-  "com_ui_upload_delay": "Przesyłanie \"{{0}}\" trwa dłużej niż przewidywano. Proszę poczekać, aż plik zakończy indeksowanie do pobrania.",
+  "com_ui_upload_delay": "Przesyłanie \"{{0}}\" trwa dłużej niż przewidywano. Proszę czekać!",
   "com_ui_upload_error": "Wystąpił błąd podczas przesyłania pliku",
   "com_ui_upload_file_context": "Prześlij kontekst pliku",
   "com_ui_upload_file_search": "Prześlij do wyszukiwania plików",

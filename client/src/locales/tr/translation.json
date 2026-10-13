@@ -1449,7 +1449,7 @@
   "com_ui_upload_agent_avatar": "Ajan avatarı başarıyla güncellendi",
   "com_ui_upload_agent_avatar_label": "Ajan avatar resmi yükle",
   "com_ui_upload_avatar_label": "Avatar resmi yükle",
-  "com_ui_upload_delay": "\"{{0}}\" yüklenmesi beklenenden daha uzun sürüyor. Lütfen dosyanın alma işlemini tamamlamasını bekleyin.",
+  "com_ui_upload_delay": "\"{{0}}\" yüklenmesi beklenenden daha uzun sürüyor. Lütfen bekleyin!",
   "com_ui_upload_error": "Dosyanızı yüklerken bir hata oluştu",
   "com_ui_upload_file_context": "Dosya Bağlamı Yükle",
   "com_ui_upload_file_search": "Dosya Arama için Yükle",

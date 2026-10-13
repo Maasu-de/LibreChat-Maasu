@@ -553,7 +553,7 @@
   "com_ui_unknown": "Tuntematon",
   "com_ui_update": "Päivitys",
   "com_ui_upload": "Lataa",
-  "com_ui_upload_delay": "\"{{0}}\" lataaminen kestää odotettua pidempään. Ole hyvä ja odota kunnes tiedosto saadaan indeksoitua tiedonhakua varten.",
+  "com_ui_upload_delay": "\"{{0}}\" lataaminen kestää odotettua pidempään. Ole hyvä ja odota!",
   "com_ui_upload_error": "Tiedoston lataamisessa tapahtui virhe",
   "com_ui_upload_files": "Lataa tiedostoja",
   "com_ui_upload_invalid": "Virheellinen ladattava tiedosto. Tiedoston täytyy olla kokorajaan mahtuva kuvatiedosto",

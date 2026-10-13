@@ -1134,7 +1134,7 @@
   "com_ui_update": "Atualizar",
   "com_ui_upload": "Carregar",
   "com_ui_upload_agent_avatar": "Avatar do agente atualizado com sucesso",
-  "com_ui_upload_delay": "O upload de \"{{0}}\" está demorando mais do que o esperado. Por favor, aguarde enquanto o arquivo termina de ser indexado para recuperação.",
+  "com_ui_upload_delay": "O upload de \"{{0}}\" está demorando mais do que o esperado. Por favor, aguarde!",
   "com_ui_upload_error": "Houve um erro ao carregar seu arquivo",
   "com_ui_upload_file_context": "Carregar conteúdo do ficheiro",
   "com_ui_upload_file_search": "Enviar para a pesquisa de Ficheiro",

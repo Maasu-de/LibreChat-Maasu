@@ -844,7 +844,7 @@
   "com_ui_untitled": "Pealkirjata",
   "com_ui_update": "Uuenda",
   "com_ui_upload": "Laadi üles",
-  "com_ui_upload_delay": "Faili \"{{0}}\" üleslaadimine võtab oodatust kauem aega. Palun oota, kuni faili indekseerimine hankimiseks lõpeb.",
+  "com_ui_upload_delay": "Faili \"{{0}}\" üleslaadimine võtab oodatust kauem aega. Palun oota!",
   "com_ui_upload_error": "Faili üleslaadimisel tekkis viga",
   "com_ui_upload_file_context": "Laadi fail konteksti",
   "com_ui_upload_file_search": "Laadi üles failiotsingu jaoks",

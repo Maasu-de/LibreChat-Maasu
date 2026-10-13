@@ -1638,7 +1638,7 @@
   "com_ui_upload_agent_avatar_label": "העלה תמונת אווטאר לסוכן",
   "com_ui_upload_avatar_label": "העלה תמונת אווטאר",
   "com_ui_upload_code_environment": "העלה לסביבת הקוד",
-  "com_ui_upload_delay": "העלאת \"{{0}}\" לוקחת יותר זמן מהצפוי. אנא המתן בזמן שהקובץ מסיים את האינדוקס לאחזור.",
+  "com_ui_upload_delay": "העלאת \"{{0}}\" לוקחת יותר זמן מהצפוי. אנא המתן!",
   "com_ui_upload_error": "אירעה שגיאה בהעלאת הקובץ שלך",
   "com_ui_upload_file_context": "העלה קובץ כקובץ הקשר",
   "com_ui_upload_file_search": "העלאה לחיפוש בקבצים",

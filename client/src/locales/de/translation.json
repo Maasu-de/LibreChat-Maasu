@@ -1800,7 +1800,7 @@
   "com_ui_upload_agent_avatar_label": "Avatarbild des Agenten hochladen",
   "com_ui_upload_avatar_label": "Avatarbild hochladen",
   "com_ui_upload_code_environment": "In die Code-Umgebung hochladen",
-  "com_ui_upload_delay": "Das Hochladen von \"{{0}}\" dauert etwas länger. Bitte warte, während die Datei für den Abruf indexiert wird.",
+  "com_ui_upload_delay": "Das Hochladen von \"{{0}}\" dauert etwas länger. Bitte warte!",
   "com_ui_upload_error": "Beim Hochladen Ihrer Datei ist ein Fehler aufgetreten",
   "com_ui_upload_file_context": "Kontext der Datei hochladen",
   "com_ui_upload_file_search": "Hochladen für Dateisuche",

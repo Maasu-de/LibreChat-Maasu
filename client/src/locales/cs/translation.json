@@ -656,7 +656,7 @@
   "com_ui_unknown": "Neznámé",
   "com_ui_update": "Aktualizovat",
   "com_ui_upload": "Nahrát",
-  "com_ui_upload_delay": "Nahrávání \"{{0}}\" trvá déle než obvykle. Počkejte, než bude soubor indexován.",
+  "com_ui_upload_delay": "Nahrávání \"{{0}}\" trvá déle než obvykle. Počkejte prosím!",
   "com_ui_upload_error": "Při nahrávání souboru došlo k chybě",
   "com_ui_upload_file_search": "Nahrát pro vyhledávání v souborech",
   "com_ui_upload_files": "Nahrát soubory",

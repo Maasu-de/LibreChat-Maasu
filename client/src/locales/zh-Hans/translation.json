@@ -1337,7 +1337,7 @@
   "com_ui_upload_agent_avatar": "成功更新智能体头像",
   "com_ui_upload_agent_avatar_label": "上传智能体头像图片",
   "com_ui_upload_avatar_label": "上传头像图片",
-  "com_ui_upload_delay": "上传 “{{0}}” 时比预期花了更长时间。文件正在进行检索索引，请稍候。",
+  "com_ui_upload_delay": "上传 “{{0}}” 时比预期花了更长时间。请稍候！",
   "com_ui_upload_error": "上传文件错误",
   "com_ui_upload_file_context": "上传文件上下文",
   "com_ui_upload_file_search": "上传搜索文件",
