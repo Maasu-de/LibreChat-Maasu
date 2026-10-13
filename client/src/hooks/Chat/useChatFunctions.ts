@@ -710,7 +710,11 @@ export default function useChatFunctions({
      *  An explicit list also keeps skills queued since then for the next message. */
     ask(
       { text: approved.text },
-      { dlpReviewId: result.reviewId, overrideManualSkills: pendingDlpReview.manualSkills ?? [] },
+      {
+        dlpReviewId: result.reviewId,
+        overrideManualSkills: pendingDlpReview.manualSkills ?? [],
+        overrideFiles: pendingDlpReview.files,
+      },
     );
     return true;
   };

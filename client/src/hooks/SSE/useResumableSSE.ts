@@ -572,6 +572,7 @@ export default function useResumableSSE(
                   text: data.requestMessage?.text ?? userMessage.text,
                   conversationId: currentSubmission.conversation?.conversationId ?? null,
                   manualSkills: data.requestMessage?.manualSkills ?? currentSubmission.manualSkills,
+                  files: userMessage.files,
                 });
               } else {
                 setDlpReview(settleSentDlpReview(data.dlpRetryReviewId));

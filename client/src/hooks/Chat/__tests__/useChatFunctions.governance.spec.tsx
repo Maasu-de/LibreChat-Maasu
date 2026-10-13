@@ -99,6 +99,7 @@ const blockReview: TPendingDlpReview = {
 };
 
 const setSubmission = jest.fn<void, Parameters<SetterOrUpdater<TSubmission | null>>>();
+const setFiles = jest.fn();
 const setMessages = jest.fn<void, [TMessage[]]>();
 
 /** Stands in for the stream handler, which stores the review a turn ended with. */
@@ -139,6 +140,7 @@ function Chat({
       conversation,
       getMessages: () => [],
       setMessages,
+      setFiles,
       setSubmission,
       isSubmitting: false,
       latestMessage: null,
@@ -282,6 +284,17 @@ it('shows the review again when its approved send fails, so it can be sent again
   expect(lastSubmission().userMessage.text).toBe(maskedEmail);
   expect(lastSubmission().dlpReviewId).toBe('review-1');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it("sends the reviewed turn's files with the approved text, so the sent message shows them", () => {
+  const files = [{ file_id: 'file-1', filename: 'report.pdf', filepath: '/files/report.pdf' }];
+  renderChat(savedConversation, { ...maskReview(savedConversation.conversationId), files });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+  expect(lastSubmission().dlpReviewId).toBe('review-1');
+  expect(lastSubmission().userMessage.files).toEqual(files);
 });
 
 it("sends the reviewed turn's $ skills with the approved text, and keeps newer ones queued", () => {
