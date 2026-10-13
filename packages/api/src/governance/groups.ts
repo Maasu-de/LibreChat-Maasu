@@ -4,6 +4,7 @@ import { logger, runAsSystem } from '@librechat/data-schemas';
 import type { NextFunction, Request, Response } from 'express';
 import type { IGroup } from '@librechat/data-schemas';
 import type { JwtPayload } from 'jsonwebtoken';
+import { normalizeOpenIdIssuer } from '../auth/openid';
 
 const PAGE_SIZE = 200;
 const JWKS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -37,8 +38,10 @@ function getJwksClient(issuer: string): jwksRsa.JwksClient {
   if (cached) {
     return cached;
   }
+  const jwksUri = `${issuer}/protocol/openid-connect/certs`;
+  logger.debug('[GovernanceGroups] Creating JWKS client', { jwksUri });
   const client = jwksRsa({
-    jwksUri: `${issuer}/protocol/openid-connect/certs`,
+    jwksUri,
     cache: true,
     cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
     rateLimit: true,
@@ -63,6 +66,7 @@ async function verifyAdminToken(
 ): Promise<AdminClaims | null> {
   const kid = jwt.decode(token, { complete: true })?.header?.kid;
   if (!kid) {
+    logger.warn('[GovernanceGroups] Rejected token without a key id');
     return null;
   }
 
@@ -76,6 +80,8 @@ async function verifyAdminToken(
   } catch (error) {
     logger.warn('[GovernanceGroups] Access token verification failed', {
       message: (error as Error)?.message,
+      expectedIssuer: issuer,
+      expectedAudience: audience,
     });
     return null;
   }
@@ -94,10 +100,16 @@ export async function requireGovernanceAdminToken(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const issuer = (process.env.OPENID_ISSUER ?? '').replace(/\/+$/, '');
+  // OPENID_ISSUER may be the discovery URL; the JWKS path and `iss` claim need the bare issuer
+  const issuer = normalizeOpenIdIssuer(process.env.OPENID_ISSUER) ?? '';
   const audience = process.env.GOVERNANCE_ADMIN_CLIENT_ID ?? '';
   const adminRole = process.env.OPENID_ADMIN_ROLE ?? '';
   if (!issuer || !audience || !adminRole) {
+    logger.warn('[GovernanceGroups] Group lookup is not configured', {
+      hasIssuer: Boolean(issuer),
+      hasAudience: Boolean(audience),
+      hasAdminRole: Boolean(adminRole),
+    });
     res.status(503).json({ message: 'Group lookup is not configured.' });
     return;
   }
@@ -108,6 +120,14 @@ export async function requireGovernanceAdminToken(
   // Keycloak issues the same signature scheme for ID and refresh tokens;
   // only an access token ("Bearer") proves this is a live admin session.
   if (claims?.typ !== 'Bearer' || !hasAdminRole(claims, adminRole)) {
+    if (!token) {
+      logger.warn('[GovernanceGroups] Rejected request without a bearer token');
+    } else if (claims) {
+      logger.warn('[GovernanceGroups] Rejected verified token', {
+        typ: claims.typ,
+        hasAdminRole: hasAdminRole(claims, adminRole),
+      });
+    }
     res.status(401).json({ message: 'Unauthorized' });
     return;
   }

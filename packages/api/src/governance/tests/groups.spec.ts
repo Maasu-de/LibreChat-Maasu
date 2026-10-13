@@ -193,6 +193,18 @@ describe('GET /api/governance/groups', () => {
       expect.objectContaining({ jwksUri: `${otherIssuer}/protocol/openid-connect/certs` }),
     );
   });
+
+  it('accepts OPENID_ISSUER in discovery-URL form', async () => {
+    listGroups.mockResolvedValueOnce([]);
+    process.env.OPENID_ISSUER = `${ISSUER}/.well-known/openid-configuration`;
+
+    const response = await getGroups(signToken());
+
+    expect(response.status).toBe(200);
+    expect(jwksRsa).toHaveBeenCalledWith(
+      expect.objectContaining({ jwksUri: `${ISSUER}/protocol/openid-connect/certs` }),
+    );
+  });
 });
 
 describe('createGetUserGroupIds', () => {
