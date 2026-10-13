@@ -1,7 +1,25 @@
+import { supportedMimeTypes } from 'librechat-data-provider';
 import type { TCustomConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
-import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from './mode';
+import {
+  GOVERNANCE_ENDPOINT,
+  isGovernancePilotEnabled,
+  isGovernanceAttachmentTestEnabled,
+} from './mode';
 import { isEnabled } from '~/utils/common';
+
+/**
+ * Upstream's default upload types and limits for the attachment test switch. The gateway entry
+ * must set them explicitly: otherwise it inherits the disabled default's empty type list and
+ * zero size limits, and every upload is rejected.
+ */
+const attachmentTestFileConfig = {
+  disabled: false,
+  fileLimit: 10,
+  fileSizeLimit: 20,
+  totalSizeLimit: 50,
+  supportedMimeTypes: supportedMimeTypes.map((type) => type.source),
+};
 
 function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']) {
   const disabled = { use: false, create: false, share: false, public: false };
@@ -94,7 +112,12 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
     },
     interface: restrictGovernanceInterface(config.interface),
     fileConfig: {
-      endpoints: { default: { disabled: true }, [GOVERNANCE_ENDPOINT]: { disabled: true } },
+      endpoints: {
+        default: { disabled: true },
+        [GOVERNANCE_ENDPOINT]: isGovernanceAttachmentTestEnabled()
+          ? attachmentTestFileConfig
+          : { disabled: true },
+      },
     },
     speech: {
       speechTab: {
