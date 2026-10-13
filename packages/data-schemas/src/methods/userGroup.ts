@@ -125,7 +125,6 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
    * Find a group by its ID
    * @param groupId - The group ID
    * @param projection - Optional projection of fields to return
-   * @param projection - Optional projection of fields to return
    * @param session - Optional MongoDB session for transactions
    * @returns The group document or null if not found
    */
@@ -221,6 +220,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
   /**
    * Find all groups a user is a member of by their ID or idOnTheSource
    * @param userId - The user ID
+   * @param projection - Optional projection of fields to return
    * @param session - Optional MongoDB session for transactions
    * @returns Array of groups the user is a member of
    */
@@ -254,7 +254,6 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
   /**
    * Create a new group
    * @param groupData - Group data including name, source, and optional idOnTheSource
-   * @param projection - Optional projection of fields to return
    * @param session - Optional MongoDB session for transactions
    * @returns The created group
    */
@@ -367,6 +366,7 @@ export function createUserGroupMethods(mongoose: typeof import('mongoose')): {
   /**
    * Get all groups a user is a member of
    * @param userId - The user ID
+   * @param projection - Optional projection of fields to return
    * @param session - Optional MongoDB session for transactions
    * @returns Array of group documents
    */

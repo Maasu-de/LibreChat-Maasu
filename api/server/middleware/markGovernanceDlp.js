@@ -2,7 +2,6 @@ const { logger } = require('@librechat/data-schemas');
 const {
   isPlainTextSubmission,
   isGovernanceDlpEnabled,
-  isGovernancePilotEnabled,
 } = require('@librechat/api');
 const { getUserGroupIds } = require('~/server/services/governanceGroups');
 const denyRequest = require('./denyRequest');
