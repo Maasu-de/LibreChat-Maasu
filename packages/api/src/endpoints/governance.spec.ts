@@ -33,8 +33,8 @@ const dashboard = (overrides: Partial<FinanceUsageDashboard> = {}): FinanceUsage
     cost_usd: '0.02',
   },
   by_user: [row(USER_PSEUDONYM), row(UNKNOWN_PSEUDONYM)],
-  by_team: [row('665f1c2e9b1e8a0087654321'), row('entra-group-1'), row('missing-group')],
-  by_team_aggregation: 'overlapping_full_attribution',
+  by_group: [row('665f1c2e9b1e8a0087654321'), row('entra-group-1'), row('missing-group')],
+  by_group_aggregation: 'overlapping_full_attribution',
   by_model: [row('gemini-3.6-flash')],
   ...overrides,
 });
@@ -93,7 +93,7 @@ describe('resolveUsageLabels', () => {
       'entra-group-1',
       'missing-group',
     ]);
-    expect(result.by_team.map((team) => team.label)).toEqual([
+    expect(result.by_group.map((group) => group.label)).toEqual([
       'Finance',
       'Engineering',
       'missing-group',

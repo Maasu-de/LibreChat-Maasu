@@ -154,7 +154,7 @@ const resolveUserLabels = async (
   }));
 };
 
-const resolveTeamLabels = async (
+const resolveGroupLabels = async (
   rows: FinanceUsageBreakdownRow[],
   deps: GovernanceUsageDeps,
 ): Promise<FinanceUsageBreakdownRow[]> => {
@@ -180,11 +180,11 @@ export const resolveUsageLabels = async (
   deps: GovernanceUsageDeps,
 ): Promise<FinanceUsageDashboard> => {
   try {
-    const [byUser, byTeam] = await Promise.all([
+    const [byUser, byGroup] = await Promise.all([
       resolveUserLabels(usage.by_user, deps),
-      resolveTeamLabels(usage.by_team, deps),
+      resolveGroupLabels(usage.by_group, deps),
     ]);
-    return { ...usage, by_user: byUser, by_team: byTeam };
+    return { ...usage, by_user: byUser, by_group: byGroup };
   } catch (error) {
     logger.error('[resolveUsageLabels] Failed to resolve usage labels:', error);
     return usage;

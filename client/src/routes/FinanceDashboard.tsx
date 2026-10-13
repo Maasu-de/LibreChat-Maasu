@@ -282,18 +282,18 @@ export default function FinanceDashboard() {
         </div>
 
         <BreakdownTable
-          title={localize('com_finance_usage_by_team')}
+          title={localize('com_finance_usage_by_group')}
           description={
-            usage?.by_team_aggregation === 'overlapping_full_attribution'
-              ? localize('com_finance_team_overlap_description')
+            usage?.by_group_aggregation === 'overlapping_full_attribution'
+              ? localize('com_finance_group_overlap_description')
               : undefined
           }
           emptyLabel={
             usageQuery.isLoading
               ? localize('com_finance_loading')
-              : localize('com_finance_empty_team')
+              : localize('com_finance_empty_group')
           }
-          rows={usage?.by_team ?? []}
+          rows={usage?.by_group ?? []}
           labels={tableLabels}
         />
       </div>
