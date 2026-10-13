@@ -9,8 +9,19 @@ const mockVerify = jest.fn(() => ({
   realm_access: { roles: ['governance-admin'] },
 }));
 
+let mockInSystemScope = false;
+const mockRunAsSystem = jest.fn(async (fn) => {
+  mockInSystemScope = true;
+  try {
+    return await fn();
+  } finally {
+    mockInSystemScope = false;
+  }
+});
+
 jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), warn: jest.fn() },
+  runAsSystem: (...args) => mockRunAsSystem(...args),
 }));
 
 jest.mock('~/models', () => ({
@@ -88,6 +99,21 @@ describe('GET /api/governance/groups', () => {
     expect(response.body.groups).toHaveLength(201);
     expect(mockListGroups).toHaveBeenNthCalledWith(1, { limit: 200, offset: 0 });
     expect(mockListGroups).toHaveBeenNthCalledWith(2, { limit: 200, offset: 200 });
+  });
+
+  it('queries groups in system tenant scope', async () => {
+    const scopes = [];
+    mockListGroups.mockImplementationOnce(async () => {
+      scopes.push(mockInSystemScope);
+      return [group('a1', 'Engineering')];
+    });
+
+    const response = await request(app)
+      .get('/api/governance/groups')
+      .set('Authorization', `Bearer ${TOKEN}`);
+
+    expect(response.status).toBe(200);
+    expect(scopes).toEqual([true]);
   });
 
   it('rejects a missing token without querying groups', async () => {

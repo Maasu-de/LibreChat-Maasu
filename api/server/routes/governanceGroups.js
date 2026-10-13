@@ -1,7 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const jwksRsa = require('jwks-rsa');
-const { logger } = require('@librechat/data-schemas');
+const { logger, runAsSystem } = require('@librechat/data-schemas');
 const db = require('~/models');
 
 const router = express.Router();
@@ -77,14 +77,17 @@ async function requireGovernanceAdminToken(req, res, next) {
 
 router.get('/', requireGovernanceAdminToken, async (_req, res) => {
   try {
-    const groups = [];
-    for (let offset = 0; ; offset += PAGE_SIZE) {
-      const page = await db.listGroups({ limit: PAGE_SIZE, offset });
-      groups.push(...page);
-      if (page.length < PAGE_SIZE) {
-        break;
+    /** The Governance Admin manages the whole deployment, so this read is deliberately cross-tenant */
+    const groups = await runAsSystem(async () => {
+      const all = [];
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const page = await db.listGroups({ limit: PAGE_SIZE, offset });
+        all.push(...page);
+        if (page.length < PAGE_SIZE) {
+          return all;
+        }
       }
-    }
+    });
 
     return res.status(200).json({
       groups: groups.map((group) => ({ id: group._id.toString(), name: group.name })),
