@@ -1,0 +1,81 @@
+import * as fs from 'fs';
+import FormData from 'form-data';
+import type { AxiosRequestConfig } from 'axios';
+import { applyAxiosProxyConfig } from '~/utils/proxy';
+import { createAxiosInstance } from '~/utils/axios';
+
+/**
+ * Docling Serve-backed PDF extraction.
+ *
+ * Off by default. Operators opt in by setting `DOCLING_URL` to a Docling Serve
+ * base URL (e.g. `http://docling:5001`). When set, PDFs are converted to Markdown
+ * by Docling, which keeps headings and tables and runs OCR on pages without a text
+ * layer. The document parser falls back to the pdfjs text layer if the call fails.
+ */
+
+const axios = createAxiosInstance();
+
+/** Docling runs layout, table and OCR models on CPU; large PDFs take minutes. */
+const DOCLING_TIMEOUT_MS = 5 * 60 * 1000;
+
+type DoclingConversionStatus =
+  | 'pending'
+  | 'started'
+  | 'success'
+  | 'partial_success'
+  | 'failure'
+  | 'skipped';
+
+interface DoclingConvertResponse {
+  document?: { md_content?: string | null };
+  status: DoclingConversionStatus;
+  errors?: { error_message?: string }[];
+}
+
+/** Returns the configured Docling Serve base URL, or `undefined` if Docling is disabled. */
+export function getDoclingURL(): string | undefined {
+  const url = process.env.DOCLING_URL?.trim();
+  return url ? url.replace(/\/+$/, '') : undefined;
+}
+
+/**
+ * Converts a PDF to Markdown with Docling Serve's synchronous file endpoint.
+ * Embedded images are replaced by placeholders so no base64 reaches the prompt.
+ *
+ * @throws {Error} if the request fails or Docling reports a failed conversion.
+ */
+export async function doclingPdfToMarkdown(
+  file: Express.Multer.File,
+  baseURL: string,
+): Promise<string> {
+  const form = new FormData();
+  form.append('files', fs.createReadStream(file.path), {
+    filename: file.originalname || 'document.pdf',
+    contentType: 'application/pdf',
+  });
+  form.append('from_formats', 'pdf');
+  form.append('to_formats', 'md');
+  form.append('image_export_mode', 'placeholder');
+  form.append('do_ocr', 'true');
+  form.append('do_table_structure', 'true');
+
+  const url = `${baseURL}/v1/convert/file`;
+  const config: AxiosRequestConfig = {
+    headers: form.getHeaders(),
+    timeout: DOCLING_TIMEOUT_MS,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  };
+  applyAxiosProxyConfig(config, url);
+
+  const { data } = await axios.post<DoclingConvertResponse>(url, form, config);
+
+  if (data.status !== 'success' && data.status !== 'partial_success') {
+    const reasons = (data.errors ?? []).map((e) => e.error_message).filter(Boolean);
+    throw new Error(
+      `Docling conversion ${data.status}${reasons.length ? `: ${reasons.join('; ')}` : ''}`,
+    );
+  }
+
+  return data.document?.md_content ?? '';
+}
