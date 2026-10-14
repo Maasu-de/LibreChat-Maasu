@@ -24,12 +24,12 @@
   --gray-100: #eaf5fc;
   --gray-200: #d9e1ee;
   --gray-300: #c0c0c0;
-  --gray-400: #9095aa;
-  --gray-500: #5e6380;
-  --gray-600: #3d4263;
-  --gray-700: #22274b;
-  --gray-800: #171b37;
-  --gray-850: #101327;
+  --gray-400: #8a9eae;
+  --gray-500: #526d87;
+  --gray-600: #3d607d;
+  --gray-700: #233f5d;
+  --gray-800: #152d4c;
+  --gray-850: #0d203d;
   --gray-900: #010001;
   --green-50: #ecfdf5;
   --green-100: #d1fae5;
@@ -146,7 +146,7 @@ html {
   --secondary: 222 100% 98%;
   --secondary-foreground: 300 100% 0.2%;
   --muted: 202 75% 95%;
-  --muted-foreground: 232 15% 44%;
+  --muted-foreground: 209 24% 43%;
   --accent: 202 75% 95%;
   --accent-foreground: 300 100% 0.2%;
   --destructive: 0 84.2% 60.2%;
@@ -159,7 +159,7 @@ html {
   --chart-2: 199 77% 74%;
   --chart-3: 240 64% 27%;
   --chart-4: 0 0% 75%;
-  --chart-5: 232 15% 44%;
+  --chart-5: 209 24% 43%;
   --switch-unchecked: 0 0% 58%;
 }
 .dark {
@@ -170,54 +170,54 @@ html {
   --text-primary: var(--white);
   --text-secondary: #c0c0c0;
   --text-secondary-alt: #c0c0c0;
-  --text-tertiary: #aeb6d1;
+  --text-tertiary: #a9c4d9;
   --text-warning: var(--amber-500);
   --text-destructive: var(--red-600);
-  --header-primary: #101327;
+  --header-primary: #0d203d;
   --header-hover: #191970;
   --header-button-hover: #191970;
-  --surface-active: #262b68;
-  --surface-active-alt: #262b68;
+  --surface-active: #153e68;
+  --surface-active-alt: #153e68;
   --surface-hover: #191970;
-  --surface-hover-alt: #262b68;
-  --surface-primary: #101327;
-  --surface-primary-alt: #101327;
+  --surface-hover-alt: #153e68;
+  --surface-primary: #0d203d;
+  --surface-primary-alt: #0d203d;
   --surface-primary-contrast: #191970;
   --surface-secondary: #191970;
   --surface-secondary-alt: #191970;
-  --surface-tertiary: #262b68;
-  --surface-tertiary-alt: #262b68;
-  --surface-dialog: #101327;
+  --surface-tertiary: #153e68;
+  --surface-tertiary-alt: #153e68;
+  --surface-dialog: #0d203d;
   --surface-submit: #89cff0;
   --surface-submit-hover: #b8e4f8;
   --surface-submit-ink: #010001;
   --surface-destructive: var(--red-800);
   --surface-destructive-hover: var(--red-900);
-  --surface-chat: #101327;
-  --border-light: #41456e;
-  --border-medium-alt: #41456e;
-  --border-medium: #41456e;
-  --border-heavy: #666b90;
+  --surface-chat: #0d203d;
+  --border-light: #3d607d;
+  --border-medium-alt: #3d607d;
+  --border-medium: #3d607d;
+  --border-heavy: #5d83a0;
   --border-xheavy: #8a8f9e;
   --border-destructive: var(--red-500);
   /* These are test styles */
 
   --background: 300 100% 0.2%;
   --foreground: 240 100% 99.8%;
-  --card: 232 42% 11%;
+  --card: 213 65% 15%;
   --card-foreground: 240 100% 99.8%;
   --primary: 199 77% 74%;
   --primary-foreground: 300 100% 0.2%;
   --secondary: 240 64% 27%;
   --secondary-foreground: 240 100% 99.8%;
-  --muted: 232 42% 11%;
+  --muted: 213 65% 15%;
   --muted-foreground: 0 0% 75%;
   --accent: 240 64% 27%;
   --accent-foreground: 240 100% 99.8%;
   --destructive: 0 62.8% 40.6%;
   --destructive-foreground: 0 0% 98%;
-  --border: 235 26% 34%;
-  --input: 235 26% 34%;
+  --border: 207 34% 36%;
+  --input: 207 34% 36%;
   --ring: 199 77% 74%;
   --chart-1: 199 77% 74%;
   --chart-2: 235 99% 46%;
@@ -229,25 +229,25 @@ html {
 
 html:not(.dark) .aimo-sidebar {
   --surface-primary-alt: #191970;
-  --surface-primary: #24247e;
-  --surface-primary-contrast: #24247e;
-  --surface-secondary: #24247e;
-  --surface-secondary-alt: #30308a;
-  --surface-tertiary: #30308a;
-  --surface-active: #30308a;
+  --surface-primary: #0e3361;
+  --surface-primary-contrast: #0e3361;
+  --surface-secondary: #0e3361;
+  --surface-secondary-alt: #164777;
+  --surface-tertiary: #164777;
+  --surface-active: #164777;
   --surface-active-alt: #0115e9;
-  --surface-hover: #30308a;
-  --surface-hover-alt: #42429e;
+  --surface-hover: #164777;
+  --surface-hover-alt: #1e588e;
   --text-primary: #fefeff;
   --text-secondary: #d9e1ee;
   --text-secondary-alt: #d9e1ee;
-  --text-tertiary: #c0c8df;
-  --border-light: #525298;
-  --border-medium: #6464a7;
-  --border-heavy: #7777b5;
+  --text-tertiary: #b8e4f8;
+  --border-light: #5d9bc4;
+  --border-medium: #77b4d7;
+  --border-heavy: #89cff0;
   --ring-primary: #89cff0;
   --foreground: 0 0% 100%;
-  --accent: 240 47% 37%;
+  --accent: 208 69% 28%;
   --accent-foreground: 0 0% 100%;
   --muted-foreground: 225 32% 85%;
   background: #191970;
@@ -263,11 +263,11 @@ html:not(.dark) .aimo-sidebar :focus-visible {
 }
 
 html.dark .aimo-sidebar {
-  --surface-primary-alt: #10133c;
+  --surface-primary-alt: #0b2349;
   --text-primary: #fefeff;
   --text-secondary: #c0c0c0;
   --ring-primary: #89cff0;
-  background: #10133c;
+  background: #0b2349;
   color: #fefeff;
 }
 
@@ -1177,7 +1177,7 @@ pre {
   --tw-prose-captions: var(--text-tertiary);
   --tw-prose-code: var(--text-primary);
   --tw-prose-pre-code: #fefeff;
-  --tw-prose-pre-bg: #101327;
+  --tw-prose-pre-bg: #0d203d;
   --tw-prose-th-borders: var(--border-medium);
   --tw-prose-td-borders: var(--border-light);
   --tw-prose-invert-body: #c0c0c0;
@@ -1186,16 +1186,16 @@ pre {
   --tw-prose-invert-links: #89cff0;
   --tw-prose-invert-bold: #fefeff;
   --tw-prose-invert-counters: #c0c0c0;
-  --tw-prose-invert-bullets: #5e6380;
-  --tw-prose-invert-hr: #41456e;
+  --tw-prose-invert-bullets: #526d87;
+  --tw-prose-invert-hr: #3d607d;
   --tw-prose-invert-quotes: #fefeff;
-  --tw-prose-invert-quote-borders: #41456e;
+  --tw-prose-invert-quote-borders: #3d607d;
   --tw-prose-invert-captions: #c0c0c0;
   --tw-prose-invert-code: #fefeff;
   --tw-prose-invert-pre-code: #c0c0c0;
   --tw-prose-invert-pre-bg: rgba(0, 0, 0, 0.5);
-  --tw-prose-invert-th-borders: #41456e;
-  --tw-prose-invert-td-borders: #41456e;
+  --tw-prose-invert-th-borders: #3d607d;
+  --tw-prose-invert-td-borders: #3d607d;
   font-size: 1rem;
   line-height: 1.4;
 }
@@ -1431,7 +1431,7 @@ pre[class*='language-'] {
 .hljs-template-variable,
 .hljs-type,
 .hljs-variable {
-  color: #9a2f6a;
+  color: #0115e9;
 }
 .hljs-bullet,
 .hljs-link,
@@ -1476,7 +1476,7 @@ pre[class*='language-'] {
 .dark .hljs-template-variable,
 .dark .hljs-type,
 .dark .hljs-variable {
-  color: #df3079;
+  color: #89cff0;
 }
 .dark .hljs-bullet,
 .dark .hljs-link,

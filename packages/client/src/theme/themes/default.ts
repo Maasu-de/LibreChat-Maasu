@@ -7,9 +7,9 @@ import { IThemeRGB } from '../types';
 export const defaultTheme: IThemeRGB = {
   // Text colors
   'rgb-text-primary': '1 0 1',
-  'rgb-text-secondary': '61 66 99',
-  'rgb-text-secondary-alt': '94 99 128',
-  'rgb-text-tertiary': '94 99 128',
+  'rgb-text-secondary': '61 96 125',
+  'rgb-text-secondary-alt': '82 109 135',
+  'rgb-text-tertiary': '82 109 135',
   'rgb-text-warning': '245 158 11', // #f59e0b (amber-500)
 
   // Ring colors
@@ -43,8 +43,8 @@ export const defaultTheme: IThemeRGB = {
   'rgb-border-light': '217 225 238',
   'rgb-border-medium': '192 192 192',
   'rgb-border-medium-alt': '192 192 192',
-  'rgb-border-heavy': '144 149 170',
-  'rgb-border-xheavy': '94 99 128',
+  'rgb-border-heavy': '138 158 174',
+  'rgb-border-xheavy': '82 109 135',
 
   // Brand colors
   'rgb-brand-purple': '1 21 233',
@@ -60,7 +60,7 @@ export const defaultTheme: IThemeRGB = {
   'rgb-secondary': '245 248 255',
   'rgb-secondary-foreground': '1 0 1',
   'rgb-muted': '234 245 252',
-  'rgb-muted-foreground': '94 99 128',
+  'rgb-muted-foreground': '82 109 135',
   'rgb-accent': '234 245 252',
   'rgb-accent-foreground': '1 0 1',
   'rgb-destructive-foreground': '254 254 255',

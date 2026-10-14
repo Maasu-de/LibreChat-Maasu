@@ -3,6 +3,7 @@ const { Types } = require('mongoose');
 const {
   generateCheckAccess,
   createGetGovernanceUsage,
+  resolveUsageLabels,
   testGovernanceConnection,
 } = require('@librechat/api');
 const { Permissions, PermissionTypes } = require('librechat-data-provider');
@@ -16,6 +17,23 @@ const router = express.Router();
 // The Governance Admin server authenticates with its own Keycloak token, not a
 // LibreChat session, so this route is mounted before requireJwtAuth.
 router.use('/groups', governanceGroups);
+
+router.post('/usage-labels', governanceGroups.requireGovernanceAdminToken, async (req, res) => {
+  const byUser = req.body?.by_user;
+  const byTeam = req.body?.by_team;
+  const validRows = (rows) =>
+    Array.isArray(rows) &&
+    rows.every((row) => typeof row?.key === 'string' && typeof row?.label === 'string');
+  if (!validRows(byUser) || !validRows(byTeam)) {
+    return res.status(400).json({ message: 'Invalid usage labels request' });
+  }
+
+  const result = await resolveUsageLabels(
+    { by_user: byUser, by_team: byTeam },
+    { findUsers, findGroups },
+  );
+  return res.status(200).json(result);
+});
 
 router.use(requireJwtAuth);
 

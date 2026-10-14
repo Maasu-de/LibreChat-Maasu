@@ -61,11 +61,14 @@ function AuthLayout({
     <div className="relative flex min-h-screen flex-col bg-white dark:bg-gray-900">
       <Banner />
       <BlinkAnimation active={isFetching}>
-        <div className="mx-auto mt-4 h-40 w-full max-w-xl">
-          <Logo
-            label={localize('com_ui_logo', { 0: 'AIMO' })}
-            className="h-full w-full"
-          />
+        <div
+          className={
+            pathname.includes('login')
+              ? 'mx-auto mt-4 h-24 w-full max-w-xs'
+              : 'mx-auto mt-4 h-40 w-full max-w-xl'
+          }
+        >
+          <Logo label={localize('com_ui_logo', { 0: 'AIMO' })} className="h-full w-full" />
         </div>
       </BlinkAnimation>
       <DisplayError />

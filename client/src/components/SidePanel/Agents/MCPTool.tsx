@@ -248,7 +248,7 @@ export default function MCPTool({ serverInfo }: { serverInfo?: MCPServerInfo }) 
                               'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
                               isExpanded ? 'visible' : 'pointer-events-none invisible',
                               allProgrammatic
-                                ? 'bg-violet-500/20 text-violet-500 hover:bg-violet-500/30'
+                                ? 'bg-blue-500/20 text-blue-500 hover:bg-blue-500/30'
                                 : 'text-text-tertiary hover:bg-surface-hover hover:text-text-primary',
                             )}
                             onClick={(e) => {
@@ -264,7 +264,7 @@ export default function MCPTool({ serverInfo }: { serverInfo?: MCPServerInfo }) 
                             }}
                           >
                             <Code2
-                              className={cn('h-4 w-4', allProgrammatic && 'fill-violet-500/30')}
+                              className={cn('h-4 w-4', allProgrammatic && 'fill-blue-500/30')}
                             />
                           </TooltipAnchor>
                         )}

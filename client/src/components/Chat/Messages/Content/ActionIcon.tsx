@@ -90,7 +90,7 @@ export default function ActionIcon() {
               <g style={{ display: 'block' }} transform="matrix(1,0,0,1,10006,10006)" opacity="1">
                 <g opacity="1" transform="matrix(1,0,0,1,0,0)">
                   <path
-                    fill="rgb(177,98,253)"
+                    fill="var(--ring-primary)"
                     fillOpacity="1"
                     d=" M4.5,1 C4.5,1 4.5,3.5 4.5,3.5 C4.5,4.05 4.05,4.5 3.5,4.5 C3.5,4.5 1,4.5 1,4.5 C0.45,4.5 0,4.05 0,3.5 C0,3.5 0,1 0,1 C0,0.45 0.45,0 1,0 C1,0 3.5,0 3.5,0 C4.05,0 4.5,0.45 4.5,1z"
                   ></path>
@@ -98,7 +98,7 @@ export default function ActionIcon() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     fillOpacity="0"
-                    stroke="rgb(177,98,253)"
+                    stroke="var(--ring-primary)"
                     strokeOpacity="1"
                     strokeWidth="3"
                     d=" M4.5,1 C4.5,1 4.5,3.5 4.5,3.5 C4.5,4.05 4.05,4.5 3.5,4.5 C3.5,4.5 1,4.5 1,4.5 C0.45,4.5 0,4.05 0,3.5 C0,3.5 0,1 0,1 C0,0.45 0.45,0 1,0 C1,0 3.5,0 3.5,0 C4.05,0 4.5,0.45 4.5,1z"
@@ -129,7 +129,7 @@ export default function ActionIcon() {
               <g style={{ display: 'block' }} transform="matrix(1,0,0,1,10006,10006)" opacity="1">
                 <g opacity="1" transform="matrix(1,0,0,1,0,0)">
                   <path
-                    fill="rgb(177,98,253)"
+                    fill="var(--ring-primary)"
                     fillOpacity="1"
                     d=" M4.5,1 C4.5,1 4.5,3.5 4.5,3.5 C4.5,4.05 4.05,4.5 3.5,4.5 C3.5,4.5 1,4.5 1,4.5 C0.45,4.5 0,4.05 0,3.5 C0,3.5 0,1 0,1 C0,0.45 0.45,0 1,0 C1,0 3.5,0 3.5,0 C4.05,0 4.5,0.45 4.5,1z"
                   ></path>
@@ -137,7 +137,7 @@ export default function ActionIcon() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     fillOpacity="0"
-                    stroke="rgb(177,98,253)"
+                    stroke="var(--ring-primary)"
                     strokeOpacity="1"
                     strokeWidth="3"
                     d=" M4.5,1 C4.5,1 4.5,3.5 4.5,3.5 C4.5,4.05 4.05,4.5 3.5,4.5 C3.5,4.5 1,4.5 1,4.5 C0.45,4.5 0,4.05 0,3.5 C0,3.5 0,1 0,1 C0,0.45 0.45,0 1,0 C1,0 3.5,0 3.5,0 C4.05,0 4.5,0.45 4.5,1z"
@@ -160,7 +160,7 @@ export default function ActionIcon() {
         <g style={{ display: 'block' }} transform="matrix(1,0,0,1,0,0)" opacity="1">
           <g opacity="1" transform="matrix(1,0,0,1,10,10.25)">
             <path
-              fill="rgb(177,98,253)"
+              fill="var(--ring-primary)"
               fillOpacity="1"
               d=" M2,-0.75 C2,-0.75 2,0.75 2,0.75 C2,0.75 -2,0.75 -2,0.75 C-2,0.75 -2,-0.75 -2,-0.75 C-2,-0.75 2,-0.75 2,-0.75z"
             ></path>

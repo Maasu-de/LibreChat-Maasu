@@ -27,13 +27,13 @@ interface MCPToolItemProps {
 
 function getToolItemStyle(isDeferred: boolean, isProgrammatic: boolean): string {
   if (isDeferred && isProgrammatic) {
-    return 'border-purple-500/50 bg-purple-500/5 hover:bg-purple-500/10';
+    return 'border-blue-500/50 bg-blue-500/5 hover:bg-blue-500/10';
   }
   if (isDeferred) {
     return 'border-amber-500/50 bg-amber-500/5 hover:bg-amber-500/10';
   }
   if (isProgrammatic) {
-    return 'border-violet-500/50 bg-violet-500/5 hover:bg-violet-500/10';
+    return 'border-blue-500/50 bg-blue-500/5 hover:bg-blue-500/10';
   }
   return 'border-token-border-light hover:bg-token-surface-secondary';
 }
@@ -83,7 +83,7 @@ export default function MCPToolItem({
       </span>
       <div className="ml-2 flex shrink-0 items-center gap-1.5">
         {isDeferred && <Clock className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />}
-        {isProgrammatic && <Code2 className="h-3.5 w-3.5 text-violet-500" aria-hidden="true" />}
+        {isProgrammatic && <Code2 className="h-3.5 w-3.5 text-blue-500" aria-hidden="true" />}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -135,7 +135,7 @@ export default function MCPToolItem({
                 className="cursor-pointer"
               >
                 <div className="flex items-center gap-2">
-                  <Code2 className="h-4 w-4 text-violet-500" />
+                  <Code2 className="h-4 w-4 text-blue-500" />
                   <div className="flex flex-col">
                     <span>{localize('com_ui_mcp_programmatic')}</span>
                     <span className="text-xs text-text-secondary">

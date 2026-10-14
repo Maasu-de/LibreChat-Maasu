@@ -45,7 +45,7 @@ const AnimatedSearchInput = ({
 
           {/* Gradient overlay */}
           <div
-            className={`pointer-events-none absolute inset-0 z-20 rounded-lg bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-blue-500/20 transition-all duration-500 ease-in-out ${isSearching && hasValue ? 'opacity-100 blur-sm' : 'opacity-0 blur-none'} `}
+            className={`pointer-events-none absolute inset-0 z-20 rounded-lg bg-gradient-to-r from-blue-500/20 via-blue-500/20 to-blue-500/20 transition-all duration-500 ease-in-out ${isSearching && hasValue ? 'opacity-100 blur-sm' : 'opacity-0 blur-none'} `}
           />
 
           {/* Animated loading indicator */}
@@ -69,12 +69,12 @@ const AnimatedSearchInput = ({
             className={`bg-gradient-radial absolute inset-0 from-blue-500/10 to-transparent transition-opacity duration-700 ease-in-out ${isSearching && hasValue ? 'animate-pulse-slow opacity-100' : 'opacity-0'} `}
           />
           <div
-            className={`absolute inset-0 bg-gradient-to-r from-purple-500/5 via-blue-500/5 to-purple-500/5 blur-xl transition-all duration-700 ease-in-out ${isSearching && hasValue ? 'animate-gradient-x opacity-100' : 'opacity-0'} `}
+            className={`absolute inset-0 bg-gradient-to-r from-blue-500/5 via-blue-500/5 to-blue-500/5 blur-xl transition-all duration-700 ease-in-out ${isSearching && hasValue ? 'animate-gradient-x opacity-100' : 'opacity-0'} `}
           />
         </div>
       </div>
       <div
-        className={`absolute inset-0 -z-20 scale-100 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-blue-500/10 opacity-0 blur-xl transition-all duration-500 ease-in-out peer-focus:scale-105 peer-focus:opacity-100`}
+        className={`absolute inset-0 -z-20 scale-100 bg-gradient-to-r from-blue-500/10 via-blue-500/10 to-blue-500/10 opacity-0 blur-xl transition-all duration-500 ease-in-out peer-focus:scale-105 peer-focus:opacity-100`}
       />
     </div>
   );

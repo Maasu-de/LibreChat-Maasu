@@ -1,6 +1,6 @@
 import { memo, useCallback, lazy, Suspense } from 'react';
 import { useRecoilValue } from 'recoil';
-import { Home, SquarePen } from 'lucide-react';
+import { Home, MessagesSquare, Shield, SquarePen } from 'lucide-react';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { Skeleton, Button, TooltipAnchor } from '@librechat/client';
@@ -158,25 +158,58 @@ function ExpandedPanel({
       </div>
 
       <div className="mt-auto flex flex-col gap-2">
-        {startupConfig?.gatewayUrl && (
-          <>
-            <div className="mx-2 border-t border-border-light" />
-            <TooltipAnchor
-              side="right"
-              description={localize('com_nav_gateway')}
-              render={
-                <a
-                  href={startupConfig.gatewayUrl}
-                  aria-label={localize('com_nav_gateway')}
-                  data-testid="homepage-link"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
-                >
-                  <Home className="h-5 w-5" aria-hidden="true" />
-                </a>
-              }
-            />
-          </>
+        {(startupConfig?.governanceAdminUrl ||
+          startupConfig?.libreChatAdminUrl ||
+          startupConfig?.gatewayUrl) && <div className="mx-2 border-t border-border-light" />}
+        {startupConfig?.governanceAdminUrl && (
+          <TooltipAnchor
+            side="right"
+            description={localize('com_nav_governance_admin')}
+            render={
+              <a
+                href={startupConfig.governanceAdminUrl}
+                aria-label={localize('com_nav_governance_admin')}
+                data-testid="governance-admin-link"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
+              >
+                <Shield className="h-5 w-5" aria-hidden="true" />
+              </a>
+            }
+          />
         )}
+        {startupConfig?.libreChatAdminUrl && (
+          <TooltipAnchor
+            side="right"
+            description={localize('com_nav_librechat_admin')}
+            render={
+              <a
+                href={startupConfig.libreChatAdminUrl}
+                aria-label={localize('com_nav_librechat_admin')}
+                data-testid="chat-admin-link"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
+              >
+                <MessagesSquare className="h-5 w-5" aria-hidden="true" />
+              </a>
+            }
+          />
+        )}
+        {startupConfig?.gatewayUrl && (
+          <TooltipAnchor
+            side="right"
+            description={localize('com_nav_gateway')}
+            render={
+              <a
+                href={startupConfig.gatewayUrl}
+                aria-label={localize('com_nav_gateway')}
+                data-testid="homepage-link"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
+              >
+                <Home className="h-5 w-5" aria-hidden="true" />
+              </a>
+            }
+          />
+        )}
+        <div className="-mx-[13.5px] border-t border-border-light" />
         <Suspense fallback={<Skeleton className="h-9 w-9 rounded-lg" />}>
           <AccountSettings collapsed />
         </Suspense>
