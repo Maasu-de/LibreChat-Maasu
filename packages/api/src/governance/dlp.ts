@@ -165,13 +165,20 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
 
 /** True when an OpenAI-compatible completion base URL targets the configured gateway. */
 export function isGovernanceGatewayUrl(completionBaseUrl: string): boolean {
-  try {
-    return gatewayRoot(completionBaseUrl) === getDlpConfiguration().gatewayUrl;
-  } catch {
+  const configuredGatewayUrl = gatewayRoot(process.env.GOVERNANCE_API_BASE_URL ?? '');
+  if (!configuredGatewayUrl || gatewayRoot(completionBaseUrl) !== configuredGatewayUrl) {
     // Endpoint initializers call this for every configured endpoint. A deployment without the
-    // governance integration must simply leave those unrelated endpoints untouched.
+    // governance integration, or an unrelated endpoint, must be left untouched.
     return false;
   }
+
+  // A matching gateway with DLP enabled must be fully configured. Do not turn a missing service
+  // credential into an ordinary, ungoverned completion path.
+  if (isGovernanceDlpEnabled()) {
+    getDlpConfiguration();
+  }
+
+  return true;
 }
 
 function getRequestUrl(input: RequestInfo | URL): string {

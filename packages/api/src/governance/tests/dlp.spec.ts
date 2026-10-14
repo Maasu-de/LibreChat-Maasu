@@ -16,7 +16,11 @@ import {
 } from '../dlp';
 import { getReviewStore } from '../review';
 
-const environmentKeys = ['GOVERNANCE_API_BASE_URL', 'LIBRECHAT_SERVICE_CREDENTIAL'] as const;
+const environmentKeys = [
+  'GOVERNANCE_API_BASE_URL',
+  'LIBRECHAT_SERVICE_CREDENTIAL',
+  'GOVERNANCE_DLP_ENABLED',
+] as const;
 
 const originalEnvironment = new Map<string, string | undefined>(
   environmentKeys.map((key): [string, string | undefined] => [key, process.env[key]]),
@@ -25,6 +29,7 @@ const originalEnvironment = new Map<string, string | undefined>(
 beforeEach(() => {
   process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'server-only-credential';
+  delete process.env.GOVERNANCE_DLP_ENABLED;
 });
 
 afterAll(() => {
@@ -46,6 +51,15 @@ describe('Governance DLP', () => {
   ])('matches completion base URL %s against configured %s', (baseURL, configured, expected) => {
     process.env.GOVERNANCE_API_BASE_URL = configured;
     expect(isGovernanceGatewayUrl(baseURL)).toBe(expected);
+  });
+
+  it('fails closed when DLP is enabled for the configured gateway without a service credential', () => {
+    process.env.GOVERNANCE_DLP_ENABLED = 'true';
+    delete process.env.LIBRECHAT_SERVICE_CREDENTIAL;
+
+    expect(() => isGovernanceGatewayUrl('http://governance.test/api/v1/dlp')).toThrow(
+      'The message could not be checked against the data loss prevention policy.',
+    );
   });
 
   it('forwards the text-only request to the DLP completions API without consuming the stream', async () => {
@@ -117,7 +131,10 @@ describe('Governance DLP', () => {
   });
 
   it('adds group attribution without applying the DLP request-shape restrictions', async () => {
-    const upstreamFetch = jest.fn(async () => new Response('ok'));
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+        new Response('ok'),
+    );
     const req = {
       user: { id: 'user-123' },
       governanceGroupIds: ['group-1', 'group-2'],
