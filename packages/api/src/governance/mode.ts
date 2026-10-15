@@ -7,9 +7,10 @@ export function isGovernancePilotEnabled(): boolean {
 }
 
 /**
- * Test-only switch for issue #150: lifts the pilot's attachment restrictions so the current,
- * ungoverned attachment path can be observed. Every other pilot restriction stays in force.
+ * Allows text attachments in pilot mode (#150): files of `GOVERNANCE_ATTACHMENT_MIME_TYPES` are
+ * uploaded as text and sent inside the message, so the gateway's DLP scan covers them. Every
+ * other pilot restriction stays in force.
  */
-export function isGovernanceAttachmentTestEnabled(): boolean {
-  return isGovernancePilotEnabled() && isEnabled(process.env.GOVERNANCE_PILOT_TEST_ATTACHMENTS);
+export function isGovernanceAttachmentsEnabled(): boolean {
+  return isGovernancePilotEnabled() && isEnabled(process.env.GOVERNANCE_ATTACHMENTS_ENABLED);
 }

@@ -4,7 +4,7 @@ import type { RequestHandler, Response } from 'express';
 import {
   GOVERNANCE_ENDPOINT,
   isGovernancePilotEnabled,
-  isGovernanceAttachmentTestEnabled,
+  isGovernanceAttachmentsEnabled,
 } from './mode';
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -54,7 +54,7 @@ function populated(value: JsonValue): boolean {
 
 function hasUnsupportedSettings(body: Submission): boolean {
   return Object.entries(body).some(([key, value]) => {
-    if (key === 'files' && isGovernanceAttachmentTestEnabled()) {
+    if (key === 'files' && isGovernanceAttachmentsEnabled()) {
       return false;
     }
     if (restrictedFields.has(key) && populated(value)) {
@@ -140,7 +140,7 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     ) ||
     (/^\/user\/(plugins|settings\/skills\/active)$/.test(path) && !readOnly) ||
     (/^\/admin\/(config|skills)(\/|$)/.test(path) && !readOnly) ||
-    (/^\/files(\/|$)/.test(path) && !readOnly && !isGovernanceAttachmentTestEnabled()) ||
+    (/^\/files(\/|$)/.test(path) && !readOnly && !isGovernanceAttachmentsEnabled()) ||
     (/^\/files\/speech(\/|$)/.test(path) && path !== '/files/speech/config') ||
     /^\/convos\/import(\/|$)/.test(path) ||
     // Titles are generated server-side through the governed endpoint; this
@@ -164,7 +164,7 @@ type HistoryMessage = Pick<
 
 function isGovernanceTextMessage(message: HistoryMessage): boolean {
   return (
-    (!message.files?.length || isGovernanceAttachmentTestEnabled()) &&
+    (!message.files?.length || isGovernanceAttachmentsEnabled()) &&
     !message.attachments?.length &&
     (!message.content?.length ||
       message.content.every(
