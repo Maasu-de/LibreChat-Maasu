@@ -11,9 +11,10 @@ const isMessageUpload = (
   file.embedded !== true;
 
 /**
- * Splits the composer files of a reviewed message that was not sent. Uploads named in the review's
- * file findings are deleted. The other files go back to the composer, or, without `restore`, the
- * uploads among them are deleted as well. Files attached from the user's files are never deleted.
+ * Splits the composer files of a reviewed message that was not sent. Uploads with a blocked
+ * finding are deleted, since they can never be sent. The other files go back to the composer, so
+ * the user can change the message and send them again, or, without `restore`, the uploads among
+ * them are deleted as well. Files attached from the user's files are never deleted.
  */
 export function settleDlpReviewFiles(
   review: TPendingDlpReview,
@@ -27,15 +28,16 @@ export function settleDlpReviewFiles(
   }
 
   const reviewed = new Set(review.files?.map((file) => file.file_id));
-  const flagged = new Set(
-    review.result.fileFindings?.flatMap(({ fileId }) => (fileId != null ? [fileId] : [])),
+  const blocked = new Set(
+    review.result.fileFindings?.flatMap(({ fileId, action }) =>
+      fileId != null && action === 'BLOCK' ? [fileId] : [],
+    ),
   );
   for (const [key, file] of submitted) {
     if (!reviewed.has(file.file_id)) {
       continue;
     }
-    const isFlagged = flagged.has(file.file_id);
-    if (restore && !isFlagged) {
+    if (restore && !blocked.has(file.file_id)) {
       restored.set(key, { ...file });
       continue;
     }

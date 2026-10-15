@@ -123,6 +123,22 @@ const fileReview = (conversationId: string | null): TPendingDlpReview => {
   };
 };
 
+/** The same review blocked over the upload's finding, which can then never be sent. */
+const blockedFileReview = (conversationId: string | null): TPendingDlpReview => {
+  const review = fileReview(conversationId);
+  return {
+    ...review,
+    result: {
+      ...review.result,
+      decision: 'BLOCK',
+      maskedPreview: undefined,
+      fileFindings: review.result.fileFindings?.map((finding) =>
+        finding.fileId === 'flagged' ? { ...finding, action: 'BLOCK' } : finding,
+      ),
+    },
+  };
+};
+
 const flaggedUploadDeletion = {
   file_id: 'flagged',
   filepath: '/uploads/flagged',
@@ -503,16 +519,27 @@ it('drops a review once the chat moves to another conversation', () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
-it('deletes the uploads with findings of a cancelled review and puts its other files back', () => {
+it('puts all files of a cancelled review without blocked findings back', () => {
   renderChat(savedConversation, fileReview(savedConversation.conversationId));
 
   sendWithFilesForReview();
   expect(composerFileIds()).toEqual([]);
   fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
 
+  expect(mockDeleteFiles).not.toHaveBeenCalled();
+  expect(composerFileIds()).toEqual(['flagged', 'clean', 'library']);
+  expect(mockShowToast).not.toHaveBeenCalled();
+});
+
+it('deletes the blocked uploads of a closed review and puts its other files back', () => {
+  renderChat(savedConversation, blockedFileReview(savedConversation.conversationId));
+
+  sendWithFilesForReview();
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_close' }));
+
   expect(mockDeleteFiles).toHaveBeenCalledTimes(1);
   expect(mockDeleteFiles).toHaveBeenCalledWith({ files: [flaggedUploadDeletion] });
-  expect(composerFileIds()).toEqual(['clean']);
+  expect(composerFileIds()).toEqual(['clean', 'library']);
   expect(mockShowToast).toHaveBeenCalledWith({
     message: 'com_ui_dlp_files_removed',
     status: 'warning',
@@ -560,6 +587,6 @@ it('hides a review whose approved send failed for good, which is then closed lik
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Close review' }));
 
-  expect(mockDeleteFiles).toHaveBeenCalledWith({ files: [flaggedUploadDeletion] });
-  expect(composerFileIds()).toEqual(['clean']);
+  expect(mockDeleteFiles).not.toHaveBeenCalled();
+  expect(composerFileIds()).toEqual(['flagged', 'clean', 'library']);
 });

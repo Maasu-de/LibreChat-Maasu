@@ -666,8 +666,9 @@ export default function useChatFunctions({
   /**
    * Drops the review, unless it belongs to `keepForConversation`. A review on its way already
    * sent its skills and files. Otherwise its submit drained the `$` queue, so its skills go back
-   * to the front of that queue for the edited message. Its uploads with findings are deleted, and
-   * its other files go back to the composer with `restore`, or else its uploads are deleted too.
+   * to the front of that queue for the edited message. Its uploads with blocked findings are
+   * deleted, and its other files go back to the composer with `restore`, or else its uploads are
+   * deleted too.
    */
   const dropDlpReview = useRecoilCallback(
     ({ snapshot, set }) =>
