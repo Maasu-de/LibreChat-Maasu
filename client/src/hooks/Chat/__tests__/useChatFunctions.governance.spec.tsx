@@ -19,7 +19,10 @@ import { ephemeralAgentByConvoId } from '~/store/agents';
 import store from '~/store';
 
 const mockShowToast = jest.fn();
-const mockDeleteFiles = jest.fn();
+/** Succeeds at once, like a delete the server accepts. */
+const mockDeleteFiles = jest.fn((_vars: unknown, options?: { onSuccess?: () => void }) =>
+  options?.onSuccess?.(),
+);
 
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: { id: 'user-1' } }),
@@ -538,7 +541,10 @@ it('deletes the blocked uploads of a closed review and puts its other files back
   fireEvent.click(screen.getByRole('button', { name: 'com_ui_close' }));
 
   expect(mockDeleteFiles).toHaveBeenCalledTimes(1);
-  expect(mockDeleteFiles).toHaveBeenCalledWith({ files: [flaggedUploadDeletion] });
+  expect(mockDeleteFiles).toHaveBeenCalledWith(
+    { files: [flaggedUploadDeletion] },
+    { onSuccess: expect.any(Function) },
+  );
   expect(composerFileIds()).toEqual(['clean', 'library']);
   expect(mockShowToast).toHaveBeenCalledWith({
     message: 'com_ui_dlp_files_removed',

@@ -700,10 +700,14 @@ export default function useChatFunctions({
         if (deleted.length === 0) {
           return;
         }
-        deleteFiles({ files: deleted });
-        if (restore) {
-          showToast({ message: localize('com_ui_dlp_files_removed'), status: 'warning' });
+        if (!restore) {
+          deleteFiles({ files: deleted });
+          return;
         }
+        /** Shown after the mutation's own success toast, which would otherwise replace it. */
+        const explainRemoval = () =>
+          showToast({ message: localize('com_ui_dlp_files_removed'), status: 'warning' });
+        deleteFiles({ files: deleted }, { onSuccess: explainRemoval });
       },
     [index, deleteFiles, showToast, localize],
   );
