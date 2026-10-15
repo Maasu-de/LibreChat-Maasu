@@ -8,7 +8,7 @@ import { getAdminPanelUrl } from '~/auth/exchange';
 type NavigationUser = Partial<Pick<IUser, 'id' | '_id' | 'role' | 'tenantId'>>;
 type NavigationConfig = Pick<
   TStartupConfig,
-  'gatewayUrl' | 'libreChatAdminUrl' | 'allowAccountDeletion'
+  'gatewayUrl' | 'governanceAdminUrl' | 'libreChatAdminUrl' | 'allowAccountDeletion'
 >;
 
 function configuredHttpUrl(value?: string): string | undefined {
@@ -48,7 +48,7 @@ export async function resolveConfigNavigation({
   const gatewayUrl = configuredHttpUrl(webPublicUrl);
   const adminUrl = configuredHttpUrl(adminPanelUrl || getAdminPanelUrl());
   const navigation: NavigationConfig = { gatewayUrl, allowAccountDeletion };
-  if (!adminUrl && allowAccountDeletion) {
+  if (!adminUrl && !gatewayUrl && allowAccountDeletion) {
     return navigation;
   }
 
@@ -65,10 +65,15 @@ export async function resolveConfigNavigation({
     if (!canAccessAdmin) {
       return navigation;
     }
-    if (adminUrl && user.role === SystemRoles.ADMIN) {
-      navigation.libreChatAdminUrl = gatewayUrl
-        ? `${gatewayUrl}/api/auth/open-librechat-admin`
-        : adminUrl;
+    if (user.role === SystemRoles.ADMIN) {
+      if (gatewayUrl) {
+        navigation.governanceAdminUrl = `${gatewayUrl}/admin`;
+      }
+      if (adminUrl) {
+        navigation.libreChatAdminUrl = gatewayUrl
+          ? `${gatewayUrl}/api/auth/open-librechat-admin`
+          : adminUrl;
+      }
     }
     navigation.allowAccountDeletion = true;
   } catch (err) {

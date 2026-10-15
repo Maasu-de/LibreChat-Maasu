@@ -51,8 +51,8 @@ export default function PrincipalAvatar({
       case PrincipalType.ROLE:
         return {
           Icon: Shield,
-          containerClass: 'bg-purple-100 dark:bg-purple-900',
-          iconClass: 'text-purple-600 dark:text-purple-400',
+          containerClass: 'bg-blue-100 dark:bg-blue-900',
+          iconClass: 'text-blue-600 dark:text-blue-400',
         };
       default:
         return {

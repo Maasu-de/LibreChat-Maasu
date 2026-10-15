@@ -1,14 +1,14 @@
 import { memo, useCallback, lazy, Suspense } from 'react';
 import { useRecoilValue } from 'recoil';
-import { SquarePen } from 'lucide-react';
+import { Home, Shield, SquarePen } from 'lucide-react';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
-import { Skeleton, Sidebar, Button, TooltipAnchor } from '@librechat/client';
+import { Skeleton, Button, TooltipAnchor } from '@librechat/client';
 import type { NavLink } from '~/common';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
-import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
 import { useLocalize, useNewConvo } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { clearMessagesCache, cn } from '~/utils';
 import store from '~/store';
 
@@ -55,7 +55,7 @@ const NewChatButton = memo(function NewChatButton({
           className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-surface-hover"
           onClick={handleClick}
         >
-          <SquarePen className="h-5 w-5 text-text-primary" />
+          <SquarePen className="h-[17.5px] w-[17.5px] text-text-primary" />
         </a>
       }
     />
@@ -116,7 +116,7 @@ const NavIconButton = memo(function NavIconButton({
           )}
           onClick={handleClick}
         >
-          <link.icon className="h-5 w-5" aria-hidden="true" />
+          <link.icon className="h-[17.5px] w-[17.5px]" aria-hidden="true" />
         </Button>
       }
     />
@@ -135,37 +135,14 @@ function ExpandedPanel({
   onExpand?: () => void;
 }) {
   const localize = useLocalize();
+  const { data: startupConfig } = useGetStartupConfig();
   const { active, setActive } = useActivePanel();
   const effectiveActive = resolveActivePanel(active, links);
 
-  const toggleLabel = expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar';
-  const toggleClick = expanded ? onCollapse : onExpand;
-  const toggleSidebarHint = useShortcutHint('toggleSidebar', localize(toggleLabel));
-  const toggleSidebarAriaKey = useShortcutAriaKey('toggleSidebar');
-
   return (
-    <div className="flex h-full flex-shrink-0 flex-col gap-2 border-r border-border-light bg-surface-primary-alt px-2 py-2">
-      <TooltipAnchor
-        side="right"
-        description={toggleSidebarHint}
-        render={
-          <Button
-            id={expanded ? CLOSE_SIDEBAR_ID : undefined}
-            data-testid={expanded ? 'close-sidebar-button' : 'open-sidebar-button'}
-            size="icon"
-            variant="ghost"
-            aria-label={localize(toggleLabel)}
-            aria-expanded={expanded}
-            aria-keyshortcuts={toggleSidebarAriaKey}
-            className="h-9 w-9 rounded-lg"
-            onClick={toggleClick}
-          >
-            <Sidebar aria-hidden="true" className="h-5 w-5 text-text-primary" />
-          </Button>
-        }
-      />
+    <div className="flex h-full w-16 flex-shrink-0 flex-col gap-2 border-r border-border-light bg-surface-primary-alt px-[13.5px] pt-2">
       <NewChatButton setActive={setActive} />
-      <div className="mx-2 border-b border-border-light" />
+      <div className="-mx-[5.5px] border-b border-border-light" />
       <div className="flex flex-col gap-1 overflow-y-auto">
         {links.map((link) => (
           <NavIconButton
@@ -180,10 +157,82 @@ function ExpandedPanel({
         ))}
       </div>
 
-      <div className="mt-auto">
-        <Suspense fallback={<Skeleton className="h-9 w-9 rounded-lg" />}>
-          <AccountSettings collapsed />
-        </Suspense>
+      <div className="mt-auto flex flex-col">
+        {(startupConfig?.governanceAdminUrl ||
+          startupConfig?.libreChatAdminUrl ||
+          startupConfig?.gatewayUrl) && (
+          <>
+            <div className="-mx-[5.5px] border-t border-border-light" />
+            <div className="flex flex-col gap-1 pb-2 pt-3">
+              {startupConfig?.governanceAdminUrl && (
+                <TooltipAnchor
+                  side="right"
+                  description={localize('com_nav_governance_admin')}
+                  render={
+                    <a
+                      href={startupConfig.governanceAdminUrl}
+                      aria-label={localize('com_nav_governance_admin')}
+                      data-testid="governance-admin-link"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
+                    >
+                      <Shield className="h-[17.5px] w-[17.5px]" aria-hidden="true" />
+                    </a>
+                  }
+                />
+              )}
+              {startupConfig?.libreChatAdminUrl && (
+                <TooltipAnchor
+                  side="right"
+                  description={localize('com_nav_librechat_admin')}
+                  render={
+                    <a
+                      href={startupConfig.libreChatAdminUrl}
+                      aria-label={localize('com_nav_librechat_admin')}
+                      data-testid="chat-admin-link"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-[17.5px] w-[17.5px]"
+                        aria-hidden="true"
+                      >
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                    </a>
+                  }
+                />
+              )}
+              {startupConfig?.gatewayUrl && (
+                <TooltipAnchor
+                  side="right"
+                  description={localize('com_nav_gateway')}
+                  render={
+                    <a
+                      href={startupConfig.gatewayUrl}
+                      aria-label={localize('com_nav_gateway')}
+                      data-testid="homepage-link"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-surface-hover"
+                    >
+                      <Home className="h-[17.5px] w-[17.5px]" aria-hidden="true" />
+                    </a>
+                  }
+                />
+              )}
+            </div>
+          </>
+        )}
+        <div className="-mx-[13.5px] flex h-[59px] shrink-0 items-center justify-center border-t border-border-light">
+          <Suspense fallback={<Skeleton className="h-[34px] w-[34px] rounded-full" />}>
+            <AccountSettings collapsed />
+          </Suspense>
+        </div>
       </div>
     </div>
   );

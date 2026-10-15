@@ -1,8 +1,6 @@
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { MCPIcon, AttachmentIcon, OpenAIMinimalIcon } from '@librechat/client';
 import {
-  BarChart3,
   Bot,
   Brain,
   Bookmark,
@@ -90,11 +88,6 @@ export default function useSideNavLinks({
     permissionType: PermissionTypes.MCP_SERVERS,
     permission: Permissions.CREATE,
   });
-  const hasAccessToFinance = useHasAccess({
-    permissionType: PermissionTypes.FINANCE,
-    permission: Permissions.READ,
-  });
-  const navigate = useNavigate();
   const { availableMCPServers } = useMCPServerManager();
 
   const { agentsConfig } = useGetAgentsConfig({ endpointsConfig });
@@ -213,16 +206,6 @@ export default function useSideNavLinks({
       });
     }
 
-    if (hasAccessToFinance) {
-      links.push({
-        title: 'com_nav_cost_usage',
-        label: '',
-        icon: BarChart3,
-        id: 'finance',
-        onClick: () => navigate('/finance'),
-      });
-    }
-
     if (includeHidePanel && hidePanel) {
       links.push({
         title: 'com_sidepanel_hide_panel',
@@ -251,8 +234,6 @@ export default function useSideNavLinks({
     availableMCPServers,
     hasAccessToUseMCPSettings,
     hasAccessToCreateMCP,
-    hasAccessToFinance,
-    navigate,
     includeHidePanel,
     hidePanel,
   ]);

@@ -71,19 +71,16 @@ describe('markGovernanceDlp', () => {
     },
   );
 
-  it(
-    'resolves groups for attribution while leaving sends unmarked when DLP is disabled',
-    async () => {
-      process.env.GOVERNANCE_DLP_ENABLED = 'false';
+  it('resolves groups for attribution while leaving sends unmarked when DLP is disabled', async () => {
+    process.env.GOVERNANCE_DLP_ENABLED = 'false';
 
-      const { req, next } = await run({ text: 'normal text' });
+    const { req, next } = await run({ text: 'normal text' });
 
-      expect(req.governanceDlpEligible).toBe(false);
-      expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
-      expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
-      expect(next).toHaveBeenCalledTimes(1);
-    },
-  );
+    expect(req.governanceDlpEligible).toBe(false);
+    expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
+    expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
+    expect(next).toHaveBeenCalledTimes(1);
+  });
 
   it('resolves the user groups for every send in pilot mode', async () => {
     process.env.GOVERNANCE_PILOT_ENABLED = 'true';

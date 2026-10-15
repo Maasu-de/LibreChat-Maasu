@@ -3,6 +3,7 @@ import { apiBaseUrl, QueryKeys, request, dataService } from 'librechat-data-prov
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import type { Agents, TConversation } from 'librechat-data-provider';
 import { isNotFoundError, updateConvoInAllQueries } from '~/utils';
+import { formatChatTitle } from '~/utils/chatTitle';
 import { useGetStartupConfig } from '../Endpoints';
 
 export interface StreamStatusResponse {
@@ -165,7 +166,7 @@ export function useTitleGeneration(enabled = true) {
         updateConvoInAllQueries(queryClient, conversationId, (c) => ({ ...c, title }));
         // Only update document title if this conversation is currently active
         if (window.location.pathname.includes(conversationId)) {
-          document.title = title;
+          document.title = formatChatTitle(title);
         }
         markTitleGenerationProcessed(conversationId);
         setReadyToFetch((prev) => prev.filter((id) => id !== conversationId));

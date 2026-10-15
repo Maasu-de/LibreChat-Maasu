@@ -18,6 +18,37 @@ function validateRGB(rgb: string): boolean {
   });
 }
 
+// Tailwind's utility tokens are consumed as hsl(var(--token)); the other
+// theme variables are consumed as complete CSS colors.
+const hslVariables = new Set([
+  '--background', '--foreground', '--primary', '--primary-foreground',
+  '--secondary', '--secondary-foreground', '--muted', '--muted-foreground',
+  '--accent', '--accent-foreground', '--destructive-foreground', '--border',
+  '--input', '--ring', '--card', '--card-foreground',
+]);
+
+function rgbToHsl(rgb: string): string {
+  const [red, green, blue] = rgb.split(/\s+/).map((value) => Number(value) / 255);
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  const lightness = (max + min) / 2;
+  let hue = 0;
+  let saturation = 0;
+
+  if (delta !== 0) {
+    saturation = delta / (1 - Math.abs(2 * lightness - 1));
+    switch (max) {
+      case red: hue = ((green - blue) / delta) % 6; break;
+      case green: hue = (blue - red) / delta + 2; break;
+      default: hue = (red - green) / delta + 4;
+    }
+    hue *= 60;
+  }
+
+  return `${Math.round((hue + 360) % 360)} ${Math.round(saturation * 100)}% ${Math.round(lightness * 100)}%`;
+}
+
 /**
  * Maps theme RGB values to CSS variables
  */
@@ -91,13 +122,13 @@ function mapTheme(rgb: IThemeRGB): Partial<IThemeVariables> {
 
 /**
  * Applies theme to the document root
- * Sets CSS variables as rgb() values for compatibility with existing CSS
+ * Sets color variables as rgb() and Tailwind utility tokens as HSL channels
  */
-export default function applyTheme(themeRGB?: IThemeRGB): void {
-  if (!themeRGB) return;
+export default function applyTheme(themeRGB: IThemeRGB): () => void {
 
   const themeObject = mapTheme(themeRGB);
   const root = document.documentElement;
+  const previousValues = new Map<string, { value: string; priority: string }>();
 
   Object.entries(themeObject).forEach(([cssVar, value]) => {
     if (!value) return;
@@ -108,8 +139,21 @@ export default function applyTheme(themeRGB?: IThemeRGB): void {
       return;
     }
 
-    // Set the CSS variable as rgb() value for compatibility
-    // This ensures existing CSS that expects color values (not space-separated RGB) continues to work
-    root.style.setProperty(cssVar, `rgb(${value})`);
+    previousValues.set(cssVar, {
+      value: root.style.getPropertyValue(cssVar),
+      priority: root.style.getPropertyPriority(cssVar),
+    });
+    // Tailwind wraps utility tokens in hsl(); other variables are complete colors.
+    root.style.setProperty(cssVar, hslVariables.has(cssVar) ? rgbToHsl(value) : `rgb(${value})`);
   });
+
+  return () => {
+    previousValues.forEach(({ value, priority }, cssVar) => {
+      if (value) {
+        root.style.setProperty(cssVar, value, priority);
+      } else {
+        root.style.removeProperty(cssVar);
+      }
+    });
+  };
 }

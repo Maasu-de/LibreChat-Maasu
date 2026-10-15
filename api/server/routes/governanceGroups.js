@@ -96,3 +96,4 @@ router.get('/', requireGovernanceAdminToken, async (_req, res) => {
 });
 
 module.exports = router;
+module.exports.requireGovernanceAdminToken = requireGovernanceAdminToken;

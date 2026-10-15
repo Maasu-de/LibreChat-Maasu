@@ -87,7 +87,7 @@ export default function MCPConfigDialog({
                   render={({ field }) => {
                     const placeholder = localize('com_ui_mcp_enter_var', { 0: details.title });
                     const className =
-                      'w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white sm:text-sm';
+                      'w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white sm:text-sm';
                     if (details.sensitive === false) {
                       return (
                         <Input
@@ -126,7 +126,8 @@ export default function MCPConfigDialog({
         }
         selection={{
           selectHandler: handleSubmit(onFormSubmit),
-          selectClasses: 'bg-green-500 hover:bg-green-600 text-white',
+          selectClasses:
+            'bg-surface-submit text-[color:var(--surface-submit-ink)] hover:bg-surface-submit-hover',
           selectText: isSubmitting ? localize('com_ui_saving') : localize('com_ui_save'),
         }}
         buttons={

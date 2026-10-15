@@ -25,6 +25,7 @@ module.exports = {
   // },
   moduleNameMapper: {
     '\\.(css)$': 'identity-obj-proxy',
+    '\\.svg\\?url$': '<rootDir>/test/urlAssetMock.js',
     '\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$':
       'jest-file-loader',
     '^test/(.*)$': '<rootDir>/test/$1',

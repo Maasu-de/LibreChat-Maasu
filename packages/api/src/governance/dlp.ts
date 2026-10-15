@@ -537,12 +537,7 @@ export function createGovernanceAttributionFetch(
   return async (input, init) =>
     fetch(
       input,
-      withGovernanceHeaders(
-        input,
-        init,
-        req.user?.id ?? '',
-        req.governanceGroupIds ?? [],
-      ),
+      withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
     );
 }
 

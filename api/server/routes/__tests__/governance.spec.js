@@ -4,6 +4,7 @@ const request = require('supertest');
 const mockCheckFinanceRead = jest.fn();
 const mockGetGovernanceUsage = jest.fn();
 const mockTestGovernanceConnection = jest.fn();
+const mockResolveUsageLabels = jest.fn();
 let mockUser = { id: 'user-123', role: 'USER' };
 
 jest.mock('@librechat/api', () => ({
@@ -19,7 +20,17 @@ jest.mock('@librechat/api', () => ({
     (...args) =>
       mockGetGovernanceUsage(...args),
   testGovernanceConnection: (...args) => mockTestGovernanceConnection(...args),
+  resolveUsageLabels: (...args) => mockResolveUsageLabels(...args),
 }));
+
+jest.mock('../governanceGroups', () => {
+  const router = require('express').Router();
+  router.requireGovernanceAdminToken = (req, res, next) =>
+    req.headers.authorization === 'Bearer admin-token'
+      ? next()
+      : res.status(401).json({ message: 'Unauthorized' });
+  return router;
+});
 
 jest.mock('~/server/middleware', () => ({
   requireJwtAuth: (req, _res, next) => {
@@ -48,6 +59,7 @@ beforeEach(() => {
   mockCheckFinanceRead.mockReset();
   mockGetGovernanceUsage.mockReset();
   mockTestGovernanceConnection.mockReset();
+  mockResolveUsageLabels.mockReset();
   mockCheckFinanceRead.mockResolvedValue(false);
   mockGetGovernanceUsage.mockImplementation((_req, res) =>
     res.status(200).json({ totals: { request_count: 0 } }),
@@ -55,6 +67,58 @@ beforeEach(() => {
   mockTestGovernanceConnection.mockImplementation((_req, res) =>
     res.status(200).json({ status: 'connected' }),
   );
+});
+
+describe('POST /api/governance/usage-labels', () => {
+  it('requires the governance administrator token before resolving labels', async () => {
+    const response = await request(app).post('/api/governance/usage-labels').send({
+      by_user: [],
+      by_group: [],
+    });
+
+    expect(response.status).toBe(401);
+    expect(mockResolveUsageLabels).not.toHaveBeenCalled();
+  });
+
+  it('resolves user and group labels for the governance dashboard', async () => {
+    const rows = { by_user: [{ key: 'user-key', label: 'user-key' }], by_group: [] };
+    mockResolveUsageLabels.mockResolvedValue({
+      by_user: [{ key: 'user-key', label: 'Alice' }],
+      by_group: [],
+    });
+
+    const response = await request(app)
+      .post('/api/governance/usage-labels')
+      .set('Authorization', 'Bearer admin-token')
+      .send(rows);
+
+    expect(response.status).toBe(200);
+    expect(response.body.by_user[0].label).toBe('Alice');
+    expect(mockResolveUsageLabels).toHaveBeenCalledWith(rows, {
+      findUsers: expect.any(Function),
+      findGroups: expect.any(Function),
+    });
+  });
+
+  it('accepts the earlier team key for existing admin clients', async () => {
+    const rows = { by_user: [], by_team: [{ key: 'group-1', label: 'group-1' }] };
+    mockResolveUsageLabels.mockResolvedValue({
+      by_user: [],
+      by_group: [{ key: 'group-1', label: 'Finance' }],
+    });
+
+    const response = await request(app)
+      .post('/api/governance/usage-labels')
+      .set('Authorization', 'Bearer admin-token')
+      .send(rows);
+
+    expect(response.status).toBe(200);
+    expect(response.body.by_team[0].label).toBe('Finance');
+    expect(mockResolveUsageLabels).toHaveBeenCalledWith(
+      { by_user: [], by_group: rows.by_team },
+      { findUsers: expect.any(Function), findGroups: expect.any(Function) },
+    );
+  });
 });
 
 describe('GET /api/governance/usage', () => {

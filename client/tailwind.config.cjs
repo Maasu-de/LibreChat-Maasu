@@ -1,5 +1,21 @@
 // const { fontFamily } = require('tailwindcss/defaultTheme');
 
+// Legacy utility classes use several hue names for UI accents.
+// Keep them on one brand scale while preserving red and amber status colors.
+const brandScale = {
+  50: '#f5f8ff',
+  100: '#eaf5fc',
+  200: '#d9eefa',
+  300: '#b8e4f8',
+  400: '#89cff0',
+  500: '#0115e9',
+  600: '#0115c4',
+  700: '#191970',
+  800: '#0d2d56',
+  900: '#0b2349',
+  950: '#010001',
+};
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -11,7 +27,7 @@ module.exports = {
   darkMode: ['class'],
   theme: {
     fontFamily: {
-      sans: ['Inter', 'sans-serif'],
+      sans: ['Inter', 'Arial', 'sans-serif'],
       mono: ['Roboto Mono', 'monospace'],
     },
     // fontFamily: {
@@ -64,32 +80,39 @@ module.exports = {
         'shortcut-shake': 'shortcut-shake 0.25s ease-in-out',
       },
       colors: {
+        blue: brandScale,
+        cyan: brandScale,
+        indigo: brandScale,
+        pink: brandScale,
+        purple: brandScale,
+        sky: brandScale,
+        violet: brandScale,
         gray: {
-          20: '#ececf1',
-          50: '#f7f7f8',
-          100: '#ececec',
-          200: '#e3e3e3',
-          300: '#cdcdcd',
-          400: '#999696',
-          500: '#595959',
-          600: '#424242',
-          700: '#2f2f2f',
-          800: '#212121',
-          850: '#171717',
-          900: '#0d0d0d',
+          20: '#f0f4fb',
+          50: '#f5f8ff',
+          100: '#eaf5fc',
+          200: '#d9e1ee',
+          300: '#c0c0c0',
+          400: '#8a9eae',
+          500: '#526d87',
+          600: '#3d607d',
+          700: '#233f5d',
+          800: '#152d4c',
+          850: '#0d203d',
+          900: '#010001',
         },
         green: {
-          50: '#f1f9f7',
-          100: '#def2ed',
-          200: '#a6e5d6',
-          300: '#6dc8b9',
-          400: '#41a79d',
-          500: '#10a37f',
-          550: '#349072',
-          600: '#126e6b',
-          700: '#0a4f53',
-          800: '#06373e',
-          900: '#031f29',
+          50: '#f5f8ff',
+          100: '#eaf5fc',
+          200: '#d9eefa',
+          300: '#b8e4f8',
+          400: '#89cff0',
+          500: '#0115e9',
+          550: '#0115d0',
+          600: '#0115c4',
+          700: '#191970',
+          800: '#0d2d56',
+          900: '#0b2349',
         },
         'brand-purple': 'var(--brand-purple)',
         presentation: 'var(--presentation)',

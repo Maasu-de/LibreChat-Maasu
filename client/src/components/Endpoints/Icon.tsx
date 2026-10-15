@@ -83,7 +83,7 @@ const UserAvatar = memo(
         ) : (
           <div
             style={{
-              backgroundColor: 'rgb(121, 137, 255)',
+              backgroundColor: '#0115e9',
               width: '20px',
               height: '20px',
               boxShadow: 'rgba(240, 246, 252, 0.1) 0px 0px 0px 1px',

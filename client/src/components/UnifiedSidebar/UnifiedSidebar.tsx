@@ -2,21 +2,22 @@ import { useCallback, useState, useEffect, useRef, memo, startTransition } from 
 import type { ReactNode } from 'react';
 import { useRecoilState } from 'recoil';
 import { useForm } from 'react-hook-form';
-import { useMediaQuery } from '@librechat/client';
+import { TooltipAnchor, useMediaQuery } from '@librechat/client';
 import type { ChatFormValues } from '~/common';
 import { ChatContext, ChatFormProvider, ActivePanelProvider } from '~/Providers';
 import useUnifiedSidebarLinks from '~/hooks/Nav/useUnifiedSidebarLinks';
 import { useChatHelpers, useLocalize } from '~/hooks';
 import SidePanelNav from '~/components/SidePanel/Nav';
-import Logo from '~/components/Logo';
+import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
+import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import ExpandedPanel from './ExpandedPanel';
 import Sidebar from './Sidebar';
 import { cn } from '~/utils';
 import store from '~/store';
 
-const COLLAPSED_WIDTH = 52;
+const COLLAPSED_WIDTH = 64;
 const EXPANDED_MIN = 360;
-const TRANSITION_MS = 300;
+const TRANSITION_MS = 200;
 const EASING = 'cubic-bezier(0.2, 0, 0, 1)';
 
 function getInitialWidth(): number {
@@ -37,6 +38,60 @@ function SidebarChatProvider({ children }: { children: ReactNode }) {
     <ChatFormProvider {...sidebarFormMethods}>
       <ChatContext.Provider value={chatHelpers}>{children}</ChatContext.Provider>
     </ChatFormProvider>
+  );
+}
+
+function SidebarToggle({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
+  const localize = useLocalize();
+  const label = localize(expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar');
+  const hint = useShortcutHint('toggleSidebar', label);
+  const ariaKey = useShortcutAriaKey('toggleSidebar');
+
+  return (
+    <TooltipAnchor
+      side="right"
+      description={hint}
+      render={
+        <button
+          id={expanded ? CLOSE_SIDEBAR_ID : undefined}
+          type="button"
+          data-testid={expanded ? 'close-sidebar-button' : 'open-sidebar-button'}
+          aria-label={label}
+          aria-expanded={expanded}
+          aria-keyshortcuts={ariaKey}
+          className="flex h-12 w-full shrink-0 items-center justify-center border-t border-border-light bg-surface-primary-alt text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+          onClick={onClick}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="h-[17.5px] w-[17.5px]"
+          >
+            {expanded ? (
+              <>
+                <path
+                  strokeWidth="1.5"
+                  d="M18.703 12.015H6.836M11.576 16.509l-4.78-4.51 4.78-4.508"
+                />
+                <path strokeWidth="1.5" d="M5 7v10" />
+              </>
+            ) : (
+              <>
+                <path
+                  strokeWidth="1.5"
+                  d="M5.297 11.985h11.867M12.424 7.491l4.78 4.51-4.78 4.508"
+                />
+                <path strokeWidth="1.5" d="M19 17V7" />
+              </>
+            )}
+          </svg>
+        </button>
+      }
+    />
   );
 }
 
@@ -133,12 +188,13 @@ function UnifiedSidebar() {
     return () => document.removeEventListener('keydown', handler);
   }, [isSmallScreen, expanded, handleCollapse]);
 
-  const logo = (
-    <div className="flex h-28 flex-shrink-0 items-center justify-center bg-surface-primary-alt p-2">
-      <Logo
-        className="h-full w-full"
-        label={localize('com_ui_logo', { 0: 'Maasu' })}
-      />
+  const logo = (showFullLogo: boolean) => (
+    <div
+      className={cn('aimo-sidebar-brand bg-surface-primary-alt', !showFullLogo && 'is-collapsed')}
+    >
+      <span className="aimo-sidebar-brand-logo aimo-sidebar-brand-logo-long" aria-hidden="true" />
+      <span className="aimo-sidebar-brand-logo aimo-sidebar-brand-logo-small" aria-hidden="true" />
+      <span className="aimo-sidebar-brand-title">{localize('com_ui_governed_chat')}</span>
     </div>
   );
 
@@ -147,7 +203,7 @@ function UnifiedSidebar() {
       <>
         <div
           className={cn(
-            'fixed left-0 top-0 z-[110] flex h-full flex-col bg-surface-primary-alt',
+            'aimo-sidebar fixed left-0 top-0 z-[110] flex h-full flex-col bg-surface-primary-alt',
             expanded ? 'translate-x-0' : '-translate-x-full',
           )}
           style={{
@@ -156,7 +212,7 @@ function UnifiedSidebar() {
           }}
           inert={!expanded ? '' : undefined}
         >
-          {logo}
+          {logo(true)}
           <div className="flex min-h-0 flex-1">
             <SidebarChatProvider>
               <ActivePanelProvider>
@@ -167,6 +223,7 @@ function UnifiedSidebar() {
               </ActivePanelProvider>
             </SidebarChatProvider>
           </div>
+          <SidebarToggle expanded onClick={handleCollapse} />
         </div>
         <div
           className={cn(
@@ -191,7 +248,7 @@ function UnifiedSidebar() {
     <SidebarChatProvider>
       <ActivePanelProvider>
         <aside
-          className="relative flex h-full flex-shrink-0 flex-col overflow-hidden"
+          className="aimo-sidebar relative flex h-full flex-shrink-0 flex-col overflow-hidden"
           style={{
             width: expanded ? sidebarWidth : COLLAPSED_WIDTH,
             minWidth: expanded ? EXPANDED_MIN : COLLAPSED_WIDTH,
@@ -202,7 +259,7 @@ function UnifiedSidebar() {
           }}
           aria-label={localize('com_nav_control_panel')}
         >
-          {expanded && logo}
+          {logo(expanded)}
           <div className="relative min-h-0 flex-1">
             <Sidebar
               links={links}
@@ -213,6 +270,7 @@ function UnifiedSidebar() {
               onResizeKeyboard={handleResizeKeyboard}
             />
           </div>
+          <SidebarToggle expanded={expanded} onClick={expanded ? handleCollapse : handleExpand} />
         </aside>
       </ActivePanelProvider>
     </SidebarChatProvider>

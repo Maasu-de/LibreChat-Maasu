@@ -14,6 +14,7 @@ import { cleanupTimestampedStorage } from '~/utils/timestamps';
 import useSpeechSettingsInit from './useSpeechSettingsInit';
 import { useHasAccess } from '~/hooks';
 import store from '~/store';
+import { formatChatTitle } from '~/utils/chatTitle';
 
 export default function useAppStartup({
   startupConfig,
@@ -53,7 +54,7 @@ export default function useAppStartup({
     if (!appTitle) {
       return;
     }
-    document.title = appTitle;
+    document.title = formatChatTitle();
     localStorage.setItem(LocalStorageKeys.APP_TITLE, appTitle);
   }, [startupConfig]);
 
