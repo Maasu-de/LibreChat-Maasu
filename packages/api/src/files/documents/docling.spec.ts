@@ -91,6 +91,7 @@ describe('Docling PDF extraction', () => {
     expect(captured?.body).toContain('%PDF-1.4 fake pdf bytes');
     expect(captured?.body).toMatch(/name="to_formats"\r\n\r\nmd\r\n/);
     expect(captured?.body).toMatch(/name="image_export_mode"\r\n\r\nplaceholder\r\n/);
+    expect(captured?.body).toMatch(/name="do_ocr"\r\n\r\nfalse\r\n/);
   });
 
   test('doclingPdfToMarkdown() accepts partial_success and logs the errors', async () => {

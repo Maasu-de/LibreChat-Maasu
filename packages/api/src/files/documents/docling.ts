@@ -10,13 +10,15 @@ import { createAxiosInstance } from '~/utils/axios';
  *
  * Off by default. Operators opt in by setting `DOCLING_URL` to a Docling Serve
  * base URL (e.g. `http://docling:5001`). When set, PDFs are converted to Markdown
- * by Docling, which keeps headings and tables and runs OCR on pages without a text
- * layer. The document parser falls back to the pdfjs text layer if the call fails.
+ * by Docling, which keeps headings and tables. OCR is off: governance of image-derived
+ * text is out of scope, and OCR misreads would let sensitive values slip past DLP, so pages
+ * without a text layer yield no text. The document parser falls back to the pdfjs text layer
+ * if the call fails.
  */
 
 const axios = createAxiosInstance();
 
-/** Docling runs layout, table and OCR models on CPU; large PDFs take minutes. */
+/** Docling runs layout and table models on CPU; large PDFs take minutes. */
 const DOCLING_TIMEOUT_MS = 5 * 60 * 1000;
 
 type DoclingConversionStatus =
@@ -57,7 +59,7 @@ export async function doclingPdfToMarkdown(
   form.append('from_formats', 'pdf');
   form.append('to_formats', 'md');
   form.append('image_export_mode', 'placeholder');
-  form.append('do_ocr', 'true');
+  form.append('do_ocr', 'false');
   form.append('do_table_structure', 'true');
 
   const url = `${baseURL}/v1/convert/file`;
