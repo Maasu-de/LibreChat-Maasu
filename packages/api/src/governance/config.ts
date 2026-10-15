@@ -1,4 +1,3 @@
-import { supportedMimeTypes } from 'librechat-data-provider';
 import type { TCustomConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import {
@@ -7,6 +6,19 @@ import {
   isGovernanceAttachmentsEnabled,
 } from './mode';
 import { isEnabled } from '~/utils/common';
+
+/** The only attachment types the pilot accepts: txt, md, csv, pdf and docx, all parsed to text. */
+export const GOVERNANCE_ATTACHMENT_MIME_TYPES: string[] = [
+  '^text/(plain|markdown|csv)$',
+  '^application/(pdf|csv|vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document)$',
+];
+
+const attachmentMimeTypes = GOVERNANCE_ATTACHMENT_MIME_TYPES.map((type) => new RegExp(type));
+
+/** Whether pilot mode accepts an upload of this MIME type, whatever endpoint the client names. */
+export function isGovernanceAttachmentType(mimeType: string): boolean {
+  return attachmentMimeTypes.some((type) => type.test(mimeType));
+}
 
 /**
  * Upload types and limits for the gateway endpoint when attachments are enabled. They must be set
@@ -18,7 +30,16 @@ const attachmentFileConfig = {
   fileLimit: 10,
   fileSizeLimit: 20,
   totalSizeLimit: 50,
-  supportedMimeTypes: supportedMimeTypes.map((type) => type.source),
+  supportedMimeTypes: GOVERNANCE_ATTACHMENT_MIME_TYPES,
+};
+
+/**
+ * Text uploads (`tool_resource=context`) are checked against these lists instead of the endpoint's,
+ * in the browser and in the upload's text extraction, so they get the same allowlist.
+ */
+const attachmentTextConfig = {
+  text: { supportedMimeTypes: GOVERNANCE_ATTACHMENT_MIME_TYPES },
+  ocr: { supportedMimeTypes: GOVERNANCE_ATTACHMENT_MIME_TYPES },
 };
 
 function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']) {
@@ -118,6 +139,7 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
           ? attachmentFileConfig
           : { disabled: true },
       },
+      ...(isGovernanceAttachmentsEnabled() ? attachmentTextConfig : {}),
     },
     speech: {
       speechTab: {
