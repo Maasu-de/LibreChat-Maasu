@@ -25,6 +25,3 @@ export interface MenuItemProps {
     | undefined;
   subItems?: MenuItemProps[];
 }
-
-/** Hides "Upload to Provider": files must not bypass the governance gateway by going straight to the model provider. */
-export const SHOW_PROVIDER_UPLOAD = false;

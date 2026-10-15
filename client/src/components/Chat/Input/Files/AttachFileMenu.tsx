@@ -38,7 +38,7 @@ import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcut
 import { SharePointPickerDialog } from '~/components/SharePoint';
 import { useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
-import { MenuItemProps, SHOW_PROVIDER_UPLOAD } from '~/common';
+import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
 
 type FileUploadType =
@@ -100,6 +100,8 @@ const AttachFileMenu = ({
   const { agentsConfig } = useGetAgentsConfig();
   const { data: startupConfig } = useGetStartupConfig();
   const sharePointEnabled = startupConfig?.sharePointFilePickerEnabled;
+  /** Provider uploads would reach the model without passing the governance gateway. */
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
 
   const [isSharePointDialogOpen, setIsSharePointDialogOpen] = useState(false);
 
@@ -171,7 +173,7 @@ const AttachFileMenu = ({
       ) {
         items.push({
           label: localize('com_ui_upload_provider'),
-          show: SHOW_PROVIDER_UPLOAD,
+          show: !governancePilot,
           onClick: () => {
             setToolResource(undefined);
             let fileType: Exclude<FileUploadType, 'image' | 'document'> = 'image_document';
@@ -265,6 +267,7 @@ const AttachFileMenu = ({
     provider,
     endpointType,
     capabilities,
+    governancePilot,
     useResponsesApi,
     handleUploadClick,
     setEphemeralAgent,
