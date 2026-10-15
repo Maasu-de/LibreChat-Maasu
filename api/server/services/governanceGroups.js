@@ -2,7 +2,7 @@ const { getUserGroups } = require('~/models');
 
 /** IDs of the LibreChat groups a user belongs to, as sent to the governance backend. */
 async function getUserGroupIds(userId) {
-  const groups = await getUserGroups(userId);
+  const groups = await getUserGroups(userId, { _id: 1 });
   return groups.map((group) => group._id.toString());
 }
 

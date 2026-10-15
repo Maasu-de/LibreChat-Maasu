@@ -13,6 +13,7 @@ import {
   getAzureCredentials,
 } from '~/utils';
 import {
+  createGovernanceAttributionFetch,
   createRequestDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
@@ -196,15 +197,14 @@ export async function initializeOpenAI({
   const options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
 
   const dlpBaseUrl = options.configOptions?.baseURL ?? baseURL;
-  if (
-    req.governanceDlpEligible === true &&
-    dlpBaseUrl != null &&
-    isGovernanceDlpEnabled() &&
-    isGovernanceGatewayUrl(dlpBaseUrl)
-  ) {
+  if (dlpBaseUrl != null && isGovernanceGatewayUrl(dlpBaseUrl)) {
+    const attributedFetch = createGovernanceAttributionFetch(req, options.configOptions?.fetch);
     options.configOptions = {
       ...(options.configOptions ?? {}),
-      fetch: createRequestDlpFetch(req, options.configOptions?.fetch, dlpApproval),
+      fetch:
+        req.governanceDlpEligible === true && isGovernanceDlpEnabled()
+          ? createRequestDlpFetch(req, attributedFetch, dlpApproval)
+          : attributedFetch,
     };
   }
 

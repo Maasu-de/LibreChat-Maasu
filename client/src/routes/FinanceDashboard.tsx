@@ -56,11 +56,13 @@ function Metric({
 
 function BreakdownTable({
   title,
+  description,
   emptyLabel,
   rows,
   labels,
 }: {
   title: string;
+  description?: string;
   emptyLabel: string;
   rows: FinanceUsageBreakdownRow[];
   labels: {
@@ -76,6 +78,7 @@ function BreakdownTable({
     <section className="min-w-0 rounded-lg border border-border-light bg-surface-primary shadow-sm">
       <div className="border-b border-border-light px-4 py-3">
         <h2 className="text-base font-semibold text-text-primary">{title}</h2>
+        {description ? <p className="mt-1 text-sm text-text-secondary">{description}</p> : null}
       </div>
       {rows.length === 0 ? (
         <div className="px-4 py-8 text-sm text-text-secondary">{emptyLabel}</div>
@@ -279,13 +282,18 @@ export default function FinanceDashboard() {
         </div>
 
         <BreakdownTable
-          title={localize('com_finance_usage_by_team')}
+          title={localize('com_finance_usage_by_group')}
+          description={
+            usage?.by_group_aggregation === 'overlapping_full_attribution'
+              ? localize('com_finance_group_overlap_description')
+              : undefined
+          }
           emptyLabel={
             usageQuery.isLoading
               ? localize('com_finance_loading')
-              : localize('com_finance_empty_team')
+              : localize('com_finance_empty_group')
           }
-          rows={usage?.by_team ?? []}
+          rows={usage?.by_group ?? []}
           labels={tableLabels}
         />
       </div>

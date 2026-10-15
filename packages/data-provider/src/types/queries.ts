@@ -273,6 +273,8 @@ export type FinanceUsageDashboard = {
   };
   totals: FinanceUsageTotals;
   by_user: FinanceUsageBreakdownRow[];
-  by_team: FinanceUsageBreakdownRow[];
+  by_group: FinanceUsageBreakdownRow[];
+  /** Group rows fully attribute shared requests and must not be summed into tenant totals. */
+  by_group_aggregation: 'overlapping_full_attribution';
   by_model: FinanceUsageBreakdownRow[];
 };
