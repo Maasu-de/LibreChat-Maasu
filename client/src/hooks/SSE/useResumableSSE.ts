@@ -458,6 +458,7 @@ export default function useResumableSSE(
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
   const setDlpReview = useSetRecoilState(store.dlpReviewByIndex(runIndex));
+  const setSubmittedFiles = useSetRecoilState(store.submittedFilesByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
 
   const sseRef = useRef<SSE | null>(null);
@@ -579,12 +580,12 @@ export default function useResumableSSE(
                   files: userMessage.files,
                 });
               } else {
-                setDlpReview(
-                  settleSentDlpReview({
-                    retryReviewId: data.dlpRetryReviewId,
-                    unsent: data.earlyAbort === true,
-                  }),
-                );
+                const unsent = data.earlyAbort === true;
+                setDlpReview(settleSentDlpReview({ retryReviewId: data.dlpRetryReviewId, unsent }));
+                /** A sent turn leaves no review that could still restore or delete its files. */
+                if (!unsent && data.dlpRetryReviewId == null) {
+                  setSubmittedFiles(null);
+                }
               }
               finalizeUsage(data, { ...currentSubmission, userMessage });
             } catch (error) {
@@ -1117,6 +1118,7 @@ export default function useResumableSSE(
       setActiveRunId,
       setShowStopButton,
       setDlpReview,
+      setSubmittedFiles,
       finalHandler,
       createdHandler,
       attachmentHandler,

@@ -60,11 +60,13 @@ const mockAbortScrollAtom = { key: 'abortScroll' };
 const mockSubmissionAtom = { key: 'submission' };
 const mockShowStopButtonAtom = { key: 'showStopButton' };
 const mockDlpReviewAtom = { key: 'dlpReview' };
+const mockSubmittedFilesAtom = { key: 'submittedFiles' };
 const mockSetActiveRun = jest.fn();
 const mockSetAbortScroll = jest.fn();
 const mockSetSubmission = jest.fn();
 const mockSetShowStopButton = jest.fn();
 const mockSetDlpReview = jest.fn();
+const mockSetSubmittedFiles = jest.fn();
 const mockUseSetRecoilStateMock = jest.fn((atom: unknown) => {
   if (atom === mockActiveRunAtom) {
     return mockSetActiveRun;
@@ -80,6 +82,9 @@ const mockUseSetRecoilStateMock = jest.fn((atom: unknown) => {
   }
   if (atom === mockDlpReviewAtom) {
     return mockSetDlpReview;
+  }
+  if (atom === mockSubmittedFilesAtom) {
+    return mockSetSubmittedFiles;
   }
   return jest.fn();
 });
@@ -105,6 +110,7 @@ jest.mock('~/store', () => ({
     submissionByIndex: jest.fn(() => mockSubmissionAtom),
     showStopButtonByIndex: jest.fn(() => mockShowStopButtonAtom),
     dlpReviewByIndex: jest.fn(() => mockDlpReviewAtom),
+    submittedFilesByIndex: jest.fn(() => mockSubmittedFilesAtom),
   },
 }));
 
@@ -1661,6 +1667,7 @@ describe('useResumableSSE - approved DLP review on its way', () => {
   beforeEach(() => {
     mockSSEInstances.length = 0;
     mockSetDlpReview.mockClear();
+    mockSetSubmittedFiles.mockClear();
     mockErrorHandler.mockClear();
     mockFinalHandler.mockClear();
     (request.post as jest.Mock).mockReset();
@@ -1679,6 +1686,7 @@ describe('useResumableSSE - approved DLP review on its way', () => {
     expect(settle(sendingReview)).toEqual({ ...sendingReview, status: 'failed' });
     expect(settle(otherReview)).toEqual({ ...otherReview, status: 'rejected' });
     expect(settle(openReview)).toBe(openReview);
+    expect(mockSetSubmittedFiles).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -1689,6 +1697,7 @@ describe('useResumableSSE - approved DLP review on its way', () => {
 
     expect(settle(sendingReview)).toEqual({ ...sendingReview, status: 'rejected' });
     expect(settle(openReview)).toBe(openReview);
+    expect(mockSetSubmittedFiles).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -1698,6 +1707,19 @@ describe('useResumableSSE - approved DLP review on its way', () => {
     await emitFinal(sse, { aborted: false, earlyAbort: false });
 
     expect(settle(sendingReview)).toBeNull();
+    expect(mockSetSubmittedFiles).toHaveBeenCalledWith(null);
+    unmount();
+  });
+
+  it('keeps the submitted files when the turn ends with a new review', async () => {
+    const { sse, unmount } = await openStream();
+
+    await emitFinal(sse, {
+      dlpReview: { reviewId: 'review-2', decision: 'WARN', findings: [] },
+      requestMessage: { text: 'Please email max@example.com today' },
+    });
+
+    expect(mockSetSubmittedFiles).not.toHaveBeenCalled();
     unmount();
   });
 
