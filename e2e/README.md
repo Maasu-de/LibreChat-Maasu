@@ -38,3 +38,7 @@ node e2e/setup/record.js --output=e2e/recordings/settings-draft.spec.ts
 7. Run the finished spec with `npm run e2e:mock -- <spec name>`.
 
 Generated recordings are a draft, not the final test. The committed version should use the shared helpers in `e2e/specs/mock/helpers.ts` where possible, wait on network or visible UI state instead of fixed sleeps, and keep test data deterministic.
+
+## Governed Pilot Profile
+
+`npm run e2e:governance` runs `e2e/specs/governance/` with LibreChat in governed pilot mode and text attachments enabled. No fake model is injected: every chat goes through the fork's governed fetch to the fake gateway in `e2e/setup/fake-governance-gateway.js`, which follows the real gateway's review protocol. Its DLP is deterministic: an IBAN (`DE` + 20 digits) is masked, an email address is a warning, and `PROJECT-NIGHTSHADE` is blocked. Each completion states what reached the model, for example `E2E gateway reply [attachment=yes iban=masked email=no history-iban=none]`, so specs can assert on the governed content.
