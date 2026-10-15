@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en-US">
   <head>
     <meta charset="utf-8" />
@@ -8,10 +8,32 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="description" content="AIMO Chat - an AI workspace with governed access" />
-    <title>AIMO Chat</title>
-    <link rel="icon" type="image/svg+xml" href="assets/logo_small.svg" />
+    <title>AIMO · Chat</title>
+    <link id="aimo-favicon" rel="icon" type="image/svg+xml" href="assets/logo_small.svg" />
+    <script>
+      (function () {
+        const icon = document.getElementById('aimo-favicon');
+        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+        function updateIcon() {
+          const theme = localStorage.getItem('color-theme');
+          const dark = theme === 'dark' || (theme !== 'light' && systemTheme.matches);
+          const href = dark ? 'assets/logo_small_light.svg' : 'assets/logo_small.svg';
+          if (icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+        }
+        updateIcon();
+        systemTheme.addEventListener('change', updateIcon);
+        window.addEventListener('storage', updateIcon);
+        new MutationObserver(updateIcon).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ['class'],
+        });
+      })();
+    </script>
     <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+    />
     <style>
       html,
       body {

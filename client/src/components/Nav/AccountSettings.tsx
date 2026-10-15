@@ -113,15 +113,17 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
         data-testid="nav-user"
         className={
           collapsed
-            ? 'flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-surface-active-alt aria-[expanded=true]:bg-surface-active-alt'
+            ? 'flex h-[34px] w-[34px] items-center justify-center rounded-full transition-colors hover:bg-surface-active-alt aria-[expanded=true]:bg-surface-active-alt'
             : 'mt-text-sm flex h-auto w-full items-center gap-2 rounded-xl p-2 text-sm transition-all duration-200 ease-in-out hover:bg-surface-active-alt aria-[expanded=true]:bg-surface-active-alt'
         }
       >
         <div
-          className={collapsed ? 'size-7 flex-shrink-0' : '-ml-0.9 -mt-0.8 h-8 w-8 flex-shrink-0'}
+          className={
+            collapsed ? 'size-[34px] flex-shrink-0' : '-ml-0.9 -mt-0.8 h-8 w-8 flex-shrink-0'
+          }
         >
           <div className="relative flex">
-            <Avatar user={user} size={collapsed ? 28 : 32} />
+            <Avatar user={user} size={collapsed ? 34 : 32} />
           </div>
         </div>
         {!collapsed && (

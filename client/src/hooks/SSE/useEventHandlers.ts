@@ -22,6 +22,7 @@ import type {
 import type { InfiniteData } from '@tanstack/react-query';
 import type { SetterOrUpdater } from 'recoil';
 import type { TResData, TFinalResData, ConvoGenerator } from '~/common';
+import { formatChatTitle } from '~/utils/chatTitle';
 import type { ConversationCursorData } from '~/utils';
 import {
   logger,
@@ -615,7 +616,7 @@ export default function useEventHandlers({
       markTitleGenerationProcessed(conversationId);
 
       if (location.pathname.includes(conversationId)) {
-        document.title = title;
+        document.title = formatChatTitle(title);
       }
 
       if (setConversation && !isAddedRequest) {

@@ -13,6 +13,7 @@ import { NotificationSeverity } from '~/common';
 import { ConvoOptions } from './ConvoOptions';
 import RenameForm from './RenameForm';
 import { cn, logger } from '~/utils';
+import { formatChatTitle } from '~/utils/chatTitle';
 import ConvoLink from './ConvoLink';
 import store from '~/store';
 
@@ -157,7 +158,7 @@ function Conversation({
     toggleNav();
 
     if (typeof title === 'string' && title.length > 0) {
-      document.title = title;
+      document.title = formatChatTitle(title);
     }
 
     navigateToConvo(conversation, {
