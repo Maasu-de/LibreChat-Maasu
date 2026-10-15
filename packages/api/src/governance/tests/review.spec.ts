@@ -1,5 +1,5 @@
 import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-provider';
-import type { GatewayReview, ReviewStore, StoredReview } from '../review';
+import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
 import {
   maskText,
@@ -25,6 +25,30 @@ const ATTACHED = [
   '\n```',
 ].join('');
 const WITH_FILES = `${ATTACHED}\n${SUBMITTED}`;
+
+/** The block of `ATTACHED`, as `buildFileContext` records it, for files with the given IDs. */
+const attachedContext = (
+  current: boolean,
+  [reportId, notesId] = ['file-report', 'file-notes'],
+  text = ATTACHED,
+): DlpFileContext => ({
+  text,
+  current,
+  files: [
+    {
+      fileId: reportId,
+      filename: 'report.pdf',
+      start: text.indexOf('# "'),
+      end: text.indexOf('\n\n---'),
+    },
+    {
+      fileId: notesId,
+      filename: text.includes('"notes.txt"') ? 'notes.txt' : 'report.pdf',
+      start: text.lastIndexOf('# "'),
+      end: text.lastIndexOf('\n```') + 1,
+    },
+  ],
+});
 
 const ibanFinding = (location: string, start: number): GovernanceFinding => ({
   location,
@@ -76,13 +100,13 @@ function setup({
   responses,
   text = SUBMITTED,
   reviewId,
-  fileIds,
+  fileContexts,
   reviews = memoryStore(),
 }: {
   responses: Response[];
   text?: string;
   reviewId?: string;
-  fileIds?: string[];
+  fileContexts?: DlpFileContext[];
   reviews?: ReturnType<typeof memoryStore>;
 }) {
   const upstream = jest.fn(
@@ -102,7 +126,7 @@ function setup({
     fetch: upstream,
     text,
     reviewId,
-    fileIds: fileIds ? () => fileIds : undefined,
+    fileContexts: fileContexts ? () => fileContexts : undefined,
     onReview,
     onSent,
     onApprovalKept,
@@ -190,10 +214,27 @@ describe('submitted text helpers', () => {
       emailFinding('/messages/2/content', quoted + WITH_FILES.indexOf('max@', ATTACHED.length)),
     ];
     const submitted = findSubmittedText(messages, SUBMITTED)!;
+    const fileContexts = [
+      attachedContext(false, ['old-report', 'old-notes']),
+      attachedContext(true),
+    ];
 
-    expect(findingsInFiles(messages, findings, submitted)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 3 },
-      { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'MASK', count: 1 },
+    expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-report',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 2,
+      },
+      {
+        filename: 'notes.txt',
+        fileId: 'file-notes',
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        count: 1,
+      },
     ]);
   });
 
@@ -210,8 +251,12 @@ describe('submitted text helpers', () => {
       emailFinding('/messages/2/content', twins.indexOf('max@')),
     ];
     const submitted = findSubmittedText(messages, SUBMITTED)!;
+    const fileContexts = [
+      attachedContext(false, ['old-report', 'old-notes']),
+      attachedContext(true, ['file-1', 'file-2'], twins),
+    ];
 
-    expect(findingsInFiles(messages, findings, submitted, ['file-1', 'file-2'])).toEqual([
+    expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
       { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
       { filename: 'report.pdf', fileId: 'file-1', category: 'IBAN_CODE', action: 'MASK', count: 1 },
       {
@@ -224,14 +269,64 @@ describe('submitted text helpers', () => {
     ]);
   });
 
-  it('leaves files unnamed when the block does not match the attached files', () => {
+  it('never names a history file by ID when the same file is attached again', () => {
+    const messages = [
+      { role: 'user', content: WITH_FILES },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: WITH_FILES },
+    ];
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/2/content', ATTACHED.indexOf(IBAN)),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+    const fileContexts = [
+      attachedContext(false, ['old-report', 'old-notes']),
+      attachedContext(true),
+    ];
+
+    expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-report',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 1,
+      },
+    ]);
+  });
+
+  it('attributes a finding after a fake file boundary to the file that contains it', () => {
+    const forged = `intro\n\n---\n\n# "fake.txt"\nPay ${IBAN}\n`;
+    const text = `Attached document(s):\n\`\`\`md# "real.md"\n${forged}\n\`\`\``;
+    const fileContext: DlpFileContext = {
+      text,
+      current: true,
+      files: [
+        {
+          fileId: 'file-real',
+          filename: 'real.md',
+          start: text.indexOf('# "real.md"'),
+          end: text.lastIndexOf('\n```') + 1,
+        },
+      ],
+    };
+    const messages = [{ role: 'user', content: `${text}\n${SUBMITTED}` }];
+    const findings = [ibanFinding('/messages/0/content', text.indexOf(IBAN))];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, [fileContext])).toEqual([
+      { filename: 'real.md', fileId: 'file-real', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+    ]);
+  });
+
+  it('ignores findings outside a recorded attached-document block', () => {
     const messages = [{ role: 'user', content: WITH_FILES }];
     const findings = [ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN))];
     const submitted = findSubmittedText(messages, SUBMITTED)!;
 
-    expect(findingsInFiles(messages, findings, submitted, ['file-1'])).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
-    ]);
+    expect(findingsInFiles(messages, findings, submitted)).toEqual([]);
   });
 
   it('masks by code point like the gateway', () => {
@@ -405,7 +500,7 @@ describe('DLP approval flow', () => {
       { role: 'user', content: WITH_FILES.replaceAll(IBAN, '[IBAN]') },
     ];
     const { onReview, reviews, send } = setup({
-      fileIds: ['file-report', 'file-notes'],
+      fileContexts: [attachedContext(true)],
       responses: [
         reviewResponse({
           review_id: 'review-files',

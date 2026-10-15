@@ -6,9 +6,8 @@ import type {
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
-import type { FileContextSegment } from '~/files/context';
+import type { FileContext } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
-import { findFileContextSegments } from '~/files/context';
 import { standardCache } from '~/cache';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
@@ -196,63 +195,97 @@ export function findingsInSubmittedText(
 
 const MESSAGE_CONTENT_LOCATION = /^\/messages\/(\d+)\/content$/;
 
+/** An attached-document block this turn added to a message; `current` marks the submitted one's. */
+export interface DlpFileContext extends FileContext {
+  current: boolean;
+}
+
+interface LocatedFile {
+  fileId?: string;
+  filename: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * Places the recorded attached-document blocks found in `content` at their code-point offsets.
+ * Only a block's exact text is matched, so text inside a file cannot fake a file boundary. The
+ * submitted message is matched against this turn's blocks only, which name their files' IDs.
+ */
+function locateFiles(
+  content: string,
+  fileContexts: DlpFileContext[],
+  current: boolean,
+): LocatedFile[] {
+  const located: LocatedFile[] = [];
+  for (const fileContext of fileContexts) {
+    const index = fileContext.current === current ? content.lastIndexOf(fileContext.text) : -1;
+    if (index === -1) {
+      continue;
+    }
+    const base = Array.from(content.slice(0, index)).length;
+    for (const { fileId, filename, start, end } of fileContext.files) {
+      located.push({
+        ...(current ? { fileId } : {}),
+        filename,
+        start: base + start,
+        end: base + end,
+      });
+    }
+  }
+  return located;
+}
+
 /**
  * Findings inside files attached to user messages, counted per file, category and action.
- * Findings in the submitted text are left to `findingsInSubmittedText`. `fileIds` lists the
- * files of the submitted message's attached-document block in order; a finding in one of them
- * names its file, unless the block's files cannot be matched to them one to one.
+ * Findings in the submitted text are left to `findingsInSubmittedText`. A finding in a file
+ * attached to the submitted message names that file's ID, since only those can be withdrawn.
  */
 export function findingsInFiles(
   messages: GovernanceChatMessage[],
   findings: GovernanceFinding[],
   submitted: SubmittedText,
-  fileIds: string[] = [],
+  fileContexts: DlpFileContext[] = [],
 ): GovernanceFileFinding[] {
-  const segmentsByMessage = new Map<number, FileContextSegment[]>();
+  const filesByMessage = new Map<number, LocatedFile[]>();
   const counted = new Map<string, GovernanceFileFinding>();
   for (const finding of findings) {
     const match = MESSAGE_CONTENT_LOCATION.exec(finding.location);
     const messageIndex = match ? Number(match[1]) : -1;
     const message = messages[messageIndex];
-    if (
-      message?.role !== 'user' ||
-      (messageIndex === submitted.messageIndex && finding.end > submitted.offset)
-    ) {
+    const isSubmitted = messageIndex === submitted.messageIndex;
+    if (message?.role !== 'user' || (isSubmitted && finding.end > submitted.offset)) {
       continue;
     }
-    let segments = segmentsByMessage.get(messageIndex);
-    if (!segments) {
-      const content =
-        messageIndex === submitted.messageIndex
-          ? Array.from(message.content).slice(0, submitted.offset).join('')
-          : message.content;
-      segments = findFileContextSegments(content);
-      segmentsByMessage.set(messageIndex, segments);
+    let files = filesByMessage.get(messageIndex);
+    if (!files) {
+      const content = isSubmitted
+        ? Array.from(message.content).slice(0, submitted.offset).join('')
+        : message.content;
+      files = locateFiles(content, fileContexts, isSubmitted);
+      filesByMessage.set(messageIndex, files);
     }
-    const fileIndex = segments.findIndex(
-      ({ start, end }) => finding.start >= start && finding.start < end,
-    );
-    if (fileIndex === -1) {
+    const file = files.find(({ start, end }) => finding.start >= start && finding.start < end);
+    if (!file) {
       continue;
     }
-    const { filename } = segments[fileIndex];
-    const fileId =
-      messageIndex === submitted.messageIndex && segments.length === fileIds.length
-        ? fileIds[fileIndex]
-        : undefined;
+    const { fileId, filename } = file;
     const key = JSON.stringify([fileId ?? null, filename, finding.category, finding.action]);
     const entry = counted.get(key);
     if (entry) {
       entry.count += 1;
       continue;
     }
-    counted.set(key, {
+    const counter: GovernanceFileFinding = {
       filename,
-      ...(fileId !== undefined ? { fileId } : {}),
       category: finding.category,
       action: finding.action,
       count: 1,
-    });
+    };
+    if (fileId !== undefined) {
+      counter.fileId = fileId;
+    }
+    counted.set(key, counter);
   }
   return Array.from(counted.values());
 }

@@ -338,7 +338,7 @@ class AgentClient extends BaseClient {
         };
       }
 
-      await this.addFileContextToMessage(latestMessage, attachments);
+      await this.addFileContextToMessage(latestMessage, attachments, true);
       const files = await this.processAttachments(latestMessage, attachments);
 
       this.options.attachments = files;

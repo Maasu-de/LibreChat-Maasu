@@ -1,6 +1,7 @@
 import type { TConversation, TEndpointOption, GovernanceDlpReview } from 'librechat-data-provider';
 import type { IUser, AppConfig } from '@librechat/data-schemas';
 import type { Request } from 'express';
+import type { DlpFileContext } from '~/governance/review';
 
 /**
  * LibreChat-specific request body type that extends Express Request body
@@ -36,8 +37,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpEligible?: boolean;
   /** Server-resolved LibreChat group IDs used by the governed completion. */
   governanceGroupIds?: string[];
-  /** IDs of the files in the submitted message's attached-document block, in order. */
-  governanceDlpFileIds?: string[];
+  /** The attached-document blocks this turn added to messages, for naming files in DLP findings. */
+  governanceDlpFileContexts?: DlpFileContext[];
   /** A DLP review of this request that the user has to decide on before the model is called. */
   governanceDlpReview?: GovernanceDlpReview;
   /** Set when the approved review's last send failed and put it back, so it can be sent again. */
