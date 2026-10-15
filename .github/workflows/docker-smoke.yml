@@ -2,6 +2,9 @@ name: Docker Build Smoke Tests
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - governed-v0.8.7
   pull_request:
     paths:
       - '.github/workflows/docker-smoke.yml'

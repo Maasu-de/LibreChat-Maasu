@@ -73,18 +73,18 @@ describe('POST /api/governance/usage-labels', () => {
   it('requires the governance administrator token before resolving labels', async () => {
     const response = await request(app).post('/api/governance/usage-labels').send({
       by_user: [],
-      by_team: [],
+      by_group: [],
     });
 
     expect(response.status).toBe(401);
     expect(mockResolveUsageLabels).not.toHaveBeenCalled();
   });
 
-  it('resolves user and team labels for the governance dashboard', async () => {
-    const rows = { by_user: [{ key: 'user-key', label: 'user-key' }], by_team: [] };
+  it('resolves user and group labels for the governance dashboard', async () => {
+    const rows = { by_user: [{ key: 'user-key', label: 'user-key' }], by_group: [] };
     mockResolveUsageLabels.mockResolvedValue({
       by_user: [{ key: 'user-key', label: 'Alice' }],
-      by_team: [],
+      by_group: [],
     });
 
     const response = await request(app)
@@ -98,6 +98,26 @@ describe('POST /api/governance/usage-labels', () => {
       findUsers: expect.any(Function),
       findGroups: expect.any(Function),
     });
+  });
+
+  it('accepts the earlier team key for existing admin clients', async () => {
+    const rows = { by_user: [], by_team: [{ key: 'group-1', label: 'group-1' }] };
+    mockResolveUsageLabels.mockResolvedValue({
+      by_user: [],
+      by_group: [{ key: 'group-1', label: 'Finance' }],
+    });
+
+    const response = await request(app)
+      .post('/api/governance/usage-labels')
+      .set('Authorization', 'Bearer admin-token')
+      .send(rows);
+
+    expect(response.status).toBe(200);
+    expect(response.body.by_team[0].label).toBe('Finance');
+    expect(mockResolveUsageLabels).toHaveBeenCalledWith(
+      { by_user: [], by_group: rows.by_team },
+      { findUsers: expect.any(Function), findGroups: expect.any(Function) },
+    );
   });
 });
 

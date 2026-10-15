@@ -165,7 +165,20 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
 
 /** True when an OpenAI-compatible completion base URL targets the configured gateway. */
 export function isGovernanceGatewayUrl(completionBaseUrl: string): boolean {
-  return gatewayRoot(completionBaseUrl) === getDlpConfiguration().gatewayUrl;
+  const configuredGatewayUrl = gatewayRoot(process.env.GOVERNANCE_API_BASE_URL ?? '');
+  if (!configuredGatewayUrl || gatewayRoot(completionBaseUrl) !== configuredGatewayUrl) {
+    // Endpoint initializers call this for every configured endpoint. A deployment without the
+    // governance integration, or an unrelated endpoint, must be left untouched.
+    return false;
+  }
+
+  // A matching gateway with DLP enabled must be fully configured. Do not turn a missing service
+  // credential into an ordinary, ungoverned completion path.
+  if (isGovernanceDlpEnabled()) {
+    getDlpConfiguration();
+  }
+
+  return true;
 }
 
 function getRequestUrl(input: RequestInfo | URL): string {
@@ -270,13 +283,25 @@ function withGovernanceRequest(
   userId: string,
   groupIds: string[],
 ): RequestInit {
+  return {
+    ...withGovernanceHeaders(input, init, userId, groupIds),
+    body: JSON.stringify(request),
+  };
+}
+
+function withGovernanceHeaders(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  userId: string,
+  groupIds: string[],
+): RequestInit {
   const requestHeaders =
     typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined;
   const headers = new Headers(requestHeaders);
   new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
   headers.set(LIBRECHAT_USER_HEADER, userId);
   headers.set(LIBRECHAT_GROUPS_HEADER, JSON.stringify(groupIds));
-  return { ...init, body: JSON.stringify(request), headers };
+  return { ...init, headers };
 }
 
 type DlpRejectionCode =
@@ -497,6 +522,23 @@ export function createGovernanceDlpFetch({
     }
     return response;
   };
+}
+
+/**
+ * Adds server-resolved identity and group context to every gateway request. This deliberately
+ * does not perform DLP parsing or approval, so completions that the DLP flow cannot govern
+ * (files, tools, regenerations, and DLP-disabled deployments) still have accurate usage
+ * attribution at the gateway.
+ */
+export function createGovernanceAttributionFetch(
+  req: ServerRequest,
+  fetch: GovernanceFetch = globalThis.fetch,
+): GovernanceFetch {
+  return async (input, init) =>
+    fetch(
+      input,
+      withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
+    );
 }
 
 function markDlpSent(req: ServerRequest): void {

@@ -20,19 +20,22 @@ router.use('/groups', governanceGroups);
 
 router.post('/usage-labels', governanceGroups.requireGovernanceAdminToken, async (req, res) => {
   const byUser = req.body?.by_user;
-  const byTeam = req.body?.by_team;
+  const usesLegacyTeamKey = req.body?.by_group == null && req.body?.by_team != null;
+  const byGroup = req.body?.by_group ?? req.body?.by_team;
   const validRows = (rows) =>
     Array.isArray(rows) &&
     rows.every((row) => typeof row?.key === 'string' && typeof row?.label === 'string');
-  if (!validRows(byUser) || !validRows(byTeam)) {
+  if (!validRows(byUser) || !validRows(byGroup)) {
     return res.status(400).json({ message: 'Invalid usage labels request' });
   }
 
   const result = await resolveUsageLabels(
-    { by_user: byUser, by_team: byTeam },
+    { by_user: byUser, by_group: byGroup },
     { findUsers, findGroups },
   );
-  return res.status(200).json(result);
+  return res
+    .status(200)
+    .json(usesLegacyTeamKey ? { by_user: result.by_user, by_team: result.by_group } : result);
 });
 
 router.use(requireJwtAuth);

@@ -1,0 +1,51 @@
+name: Deploy Maasu development server
+
+on:
+  workflow_run:
+    workflows: ["Docker Build Smoke Tests"]
+    types: [completed]
+    branches: [governed-v0.8.7]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maasu-development-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Update forks and deploy development stack
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DEV_SERVER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEV_SERVER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Deploy verified revisions
+        env:
+          DEPLOY_HOST: ${{ secrets.DEV_SERVER_HOST }}
+          DEPLOY_USER: ${{ secrets.DEV_SERVER_USER }}
+          GATEWAY_PATH: ${{ secrets.DEV_SERVER_PATH }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "$DEPLOY_USER@$DEPLOY_HOST" "bash -se -- '$GATEWAY_PATH' '$SOURCE_SHA'" <<'REMOTE'
+          set -euo pipefail
+          gateway_path=$1
+          source_sha=$2
+          bash "$gateway_path/deploy/scripts/deploy-verified.sh" LibreChat-Maasu "$source_sha"
+          REMOTE

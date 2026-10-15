@@ -59,21 +59,26 @@ describe('markGovernanceDlp', () => {
     ['a regenerate', { isRegenerate: true }],
     ['an edit', { editedContent: { index: 0, type: 'text', text: 'edit' } }],
     ['a selected tool', { ephemeralAgent: { web_search: true } }],
-  ])('leaves a send with %s unmarked', async (_label, overrides) => {
-    const { req, next } = await run({ text: 'normal text', ...overrides });
+  ])(
+    'does not mark a send with %s for DLP approval but resolves its groups for attribution',
+    async (_label, overrides) => {
+      const { req, next } = await run({ text: 'normal text', ...overrides });
 
-    expect(req.governanceDlpEligible).toBe(false);
-    expect(req.governanceGroupIds).toBeUndefined();
-    expect(next).toHaveBeenCalledTimes(1);
-  });
+      expect(req.governanceDlpEligible).toBe(false);
+      expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
+      expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
+      expect(next).toHaveBeenCalledTimes(1);
+    },
+  );
 
-  it('leaves every send unmarked while DLP is disabled', async () => {
+  it('resolves groups for attribution while leaving sends unmarked when DLP is disabled', async () => {
     process.env.GOVERNANCE_DLP_ENABLED = 'false';
 
     const { req, next } = await run({ text: 'normal text' });
 
     expect(req.governanceDlpEligible).toBe(false);
-    expect(mockGetUserGroupIds).not.toHaveBeenCalled();
+    expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
+    expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
     expect(next).toHaveBeenCalledTimes(1);
   });
 
