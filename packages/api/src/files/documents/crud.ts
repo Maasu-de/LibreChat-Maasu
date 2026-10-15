@@ -82,9 +82,7 @@ async function pdfToTextWithDocling(
     return await doclingPdfToMarkdown(file, doclingURL);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    logger.warn(
-      `[parseDocument] Docling failed for "${file.originalname}", falling back to pdfjs: ${reason}`,
-    );
+    logger.warn(`[parseDocument] Docling failed, falling back to pdfjs: ${reason}`);
     return pdfToText(file);
   }
 }

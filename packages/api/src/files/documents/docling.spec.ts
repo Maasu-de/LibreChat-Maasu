@@ -24,7 +24,7 @@ describe('Docling PDF extraction', () => {
 
   const pdfFile = (): Express.Multer.File =>
     ({
-      originalname: 'report.pdf',
+      originalname: 'salary Max Mustermann.pdf',
       path: pdfPath,
       mimetype: 'application/pdf',
       size: fs.statSync(pdfPath).size,
@@ -87,7 +87,8 @@ describe('Docling PDF extraction', () => {
     expect(captured?.method).toBe('POST');
     expect(captured?.url).toBe('/v1/convert/file');
     expect(captured?.contentType).toMatch(/^multipart\/form-data; boundary=/);
-    expect(captured?.body).toContain('filename="report.pdf"');
+    expect(captured?.body).toContain('filename="document.pdf"');
+    expect(captured?.body).not.toContain('Mustermann');
     expect(captured?.body).toContain('%PDF-1.4 fake pdf bytes');
     expect(captured?.body).toMatch(/name="to_formats"\r\n\r\nmd\r\n/);
     expect(captured?.body).toMatch(/name="image_export_mode"\r\n\r\nplaceholder\r\n/);
@@ -104,9 +105,7 @@ describe('Docling PDF extraction', () => {
 
     await expect(doclingPdfToMarkdown(pdfFile(), baseURL)).resolves.toBe('page 1');
 
-    expect(warn).toHaveBeenCalledWith(
-      '[Docling] Partial conversion of "report.pdf": page 2 timed out',
-    );
+    expect(warn).toHaveBeenCalledWith('[Docling] Partial conversion: page 2 timed out');
   });
 
   test('doclingPdfToMarkdown() throws when Docling returns no content', async () => {
@@ -139,7 +138,7 @@ describe('Docling PDF extraction', () => {
 
     expect(captured?.url).toBe('/v1/convert/file');
     expect(document).toEqual({
-      filename: 'report.pdf',
+      filename: 'salary Max Mustermann.pdf',
       bytes: Buffer.byteLength('# Report\n\n| a | b |', 'utf8'),
       filepath: 'document_parser',
       text: '# Report\n\n| a | b |',
@@ -155,9 +154,7 @@ describe('Docling PDF extraction', () => {
     await expect(parseDocument({ file: pdfFile() })).rejects.toThrow();
 
     expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /Docling failed for "report\.pdf", falling back to pdfjs: .*no content/,
-      ),
+      expect.stringMatching(/Docling failed, falling back to pdfjs: .*no content/),
     );
   });
 
@@ -170,7 +167,7 @@ describe('Docling PDF extraction', () => {
 
     expect(captured?.url).toBe('/v1/convert/file');
     expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/Docling failed for "report\.pdf", falling back to pdfjs: .*500/),
+      expect.stringMatching(/Docling failed, falling back to pdfjs: .*500/),
     );
   });
 });

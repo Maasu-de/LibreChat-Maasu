@@ -53,7 +53,7 @@ export async function doclingPdfToMarkdown(
 ): Promise<string> {
   const form = new FormData();
   form.append('files', fs.createReadStream(file.path), {
-    filename: file.originalname || 'document.pdf',
+    filename: 'document.pdf',
     contentType: 'application/pdf',
   });
   form.append('from_formats', 'pdf');
@@ -85,7 +85,7 @@ export async function doclingPdfToMarkdown(
   }
 
   if (data.status === 'partial_success') {
-    logger.warn(`[Docling] Partial conversion of "${file.originalname}"${detail}`);
+    logger.warn(`[Docling] Partial conversion${detail}`);
   }
 
   return markdown;
