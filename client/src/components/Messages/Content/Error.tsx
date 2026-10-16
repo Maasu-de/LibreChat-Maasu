@@ -76,6 +76,10 @@ const errorMessages = {
   },
   [ErrorTypes.GOOGLE_TOOL_CONFLICT]: 'com_error_google_tool_conflict',
   [ErrorTypes.STREAM_EXPIRED]: 'com_error_stream_expired',
+  /** Codes the governance SSO gateway (nginx) returns for background requests */
+  AUTHENTICATION_REQUIRED: 'com_error_authentication_required',
+  ACCESS_DENIED: 'com_error_access_denied',
+  AUTHENTICATION_SERVICE_UNAVAILABLE: 'com_error_authentication_service_unavailable',
   [ViolationTypes.BAN]:
     'Your account has been temporarily banned due to violations of our service.',
   [ViolationTypes.ILLEGAL_MODEL_REQUEST]: (json: TGenericError, localize: LocalizeFunction) => {
