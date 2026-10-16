@@ -35,6 +35,7 @@ export * from './timestamps';
 export * from './localStorage';
 export * from './promptGroups';
 export * from './previewCache';
+export * from './dlp';
 export * from './groupToolCalls';
 export * from './toolLabels';
 export * from './favoritesError';

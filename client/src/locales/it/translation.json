@@ -1522,7 +1522,7 @@
   "com_ui_upload_agent_avatar": "Aggiornato con successo l'avatar dell'agente",
   "com_ui_upload_agent_avatar_label": "Carica l'immagine avatar dell'agente",
   "com_ui_upload_avatar_label": "Caricare l'immagine dell'avatar",
-  "com_ui_upload_delay": "Il caricamento di \"{{0}}\" sta richiedendo più tempo del previsto. Attendi il completamento dell'indicizzazione per il recupero.",
+  "com_ui_upload_delay": "Il caricamento di \"{{0}}\" sta richiedendo più tempo del previsto. Attendi!",
   "com_ui_upload_error": "Si è verificato un errore durante il caricamento del file",
   "com_ui_upload_file_context": "Carica contesto file",
   "com_ui_upload_file_search": "Carica per ricerca file",

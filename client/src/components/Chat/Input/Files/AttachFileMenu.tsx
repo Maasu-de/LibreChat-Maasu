@@ -100,6 +100,8 @@ const AttachFileMenu = ({
   const { agentsConfig } = useGetAgentsConfig();
   const { data: startupConfig } = useGetStartupConfig();
   const sharePointEnabled = startupConfig?.sharePointFilePickerEnabled;
+  /** Provider uploads would reach the model without passing the governance gateway. */
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
 
   const [isSharePointDialogOpen, setIsSharePointDialogOpen] = useState(false);
 
@@ -171,6 +173,7 @@ const AttachFileMenu = ({
       ) {
         items.push({
           label: localize('com_ui_upload_provider'),
+          show: !governancePilot,
           onClick: () => {
             setToolResource(undefined);
             let fileType: Exclude<FileUploadType, 'image' | 'document'> = 'image_document';
@@ -264,6 +267,7 @@ const AttachFileMenu = ({
     provider,
     endpointType,
     capabilities,
+    governancePilot,
     useResponsesApi,
     handleUploadClick,
     setEphemeralAgent,

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MutationKeys, QueryKeys, dataService, request } from 'librechat-data-provider';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type * as t from 'librechat-data-provider';
+import useDeleteUnsentDlpFiles from '~/hooks/Config/useDeleteUnsentDlpFiles';
 import useClearStates from '~/hooks/Config/useClearStates';
 import { clearAllConversationStorage } from '~/utils';
 import store from '~/store';
@@ -13,11 +14,15 @@ export const useLogoutUserMutation = (
 ): UseMutationResult<t.TLogoutResponse, unknown, undefined, unknown> => {
   const queryClient = useQueryClient();
   const clearStates = useClearStates();
+  const deleteUnsentDlpFiles = useDeleteUnsentDlpFiles();
   const resetDefaultPreset = useResetRecoilState(store.defaultPreset);
   const setQueriesEnabled = useSetRecoilState<boolean>(store.queriesEnabled);
 
   return useMutation([MutationKeys.logoutUser], {
-    mutationFn: () => dataService.logout(),
+    mutationFn: async () => {
+      await deleteUnsentDlpFiles();
+      return dataService.logout();
+    },
     ...(options || {}),
     onSuccess: (...args) => {
       setQueriesEnabled(false);

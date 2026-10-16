@@ -5,7 +5,8 @@ import type {
   GovernanceDecision,
   GovernanceDlpReview,
 } from 'librechat-data-provider';
-import type { GatewayReview, ReviewStore } from './review';
+import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
+import type { FileContext } from '~/files/context';
 import type { ServerRequest } from '~/types/http';
 import {
   maskText,
@@ -14,6 +15,7 @@ import {
   getReviewStore,
   toClientReview,
   findSubmittedText,
+  findingsInFiles,
   findingsInSubmittedText,
 } from './review';
 import { isGovernancePilotEnabled } from './mode';
@@ -67,6 +69,8 @@ export interface GovernanceFetchParams {
   text?: string;
   /** Review the user approved; its stored request is sent instead of the rebuilt one. */
   reviewId?: string;
+  /** The attached-document blocks this turn added to messages. */
+  fileContexts?: () => DlpFileContext[];
   /** Receives a review the user has to decide on. The model call then ends without a completion. */
   onReview?: (review: GovernanceDlpReview) => void;
   /** Called when the gateway starts a completion, which means the request passed DLP. */
@@ -330,6 +334,7 @@ interface ApprovalParams {
   groupIds: string[];
   text: string;
   reviewId?: string;
+  fileContexts: () => DlpFileContext[];
   onReview: (review: GovernanceDlpReview) => void;
   onApprovalKept?: (kept: boolean) => void;
   fetch: GovernanceFetch;
@@ -352,8 +357,9 @@ function withApproval(
 
 /**
  * Handles a stage 1 review: it is stored for the user's approval and handed to `onReview`, and
- * the model call ends. The gateway reviews only findings in the submitted message, so a review
- * without findings in the submitted text is rejected, never approved on the user's behalf.
+ * the model call ends. Only findings in the submitted text or in files attached to user messages
+ * are shown to the user, so a review with neither is rejected, never approved on their behalf.
+ * An approval sends the gateway's masked messages, files included.
  */
 async function handleReview(params: ApprovalParams, review: GatewayReview): Promise<Response> {
   const decision = normalizeDecision(review.action);
@@ -366,8 +372,14 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   }
 
   const findings = findingsInSubmittedText(review.findings ?? [], submitted);
+  const fileFindings = findingsInFiles(
+    params.request.messages,
+    review.findings ?? [],
+    submitted,
+    params.fileContexts(),
+  );
   if (decision === 'BLOCK') {
-    params.onReview(toClientReview(review, decision, findings));
+    params.onReview(toClientReview(review, decision, findings, undefined, fileFindings));
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
 
@@ -375,7 +387,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   if (!messages || !dlpToken) {
     return rejectCompletion('dlp_malformed_response');
   }
-  if (findings.length === 0) {
+  if (findings.length === 0 && fileFindings.length === 0) {
     return rejectCompletion('dlp_malformed_response');
   }
 
@@ -396,7 +408,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     },
     reviewTtl(review.expires_at),
   );
-  params.onReview(toClientReview(review, decision, findings, approvedText));
+  params.onReview(toClientReview(review, decision, findings, approvedText, fileFindings));
   return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
@@ -473,6 +485,7 @@ export function createGovernanceDlpFetch({
   fetch = globalThis.fetch,
   text = '',
   reviewId,
+  fileContexts = () => [],
   onReview,
   onSent,
   onApprovalKept,
@@ -511,6 +524,7 @@ export function createGovernanceDlpFetch({
           groupIds,
           text,
           reviewId,
+          fileContexts,
           onReview,
           onApprovalKept,
           fetch,
@@ -570,6 +584,20 @@ export function getRetryableDlpReviewId(req?: ServerRequest): string | undefined
   return typeof reviewId === 'string' && reviewId !== '' ? reviewId : undefined;
 }
 
+/** Records an attached-document block added to this turn's submitted message or its history. */
+export function addDlpFileContext(
+  req: ServerRequest | undefined,
+  fileContext: FileContext,
+  current: boolean,
+): void {
+  if (req) {
+    req.governanceDlpFileContexts = [
+      ...(req.governanceDlpFileContexts ?? []),
+      { ...fileContext, current },
+    ];
+  }
+}
+
 /** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
 export function onDlpSent(req: ServerRequest | undefined, callback: () => void): void {
   if (!req || !isDlpUnsent(req)) {
@@ -607,6 +635,7 @@ export function createRequestDlpFetch(
     fetch,
     text: typeof text === 'string' ? text : '',
     reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
+    fileContexts: () => req.governanceDlpFileContexts ?? [],
     onReview: (review) => {
       req.governanceDlpReview = review;
     },

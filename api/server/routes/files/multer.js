@@ -2,7 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
-const { sanitizeFilename } = require('@librechat/api');
+const {
+  sanitizeFilename,
+  isGovernancePilotEnabled,
+  isGovernanceAttachmentType,
+} = require('@librechat/api');
 const {
   mergeFileConfig,
   inferMimeType,
@@ -65,6 +69,11 @@ const createFileFilter = (customFileConfig) => {
 
     if (req.originalUrl.endsWith('/speech/stt') && mimeType.startsWith('audio/')) {
       return cb(null, true);
+    }
+
+    if (isGovernancePilotEnabled() && !isGovernanceAttachmentType(mimeType)) {
+      const message = 'Unsupported file type: ' + (file.mimetype || mimeType || 'unknown');
+      return cb(Object.assign(new Error(message), { statusCode: 400, body: { message } }), false);
     }
 
     const endpoint = req.body.endpoint;

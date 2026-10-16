@@ -300,6 +300,59 @@ describe('Multer Configuration', () => {
       fileFilter(mockReq, zipFile, cb);
     });
 
+    describe('in governance pilot mode', () => {
+      const pilotFilter = () => {
+        const { mergeFileConfig } = require('librechat-data-provider');
+        return createFileFilter(mergeFileConfig());
+      };
+      const filterResult = (file) =>
+        new Promise((resolve) => pilotFilter()(mockReq, file, (err, ok) => resolve({ err, ok })));
+
+      beforeEach(() => {
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      });
+
+      afterEach(() => {
+        delete process.env.GOVERNANCE_PILOT_ENABLED;
+      });
+
+      it('rejects types outside the attachment allowlist whatever the endpoint allows', async () => {
+        for (const [originalname, mimetype] of [
+          ['photo.png', 'image/png'],
+          [
+            'slides.pptx',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          ],
+          ['sheet.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+          ['archive.zip', ''],
+        ]) {
+          const { err, ok } = await filterResult({ ...mockFile, originalname, mimetype });
+          expect(ok).toBe(false);
+          expect(err.message).toMatch(/^Unsupported file type: /);
+          expect(err.statusCode).toBe(400);
+          expect(err.body).toEqual({ message: err.message });
+        }
+      });
+
+      it('accepts txt, md, csv, pdf and docx', async () => {
+        for (const [originalname, mimetype] of [
+          ['notes.txt', 'text/plain'],
+          ['readme.md', ''],
+          ['readme.md', 'text/x-markdown'],
+          ['data.csv', 'text/csv'],
+          ['report.pdf', 'application/pdf'],
+          [
+            'letter.docx',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          ],
+        ]) {
+          const { err, ok } = await filterResult({ ...mockFile, originalname, mimetype });
+          expect([originalname, err]).toEqual([originalname, null]);
+          expect(ok).toBe(true);
+        }
+      });
+    });
+
     it('should use real mergeFileConfig function', async () => {
       const { mergeFileConfig, mbToBytes } = require('librechat-data-provider');
 

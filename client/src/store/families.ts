@@ -36,6 +36,12 @@ const dlpReviewByIndex = atomFamily<TPendingDlpReview | null, string | number>({
   default: null,
 });
 
+/** The composer files of the last message sent, kept until a DLP review of it is decided. */
+const submittedFilesByIndex = atomFamily<Map<string, ExtendedFile> | null, string | number>({
+  key: 'submittedFilesByIndex',
+  default: null,
+});
+
 const submissionKeysSelector = selector<(string | number)[]>({
   key: 'submissionKeysSelector',
   get: ({ get }) => {
@@ -439,6 +445,7 @@ export default {
   presetByIndex,
   submissionByIndex,
   dlpReviewByIndex,
+  submittedFilesByIndex,
   textByIndex,
   showStopButtonByIndex,
   abortScrollFamily,

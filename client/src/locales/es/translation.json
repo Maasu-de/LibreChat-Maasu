@@ -858,7 +858,7 @@
   "com_ui_updating": "Actualizando…",
   "com_ui_upload": "Subir",
   "com_ui_upload_agent_avatar_label": "Subir imagen de Avatar de agente",
-  "com_ui_upload_delay": "La carga de \"{{0}}\" está tomando más tiempo del esperado. Espere mientras el archivo termina de indexarse para su recuperación.",
+  "com_ui_upload_delay": "La carga de \"{{0}}\" está tomando más tiempo del esperado. ¡Espere, por favor!",
   "com_ui_upload_error": "Hubo un error al subir su archivo",
   "com_ui_upload_file_search": "Subir para búsqueda de archivos",
   "com_ui_upload_files": "Subir archivos",

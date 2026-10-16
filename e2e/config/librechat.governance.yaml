@@ -1,0 +1,5 @@
+# Config for the governed-pilot e2e specs (e2e/playwright.config.governance.ts).
+# Pilot mode replaces the endpoints, file and interface settings with its own,
+# pointed at the fake gateway in e2e/setup/fake-governance-gateway.js.
+version: 1.3.11
+cache: true

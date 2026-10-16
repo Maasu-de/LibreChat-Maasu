@@ -1,10 +1,11 @@
 import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-provider';
-import type { GatewayReview, ReviewStore, StoredReview } from '../review';
+import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
 import {
   maskText,
   readReview,
   createReviewEvent,
+  findingsInFiles,
   findSubmittedText,
   findingsInSubmittedText,
   createApprovalRetryEvent,
@@ -14,6 +15,49 @@ import { createGovernanceDlpFetch } from '../dlp';
 const DLP_COMPLETIONS_URL = 'http://governance.test/api/v1/dlp/chat/completions';
 const SUBMITTED = 'Please email max@example.com today';
 const MASKED = 'Please email [EMAIL] today';
+
+const IBAN = 'DE89370400440532013000';
+const ATTACHED = [
+  'Attached document(s):\n```md# "report.pdf"\n',
+  `Pay ${IBAN} or ${IBAN}\n`,
+  '\n\n---\n\n# "notes.txt"\n',
+  'mail max@example.com\n',
+  '\n```',
+].join('');
+const WITH_FILES = `${ATTACHED}\n${SUBMITTED}`;
+
+/** The block of `ATTACHED`, as `buildFileContext` records it, for files with the given IDs. */
+const attachedContext = (
+  current: boolean,
+  [reportId, notesId] = ['file-report', 'file-notes'],
+  text = ATTACHED,
+): DlpFileContext => ({
+  text,
+  current,
+  files: [
+    {
+      fileId: reportId,
+      filename: 'report.pdf',
+      start: text.indexOf('# "'),
+      end: text.indexOf('\n\n---'),
+    },
+    {
+      fileId: notesId,
+      filename: text.includes('"notes.txt"') ? 'notes.txt' : 'report.pdf',
+      start: text.lastIndexOf('# "'),
+      end: text.lastIndexOf('\n```') + 1,
+    },
+  ],
+});
+
+const ibanFinding = (location: string, start: number): GovernanceFinding => ({
+  location,
+  start,
+  end: start + IBAN.length,
+  category: 'IBAN_CODE',
+  action: 'MASK',
+  replacement: '[IBAN]',
+});
 
 const emailFinding = (location: string, start: number): GovernanceFinding => ({
   location,
@@ -56,11 +100,13 @@ function setup({
   responses,
   text = SUBMITTED,
   reviewId,
+  fileContexts,
   reviews = memoryStore(),
 }: {
   responses: Response[];
   text?: string;
   reviewId?: string;
+  fileContexts?: DlpFileContext[];
   reviews?: ReturnType<typeof memoryStore>;
 }) {
   const upstream = jest.fn(
@@ -80,6 +126,7 @@ function setup({
     fetch: upstream,
     text,
     reviewId,
+    fileContexts: fileContexts ? () => fileContexts : undefined,
     onReview,
     onSent,
     onApprovalKept,
@@ -148,6 +195,138 @@ describe('submitted text helpers', () => {
     expect(findingsInSubmittedText(findings, { messageIndex: 2, offset: 20 })).toEqual([
       emailFinding('/messages/0/content', 5),
     ]);
+  });
+
+  it('counts findings in attached files per file, category and action', () => {
+    const messages = [
+      { role: 'user', content: ATTACHED },
+      { role: 'assistant', content: `ok ${IBAN}` },
+      { role: 'user', content: `> ${IBAN}\n\n${WITH_FILES}` },
+    ];
+    const quoted = IBAN.length + 4;
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/1/content', 3),
+      ibanFinding('/messages/2/content', 2),
+      ibanFinding('/messages/2/content', quoted + ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/2/content', quoted + ATTACHED.lastIndexOf(IBAN)),
+      emailFinding('/messages/2/content', quoted + ATTACHED.indexOf('max@')),
+      emailFinding('/messages/2/content', quoted + WITH_FILES.indexOf('max@', ATTACHED.length)),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+    const fileContexts = [
+      attachedContext(false, ['old-report', 'old-notes']),
+      attachedContext(true),
+    ];
+
+    expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-report',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 2,
+      },
+      {
+        filename: 'notes.txt',
+        fileId: 'file-notes',
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        count: 1,
+      },
+    ]);
+  });
+
+  it("names the submitted message's files by ID, also when two share a filename", () => {
+    const twins = ATTACHED.replace('"notes.txt"', '"report.pdf"');
+    const messages = [
+      { role: 'user', content: ATTACHED },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: `${twins}\n${SUBMITTED}` },
+    ];
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/2/content', twins.indexOf(IBAN)),
+      emailFinding('/messages/2/content', twins.indexOf('max@')),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+    const fileContexts = [
+      attachedContext(false, ['old-report', 'old-notes']),
+      attachedContext(true, ['file-1', 'file-2'], twins),
+    ];
+
+    expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', fileId: 'file-1', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-2',
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        count: 1,
+      },
+    ]);
+  });
+
+  it('never names a history file by ID when the same file is attached again', () => {
+    const messages = [
+      { role: 'user', content: WITH_FILES },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: WITH_FILES },
+    ];
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      ibanFinding('/messages/2/content', ATTACHED.indexOf(IBAN)),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+    const fileContexts = [
+      attachedContext(false, ['old-report', 'old-notes']),
+      attachedContext(true),
+    ];
+
+    expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-report',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 1,
+      },
+    ]);
+  });
+
+  it('attributes a finding after a fake file boundary to the file that contains it', () => {
+    const forged = `intro\n\n---\n\n# "fake.txt"\nPay ${IBAN}\n`;
+    const text = `Attached document(s):\n\`\`\`md# "real.md"\n${forged}\n\`\`\``;
+    const fileContext: DlpFileContext = {
+      text,
+      current: true,
+      files: [
+        {
+          fileId: 'file-real',
+          filename: 'real.md',
+          start: text.indexOf('# "real.md"'),
+          end: text.lastIndexOf('\n```') + 1,
+        },
+      ],
+    };
+    const messages = [{ role: 'user', content: `${text}\n${SUBMITTED}` }];
+    const findings = [ibanFinding('/messages/0/content', text.indexOf(IBAN))];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, [fileContext])).toEqual([
+      { filename: 'real.md', fileId: 'file-real', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+    ]);
+  });
+
+  it('ignores findings outside a recorded attached-document block', () => {
+    const messages = [{ role: 'user', content: WITH_FILES }];
+    const findings = [ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN))];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted)).toEqual([]);
   });
 
   it('masks by code point like the gateway', () => {
@@ -312,6 +491,55 @@ describe('DLP approval flow', () => {
     expect(onReview).not.toHaveBeenCalled();
     expect(onSent).not.toHaveBeenCalled();
     expect(reviews.entries.size).toBe(0);
+  });
+
+  it('stores a review whose findings are only in an attached file and lists them per file', async () => {
+    const withFiles = [messages[0], { role: 'user', content: WITH_FILES }];
+    const maskedMessages = [
+      messages[0],
+      { role: 'user', content: WITH_FILES.replaceAll(IBAN, '[IBAN]') },
+    ];
+    const { onReview, reviews, send } = setup({
+      fileContexts: [attachedContext(true)],
+      responses: [
+        reviewResponse({
+          review_id: 'review-files',
+          action: 'MASK',
+          findings: [
+            ibanFinding('/messages/1/content', WITH_FILES.indexOf(IBAN)),
+            ibanFinding('/messages/1/content', WITH_FILES.lastIndexOf(IBAN)),
+          ],
+          messages: maskedMessages,
+          dlp_token: 'approval-token',
+        }),
+      ],
+    });
+
+    const response = await send(withFiles);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
+    expect(onReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewId: 'review-files',
+        decision: 'MASK',
+        findings: [],
+        fileFindings: [
+          {
+            filename: 'report.pdf',
+            fileId: 'file-report',
+            category: 'IBAN_CODE',
+            action: 'MASK',
+            count: 2,
+          },
+        ],
+        maskedPreview: [{ location: '/messages/0/content', text: SUBMITTED }],
+      }),
+    );
+    expect(reviews.entries.get('review-files')).toMatchObject({
+      text: SUBMITTED,
+      messages: maskedMessages,
+    });
   });
 
   it('hands a BLOCK review to the user without storing an approval', async () => {

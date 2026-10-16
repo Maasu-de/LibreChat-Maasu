@@ -750,7 +750,7 @@
   "com_ui_unknown": "Ismeretlen",
   "com_ui_update": "Frissítés",
   "com_ui_upload": "Feltöltés",
-  "com_ui_upload_delay": "A „{{0}}” feltöltése több időt vesz igénybe, mint vártuk. Kérjük, várjon, amíg a fájl indexelése befejeződik a lekérdezéshez.",
+  "com_ui_upload_delay": "A „{{0}}” feltöltése több időt vesz igénybe, mint vártuk. Kérjük, várjon!",
   "com_ui_upload_error": "Hiba történt a fájl feltöltése során",
   "com_ui_upload_file_context": "Fájlkontextus feltöltése",
   "com_ui_upload_file_search": "Feltöltés fájlkereséshez",

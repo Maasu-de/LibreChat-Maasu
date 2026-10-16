@@ -1486,7 +1486,7 @@
   "com_ui_upload_agent_avatar": "Agentavataren blei oppdatert.",
   "com_ui_upload_agent_avatar_label": "Last opp bilde for agentavatar",
   "com_ui_upload_avatar_label": "Last opp avatarbilde",
-  "com_ui_upload_delay": "Opplasting av «{{0}}» tek lengre tid enn venta. Ver venleg og vent medan fila blir klargjord.",
+  "com_ui_upload_delay": "Opplasting av «{{0}}» tek lengre tid enn venta. Ver venleg og vent!",
   "com_ui_upload_error": "Det oppstod ein feil under opplasting av fila di.",
   "com_ui_upload_file_context": "Last opp filkontekst",
   "com_ui_upload_file_search": "Last opp for filsøk",

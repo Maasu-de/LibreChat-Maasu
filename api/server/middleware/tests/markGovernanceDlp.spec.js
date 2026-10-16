@@ -1,8 +1,8 @@
-const mockGetUserGroupIds = jest.fn();
+const mockGetUserGroups = jest.fn();
 const mockDenyRequest = jest.fn();
 
-jest.mock('~/server/services/governanceGroups', () => ({
-  getUserGroupIds: (...args) => mockGetUserGroupIds(...args),
+jest.mock('~/models', () => ({
+  getUserGroups: (...args) => mockGetUserGroups(...args),
 }));
 jest.mock(
   '../denyRequest',
@@ -20,8 +20,8 @@ describe('markGovernanceDlp', () => {
   beforeEach(() => {
     process.env.GOVERNANCE_DLP_ENABLED = 'true';
     delete process.env.GOVERNANCE_PILOT_ENABLED;
-    mockGetUserGroupIds.mockReset();
-    mockGetUserGroupIds.mockResolvedValue(['group-1', 'group-2']);
+    mockGetUserGroups.mockReset();
+    mockGetUserGroups.mockResolvedValue([{ _id: 'group-1' }, { _id: 'group-2' }]);
     mockDenyRequest.mockReset();
   });
 
@@ -50,7 +50,7 @@ describe('markGovernanceDlp', () => {
 
     expect(req.governanceDlpEligible).toBe(true);
     expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
-    expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
+    expect(mockGetUserGroups).toHaveBeenCalledWith('user-123', { _id: 1 });
     expect(next).toHaveBeenCalledTimes(1);
   });
 
@@ -66,7 +66,7 @@ describe('markGovernanceDlp', () => {
 
       expect(req.governanceDlpEligible).toBe(false);
       expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
-      expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
+      expect(mockGetUserGroups).toHaveBeenCalledWith('user-123', { _id: 1 });
       expect(next).toHaveBeenCalledTimes(1);
     },
   );
@@ -78,7 +78,7 @@ describe('markGovernanceDlp', () => {
 
     expect(req.governanceDlpEligible).toBe(false);
     expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
-    expect(mockGetUserGroupIds).toHaveBeenCalledWith('user-123');
+    expect(mockGetUserGroups).toHaveBeenCalledWith('user-123', { _id: 1 });
     expect(next).toHaveBeenCalledTimes(1);
   });
 
@@ -93,7 +93,7 @@ describe('markGovernanceDlp', () => {
   });
 
   it('refuses a governed send when the user groups cannot be resolved', async () => {
-    mockGetUserGroupIds.mockRejectedValue(new Error('database unavailable'));
+    mockGetUserGroups.mockRejectedValue(new Error('database unavailable'));
 
     const { req, next } = await run({ text: 'normal text' });
 

@@ -8,8 +8,9 @@ const {
   checkBalance,
   getBalanceConfig,
   buildMessageFiles,
+  addDlpFileContext,
   sanitizeFileForTransmit,
-  extractFileContext,
+  buildFileContext,
   getReferencedQuotes,
   encodeAndFormatAudios,
   encodeAndFormatVideos,
@@ -1324,17 +1325,19 @@ class BaseClient {
    * This handles text that was already extracted from files (OCR, transcriptions, document text, etc.)
    * @param {TMessage} message - The message to add context to
    * @param {MongoFile[]} attachments - Array of file attachments
+   * @param {boolean} [current] - Whether the message is the one being submitted
    * @returns {Promise<void>}
    */
-  async addFileContextToMessage(message, attachments) {
-    const fileContext = await extractFileContext({
+  async addFileContextToMessage(message, attachments, current = false) {
+    const fileContext = await buildFileContext({
       attachments,
       req: this.options?.req,
       tokenCountFn: (text) => countTokens(text),
     });
 
     if (fileContext) {
-      message.fileContext = fileContext;
+      message.fileContext = fileContext.text;
+      addDlpFileContext(this.options?.req, fileContext, current);
     }
   }
 

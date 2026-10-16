@@ -1,10 +1,10 @@
 import { memo, useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { useWatch } from 'react-hook-form';
-import { TextareaAutosize } from '@librechat/client';
 import { useRecoilState, useRecoilValue } from 'recoil';
+import { TextareaAutosize, useToastContext } from '@librechat/client';
 import { Constants, isAssistantsEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
-import type { ExtendedFile, FileSetter, ConvoGenerator } from '~/common';
+import type { ExtendedFile, FileSetter, ConvoGenerator, TPendingDlpReview } from '~/common';
 import {
   useTextarea,
   useAutoSave,
@@ -80,6 +80,7 @@ const ChatForm = memo(function ChatForm({
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useFocusChatEffect(textAreaRef);
   const localize = useLocalize();
+  const { showToast } = useToastContext();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [, setIsScrollable] = useState(false);
@@ -98,6 +99,7 @@ const ChatForm = memo(function ChatForm({
   const [badges, setBadges] = useRecoilState(store.chatBadges);
   const [isEditingBadges, setIsEditingBadges] = useRecoilState(store.isEditingBadges);
   const [showStopButton, setShowStopButton] = useRecoilState(store.showStopButtonByIndex(index));
+  const dlpReview = useRecoilValue(store.dlpReviewByIndex(index));
   const plusPopoverAtom = useMemo(() => store.showPlusPopoverFamily(index), [index]);
   const mentionPopoverAtom = useMemo(() => store.showMentionPopoverFamily(index), [index]);
 
@@ -148,12 +150,42 @@ const ChatForm = memo(function ChatForm({
     [requiresKey, invalidAssistant],
   );
 
-  const handleCancelDlpIntervention = useCallback(() => {
-    if (pendingDlpReview) {
-      methods.setValue('text', pendingDlpReview.text, { shouldValidate: true });
+  /** Puts the reviewed text back into the composer and drops the review, as Cancel does. */
+  const closeDlpReview = useCallback(
+    (review: TPendingDlpReview | null) => {
+      if (review) {
+        methods.setValue('text', review.text, { shouldValidate: true });
+      }
+      cancelDlpIntervention();
+    },
+    [cancelDlpIntervention, methods],
+  );
+
+  const handleCancelDlpIntervention = useCallback(
+    () => closeDlpReview(pendingDlpReview),
+    [closeDlpReview, pendingDlpReview],
+  );
+
+  useEffect(() => {
+    if (dlpReview?.status === 'rejected') {
+      closeDlpReview(dlpReview);
     }
-    cancelDlpIntervention();
-  }, [cancelDlpIntervention, methods, pendingDlpReview]);
+  }, [dlpReview, closeDlpReview]);
+
+  const dlpReviewExpiresAt = pendingDlpReview?.result.expiresAt;
+  useEffect(() => {
+    if (dlpReviewExpiresAt == null) {
+      return;
+    }
+    const timer = setTimeout(
+      () => {
+        showToast({ message: localize('com_ui_dlp_review_expired'), status: 'warning' });
+        handleCancelDlpIntervention();
+      },
+      Math.max(dlpReviewExpiresAt * 1000 - Date.now(), 0),
+    );
+    return () => clearTimeout(timer);
+  }, [dlpReviewExpiresAt, handleCancelDlpIntervention, showToast, localize]);
 
   const handleConfirmDlpIntervention = useCallback(() => {
     if (confirmDlpIntervention()) {

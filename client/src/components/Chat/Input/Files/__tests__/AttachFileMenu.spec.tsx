@@ -55,13 +55,15 @@ jest.mock('@librechat/client', () => {
           R.createElement(
             'div',
             { 'data-testid': 'dropdown-menu' },
-            props.items.map((item, idx) =>
-              R.createElement(
-                'button',
-                { key: idx, onClick: item.onClick, 'data-testid': `menu-item-${idx}` },
-                item.label,
+            props.items
+              .filter((item) => item.show !== false)
+              .map((item, idx) =>
+                R.createElement(
+                  'button',
+                  { key: idx, onClick: item.onClick, 'data-testid': `menu-item-${idx}` },
+                  item.label,
+                ),
               ),
-            ),
           ),
       ),
     AttachmentIcon: () => R.createElement('span', { 'data-testid': 'attachment-icon' }),
@@ -100,7 +102,7 @@ function setupMocks(overrides: { provider?: string } = {}) {
     com_ui_upload_code_environment: 'Upload to Code Environment',
     com_ui_upload_file_search: 'Upload for File Search',
     com_ui_upload_image_input: 'Upload Image',
-    com_ui_upload_ocr_text: 'Upload as Text',
+    com_ui_upload_ocr_text: 'Upload File',
     com_ui_upload_provider: 'Upload to Provider',
   };
   mockUseLocalize.mockReturnValue((key: string) => translations[key] || key);
@@ -222,6 +224,18 @@ describe('AttachFileMenu', () => {
     });
   });
 
+  describe('governance pilot', () => {
+    it('hides "Upload to Provider" so files cannot bypass the gateway', () => {
+      setupMocks({ provider: EModelEndpoint.openAI });
+      mockUseGetStartupConfig.mockReturnValue({
+        data: { sharePointFilePickerEnabled: false, governancePilotEnabled: true },
+      });
+      renderMenu({ endpointType: EModelEndpoint.openAI });
+      openMenu();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
+    });
+  });
+
   describe('agent provider resolution scenario', () => {
     it('shows "Upload to Provider" when agents endpoint has custom endpointType from provider', () => {
       setupMocks({ provider: 'Moonshot' });
@@ -274,7 +288,7 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.getByText('Upload File')).toBeInTheDocument();
     });
 
     it('shows File Search option when enabled and allowed by agent', () => {
@@ -338,7 +352,7 @@ describe('AttachFileMenu', () => {
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
       expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.getByText('Upload File')).toBeInTheDocument();
       expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
       expect(screen.getByText('Upload to Code Environment')).toBeInTheDocument();
     });

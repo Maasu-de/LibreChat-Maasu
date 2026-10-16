@@ -1289,7 +1289,7 @@
   "com_ui_update": "Oppdater",
   "com_ui_upload": "Last opp",
   "com_ui_upload_agent_avatar": "Agentavataren ble oppdatert.",
-  "com_ui_upload_delay": "Opplasting av «{{0}}» tar lengre tid enn forventet. Vennligst vent mens filen klargjøres.",
+  "com_ui_upload_delay": "Opplasting av «{{0}}» tar lengre tid enn forventet. Vennligst vent!",
   "com_ui_upload_error": "Det oppstod en feil under opplasting av filen din.",
   "com_ui_upload_file_context": "Last opp filkontekst",
   "com_ui_upload_file_search": "Last opp for filsøk",

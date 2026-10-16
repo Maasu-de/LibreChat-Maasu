@@ -1452,7 +1452,7 @@
   "com_ui_upload_agent_avatar": "Avatar de l'agent mis à jour avec succès",
   "com_ui_upload_agent_avatar_label": "Téléverser l'image d'avatar de l'agent",
   "com_ui_upload_avatar_label": "Téléverser l'image d'avatar",
-  "com_ui_upload_delay": "Le téléversement de \"{{0}}\" prend plus de temps que prévu. Veuillez patienter pendant que le fichier termine son indexation pour la récupération.",
+  "com_ui_upload_delay": "Le téléversement de \"{{0}}\" prend plus de temps que prévu. Veuillez patienter !",
   "com_ui_upload_error": "Une erreur s'est produite lors du téléversement de votre fichier",
   "com_ui_upload_file_context": "Téléverser le contexte du fichier",
   "com_ui_upload_file_search": "Téléverser pour la recherche dans un fichier",

@@ -195,15 +195,19 @@ const isOAuthStepEvent = (data: unknown) => {
 
 /**
  * Settles a review whose approved turn was on its way, once that turn starts or ends: reopened
- * when the server kept it to be sent again, otherwise dropped. Other reviews are left as they are.
+ * when the server kept it to be sent again, rejected when the turn ended `unsent`, otherwise
+ * dropped. Other reviews are left as they are.
  */
 const settleSentDlpReview =
-  (retryReviewId?: string) =>
+  ({ retryReviewId, unsent = false }: { retryReviewId?: string; unsent?: boolean } = {}) =>
   (review: TPendingDlpReview | null): TPendingDlpReview | null => {
     if (review?.status !== 'sending') {
       return review;
     }
-    return review.result.reviewId === retryReviewId ? { ...review, status: 'failed' } : null;
+    if (review.result.reviewId === retryReviewId) {
+      return { ...review, status: 'failed' };
+    }
+    return unsent ? { ...review, status: 'rejected' } : null;
   };
 
 const replaceNewConversationUrl = (conversationId: string) => {
@@ -454,6 +458,7 @@ export default function useResumableSSE(
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
   const setDlpReview = useSetRecoilState(store.dlpReviewByIndex(runIndex));
+  const setSubmittedFiles = useSetRecoilState(store.submittedFilesByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
 
   const sseRef = useRef<SSE | null>(null);
@@ -486,10 +491,10 @@ export default function useResumableSSE(
     setShowStopButton,
   });
 
-  /** A failed turn also ends an approved review on its way, which is then dropped. */
+  /** A failed turn also ends an approved review on its way, which then counts as not sent. */
   const errorHandler = useCallback(
     (params: Parameters<typeof showError>[0]) => {
-      setDlpReview(settleSentDlpReview());
+      setDlpReview(settleSentDlpReview({ unsent: true }));
       showError(params);
     },
     [setDlpReview, showError],
@@ -572,9 +577,15 @@ export default function useResumableSSE(
                   text: data.requestMessage?.text ?? userMessage.text,
                   conversationId: currentSubmission.conversation?.conversationId ?? null,
                   manualSkills: data.requestMessage?.manualSkills ?? currentSubmission.manualSkills,
+                  files: userMessage.files,
                 });
               } else {
-                setDlpReview(settleSentDlpReview(data.dlpRetryReviewId));
+                const unsent = data.earlyAbort === true;
+                setDlpReview(settleSentDlpReview({ retryReviewId: data.dlpRetryReviewId, unsent }));
+                /** A sent turn leaves no review that could still restore or delete its files. */
+                if (!unsent && data.dlpRetryReviewId == null) {
+                  setSubmittedFiles(null);
+                }
               }
               finalizeUsage(data, { ...currentSubmission, userMessage });
             } catch (error) {
@@ -1107,6 +1118,7 @@ export default function useResumableSSE(
       setActiveRunId,
       setShowStopButton,
       setDlpReview,
+      setSubmittedFiles,
       finalHandler,
       createdHandler,
       attachmentHandler,

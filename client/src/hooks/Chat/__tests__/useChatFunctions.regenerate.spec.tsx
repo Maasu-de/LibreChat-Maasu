@@ -37,6 +37,10 @@ jest.mock('recoil', () => ({
     }),
 }));
 
+jest.mock('~/data-provider', () => ({
+  startupConfigKey: (loggedIn: boolean) => ['startupConfig', loggedIn],
+  useDeleteFilesMutation: () => ({ mutate: jest.fn() }),
+}));
 jest.mock('~/hooks/Files/useSetFilesToDelete', () => () => mockSetFilesToDelete);
 jest.mock('~/hooks/Conversations/useGetSender', () => () => mockGetSender);
 jest.mock('~/hooks/Input/useUserKey', () => () => ({ getExpiry: mockGetExpiry }));
@@ -53,6 +57,7 @@ jest.mock('~/store', () => ({
     pendingManualSkillsByConvoId: () => 'pendingManualSkills',
     messagesSiblingIdxFamily: () => 'messagesSiblingIdx',
     dlpReviewByIndex: () => 'dlpReview',
+    submittedFilesByIndex: () => 'submittedFiles',
   },
   useGetEphemeralAgent: () => mockGetEphemeralAgent,
 }));

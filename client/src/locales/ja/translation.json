@@ -1615,7 +1615,7 @@
   "com_ui_upload_agent_avatar_label": "エージェントのアバター画像をアップロードする",
   "com_ui_upload_avatar_label": "アバター画像のアップロード",
   "com_ui_upload_code_environment": "コード環境へのアップロード",
-  "com_ui_upload_delay": "ファイル \"{{0}}\"のアップロードに時間がかかっています。ファイルの検索のためのインデックス作成が完了するまでお待ちください。",
+  "com_ui_upload_delay": "ファイル \"{{0}}\"のアップロードに時間がかかっています。お待ちください！",
   "com_ui_upload_error": "ファイルのアップロード中にエラーが発生しました。",
   "com_ui_upload_file_context": "ファイルコンテキストをアップロード",
   "com_ui_upload_file_search": "ファイル検索用アップロード",

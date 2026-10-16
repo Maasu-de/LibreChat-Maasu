@@ -23,6 +23,7 @@ import {
   useGetAgentsConfig,
   useLocalize,
 } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { useDragDropContext } from '~/Providers';
 
@@ -43,6 +44,9 @@ interface FileOption {
 const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragDropModalProps) => {
   const localize = useLocalize();
   const { agentsConfig } = useGetAgentsConfig();
+  const { data: startupConfig } = useGetStartupConfig();
+  /** Provider uploads would reach the model without passing the governance gateway. */
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
   /** TODO: Ephemeral Agent Capabilities
    * Allow defining agent capabilities on a per-endpoint basis
    * Use definition for agents endpoint for ephemeral agents
@@ -105,7 +109,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         label: localize('com_ui_upload_provider'),
         value: undefined,
         icon: <FileImageIcon className="icon-md" />,
-        condition: validFileTypes,
+        condition: !governancePilot && validFileTypes,
       });
     } else {
       // Only show image upload option if all files are images and provider doesn't support documents
@@ -146,6 +150,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     endpoint,
     endpointType,
     capabilities,
+    governancePilot,
     useResponsesApi,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
