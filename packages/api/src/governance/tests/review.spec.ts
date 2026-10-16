@@ -413,6 +413,24 @@ describe('DLP approval flow', () => {
     expect(onSent).toHaveBeenCalledTimes(1);
   });
 
+  it('sends sensitive assistant history unchanged and returns the clean follow-up', async () => {
+    const history: GovernanceChatMessage[] = [
+      { role: 'user', content: 'What is the IBAN?' },
+      { role: 'assistant', content: 'DE89370400440532013000' },
+      { role: 'user', content: SUBMITTED },
+    ];
+    const { onReview, onSent, send, sentBody } = setup({
+      responses: [completionResponse()],
+    });
+
+    const response = await send(history);
+
+    expect(sentBody(0).messages).toEqual(history);
+    expect(await response.text()).toContain('"Hi"');
+    expect(onReview).not.toHaveBeenCalled();
+    expect(onSent).toHaveBeenCalledTimes(1);
+  });
+
   it('stores a review of the submitted text and hands it to the user', async () => {
     const maskedMessages = [messages[0], { role: 'user', content: MASKED }];
     const expiresAt = Math.floor(Date.now() / 1000) + 600;
