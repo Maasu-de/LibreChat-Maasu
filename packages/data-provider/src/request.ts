@@ -66,13 +66,17 @@ const AUTH_REDIRECT_EVENT = 'authRedirectStarted';
 const AUTH_REDIRECT_STORAGE_KEY = 'librechat.auth.redirect.startedAt';
 const AUTH_REDIRECT_DEDUPE_MS = 15_000;
 const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
+const GATEWAY_AUTHENTICATION_REQUIRED = 'AUTHENTICATION_REQUIRED';
 
 type RetryableAxiosRequestConfig = AxiosRequestConfig & { _retry?: boolean };
 
 type AuthRecoveryState = {
   lastRedirectStartedAt: number;
   refreshPromise: Promise<string | null> | null;
+  gatewayReloadStarted?: boolean;
 };
+
+type GatewayErrorResponse = { status?: number; data?: { code?: string } };
 
 type AuthRecoveryWindow = Window & {
   __librechatAuthRecovery?: AuthRecoveryState;
@@ -214,6 +218,27 @@ const startAuthRecovery = (retryRefresh?: boolean) => {
   return state.refreshPromise;
 };
 
+/**
+ * The governance SSO gateway answers background requests with this 401 once the
+ * central session has ended. A refresh would be rejected the same way.
+ */
+const isGatewaySessionEnded = (response?: GatewayErrorResponse) =>
+  response?.status === 401 && response.data?.code === GATEWAY_AUTHENTICATION_REQUIRED;
+
+/**
+ * Reloading turns the next request into a page load, which the gateway redirects
+ * to its login page with this page as returnTo. Kept in memory rather than in
+ * localStorage so it cannot suppress the login redirect after signing in again.
+ */
+const reloadForGatewaySignInOnce = () => {
+  const state = getAuthRecoveryState();
+  if (state.gatewayReloadStarted) {
+    return;
+  }
+  state.gatewayReloadStarted = true;
+  window.location.reload();
+};
+
 const redirectToLoginOnce = () => {
   if (isAuthRedirectInProgress()) {
     return;
@@ -301,6 +326,14 @@ if (typeof window !== 'undefined') {
         return Promise.reject(error);
       }
       if (!originalRequest) {
+        return Promise.reject(error);
+      }
+
+      /** A cleared Authorization header means logout is navigating away already */
+      if (isGatewaySessionEnded(error.response)) {
+        if (axios.defaults.headers.common['Authorization']) {
+          reloadForGatewaySignInOnce();
+        }
         return Promise.reject(error);
       }
 

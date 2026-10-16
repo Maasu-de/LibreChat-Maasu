@@ -607,3 +607,82 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     expect(getCallsForUrl('/api/messages')).toHaveLength(1);
   });
 });
+
+describe('axios 401 interceptor — governance SSO gateway', () => {
+  function createGatewaySessionEndedError(config: InternalAxiosRequestConfig) {
+    return Promise.reject({
+      response: { status: 401, data: { code: 'AUTHENTICATION_REQUIRED' } },
+      config,
+    });
+  }
+
+  function trackReloads() {
+    const reload = jest.fn();
+    setWindowLocation({ reload } as Partial<Location>);
+    return reload;
+  }
+
+  it('reloads once without refreshing when concurrent requests find the session ended', async () => {
+    expect.assertions(3);
+    setTokenHeader('valid-token');
+    const reload = trackReloads();
+
+    mockAdapter.mockImplementation(createGatewaySessionEndedError);
+
+    const results = await Promise.allSettled([
+      axios.get('/api/messages'),
+      axios.get('/api/convos'),
+      axios.get('/api/files'),
+    ]);
+
+    expect(results.every(({ status }) => status === 'rejected')).toBe(true);
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(0);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads when the gateway rejects a token refresh from a stream', async () => {
+    expect.assertions(2);
+    setTokenHeader('valid-token');
+    const reload = trackReloads();
+    const { default: request } = await import('../src/request');
+
+    mockAdapter.mockImplementation(createGatewaySessionEndedError);
+
+    await expect(request.refreshToken()).rejects.toBeDefined();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload while logout is navigating away', async () => {
+    expect.assertions(2);
+    setTokenHeader(undefined);
+    const reload = trackReloads();
+
+    mockAdapter.mockImplementation(createGatewaySessionEndedError);
+
+    await axios.get('/api/messages').catch(() => undefined);
+
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(0);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('keeps refreshing for LibreChat 401s without the gateway code', async () => {
+    expect.assertions(2);
+    setTokenHeader('expired-token');
+    const reload = trackReloads();
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      if (config.url?.includes('/api/auth/refresh') === true) {
+        return createAdapterResponse(config, { token: 'new-token' });
+      }
+      if (getCallsForUrl('/api/messages').length === 1) {
+        return create401Error(config);
+      }
+      return createAdapterResponse(config, { ok: true });
+    });
+
+    await axios.get('/api/messages');
+
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(reload).not.toHaveBeenCalled();
+  });
+});
