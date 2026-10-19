@@ -121,6 +121,16 @@ const getRequestPathname = (url?: string) => {
   }
 };
 
+/**
+ * Requests the client sends on its own timer. Refreshing before them would keep
+ * the central Keycloak session alive in an idle tab, so only user activity
+ * extends it.
+ */
+const isPassiveRequest = (url?: string) => {
+  const pathname = getRequestPathname(url);
+  return pathname === endpoints.health() || pathname === endpoints.gatewaySession();
+};
+
 const isSharedMessagesRequest = (url?: string, method?: string) =>
   method?.toLowerCase() === 'get' &&
   SHARED_MESSAGES_PATH_REGEX.test(stripBasePath(getRequestPathname(url)));
@@ -278,7 +288,7 @@ const getJwtExpiryMs = (token: string) => {
 };
 
 const shouldRefreshBeforeRequest = (url?: string) => {
-  if (isAuthRecoveryEndpoint(url) || isAuthRedirectInProgress()) {
+  if (isAuthRecoveryEndpoint(url) || isPassiveRequest(url) || isAuthRedirectInProgress()) {
     return false;
   }
 

@@ -665,6 +665,36 @@ describe('axios 401 interceptor — governance SSO gateway', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it.each([['/health'], ['/_sso/session']])(
+    'does not refresh a near-expiry token before the automatic %s check',
+    async (url) => {
+      expect.assertions(2);
+      setTokenHeader(createJwt(Date.now() + 60_000));
+
+      mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+        createAdapterResponse(config, 'OK'),
+      );
+
+      await axios.get(url);
+
+      expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(0);
+      expect(mockAdapter.mock.calls[0][0].url).toBe(url);
+    },
+  );
+
+  it('reloads when the session watcher finds the session ended', async () => {
+    expect.assertions(2);
+    setTokenHeader('valid-token');
+    const reload = trackReloads();
+
+    mockAdapter.mockImplementation(createGatewaySessionEndedError);
+
+    await axios.get('/_sso/session').catch(() => undefined);
+
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(0);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps refreshing for LibreChat 401s without the gateway code', async () => {
     expect.assertions(2);
     setTokenHeader('expired-token');
