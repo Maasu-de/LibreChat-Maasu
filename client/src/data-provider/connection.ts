@@ -81,6 +81,36 @@ export const useHealthCheck = (isAuthenticated = false) => {
   }, [isAuthenticated, queryClient]);
 };
 
+/**
+ * Lets an idle tab notice that the governance SSO session has ended. The check never
+ * refreshes tokens, and the request interceptor reloads into the gateway login on its 401.
+ */
+export const useGatewaySessionWatch = (isAuthenticated = false) => {
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    const check = () => {
+      dataService.checkGatewaySession().catch(() => undefined);
+    };
+    const checkWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        check();
+      }
+    };
+
+    const interval = setInterval(check, Time.THIRTY_SECONDS);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', checkWhenVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', checkWhenVisible);
+    };
+  }, [isAuthenticated]);
+};
+
 export const useInteractionHealthCheck = () => {
   const queryClient = useQueryClient();
   const lastInteractionTimeRef = useRef(Date.now());

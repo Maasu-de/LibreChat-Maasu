@@ -1,14 +1,14 @@
 import { renderHook, act } from '@testing-library/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useHealthCheck } from '../connection';
+import { useHealthCheck, useGatewaySessionWatch } from '../connection';
 import { QueryKeys, Time, dataService } from 'librechat-data-provider';
 
 // Mock dependencies
 jest.mock('@tanstack/react-query');
 jest.mock('librechat-data-provider', () => ({
   QueryKeys: { health: 'health' },
-  Time: { TEN_MINUTES: 600000, FIVE_MINUTES: 300000 },
-  dataService: { healthCheck: jest.fn() },
+  Time: { TEN_MINUTES: 600000, FIVE_MINUTES: 300000, THIRTY_SECONDS: 30000 },
+  dataService: { healthCheck: jest.fn(), checkGatewaySession: jest.fn() },
 }));
 
 jest.mock('~/utils', () => ({
@@ -312,5 +312,67 @@ describe('useHealthCheck', () => {
 
       expect(mockQueryClient.fetchQuery).toHaveBeenCalled();
     });
+  });
+});
+
+describe('useGatewaySessionWatch', () => {
+  const checkGatewaySession = dataService.checkGatewaySession as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.clearAllTimers();
+    checkGatewaySession.mockResolvedValue(undefined);
+  });
+
+  it('does not check before the user is authenticated', () => {
+    renderHook(() => useGatewaySessionWatch(false));
+    act(() => {
+      jest.advanceTimersByTime(Time.THIRTY_SECONDS * 2);
+    });
+    window.dispatchEvent(new Event('focus'));
+    expect(checkGatewaySession).not.toHaveBeenCalled();
+  });
+
+  it('checks the gateway session every thirty seconds', () => {
+    renderHook(() => useGatewaySessionWatch(true));
+    expect(checkGatewaySession).not.toHaveBeenCalled();
+    act(() => {
+      jest.advanceTimersByTime(Time.THIRTY_SECONDS * 3);
+    });
+    expect(checkGatewaySession).toHaveBeenCalledTimes(3);
+  });
+
+  it('checks when the window regains focus or the tab becomes visible', () => {
+    const visibility = jest.spyOn(document, 'visibilityState', 'get');
+    renderHook(() => useGatewaySessionWatch(true));
+
+    window.dispatchEvent(new Event('focus'));
+    visibility.mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    visibility.mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(checkGatewaySession).toHaveBeenCalledTimes(2);
+    visibility.mockRestore();
+  });
+
+  it('ignores a failed check', async () => {
+    checkGatewaySession.mockRejectedValue(new Error('Network Error'));
+    renderHook(() => useGatewaySessionWatch(true));
+    await act(async () => {
+      jest.advanceTimersByTime(Time.THIRTY_SECONDS);
+    });
+    expect(checkGatewaySession).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops checking after unmount', () => {
+    const { unmount } = renderHook(() => useGatewaySessionWatch(true));
+    unmount();
+    act(() => {
+      jest.advanceTimersByTime(Time.THIRTY_SECONDS * 2);
+    });
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(checkGatewaySession).not.toHaveBeenCalled();
   });
 });
