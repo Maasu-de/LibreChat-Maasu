@@ -24,7 +24,7 @@ function getTextSizeClass(text: string | undefined | null) {
   }
 
   if (text.length < 40) {
-    return 'text-2xl sm:text-4xl';
+    return 'text-[34px] leading-[1.08] tracking-[-0.01em] sm:text-[clamp(34px,4.4vw,48px)]';
   }
 
   if (text.length < 70) {
@@ -196,7 +196,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
               <SplitText
                 key={`split-text-${name}`}
                 text={name}
-                className={`${getTextSizeClass(name)} font-medium text-text-primary`}
+                className={`${getTextSizeClass(name)} font-semibold text-text-primary`}
                 delay={50}
                 textAlign="center"
                 animationFrom={{ opacity: 0, transform: 'translate3d(0,50px,0)' }}
@@ -211,7 +211,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
             <SplitText
               key={`split-text-${greetingText}${user?.name ? '-user' : ''}`}
               text={greetingText}
-              className={`${getTextSizeClass(greetingText)} font-medium text-text-primary`}
+              className={`${getTextSizeClass(greetingText)} font-semibold text-text-primary`}
               delay={50}
               textAlign="center"
               animationFrom={{ opacity: 0, transform: 'translate3d(0,50px,0)' }}
