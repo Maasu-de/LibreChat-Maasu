@@ -1718,6 +1718,38 @@ describe('GenerationJobManager Integration Tests', () => {
       await manager.destroy();
     });
 
+    test('should skip the resume snapshot for a retained completed job', async () => {
+      const manager = new GenerationJobManagerClass();
+      manager.configure({
+        jobStore: new InMemoryJobStore({ ttlAfterComplete: 60000 }),
+        eventTransport: new InMemoryEventTransport(),
+        isRedis: false,
+        cleanupOnComplete: false,
+      });
+      manager.initialize();
+
+      const streamId = `terminal-resume-${Date.now()}`;
+      const finalEvent = { final: true, responseMessage: { text: 'Done' } } as ServerSentEvent;
+      await manager.createJob(streamId, 'user-1');
+      await manager.emitDone(streamId, finalEvent);
+      await manager.completeJob(streamId);
+
+      const doneEvents: ServerSentEvent[] = [];
+      const { subscription, resumeState, pendingEvents } = await manager.subscribeWithResume(
+        streamId,
+        () => {},
+        (event) => doneEvents.push(event),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(resumeState).toBeNull();
+      expect(pendingEvents).toEqual([]);
+      expect(doneEvents).toEqual([finalEvent]);
+
+      subscription?.unsubscribe();
+      await manager.destroy();
+    });
+
     testRedis(
       'should return empty pendingEvents in Redis mode (chunks already persisted)',
       async () => {
