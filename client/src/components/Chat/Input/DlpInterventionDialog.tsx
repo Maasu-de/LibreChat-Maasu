@@ -40,12 +40,10 @@ const COPY = {
 } as const satisfies Record<GovernanceDecision, { title: string; description: string }>;
 
 const ACTION_CLASS: Record<GovernanceDecision, string> = {
-  ALLOW:
-    'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200',
-  MASK: 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200',
-  WARN: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
-  BLOCK:
-    'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200',
+  ALLOW: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
+  MASK: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
+  WARN: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
+  BLOCK: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
 };
 
 export function buildFindingSegments(text: string, findings: GovernanceFinding[]): TextSegment[] {
@@ -138,8 +136,15 @@ export default function DlpInterventionDialog({
     highlight: (segment: TextSegment, index: number) => ReactNode,
   ) => (
     <section>
-      <h3 className="mb-2 text-sm font-semibold text-text-primary">{heading}</h3>
-      <div className={cn('whitespace-pre-wrap rounded-lg border p-3 text-sm', className)}>
+      <h3 className="mb-2 text-xs font-semibold tracking-[-0.01em] text-text-secondary">
+        {heading}
+      </h3>
+      <div
+        className={cn(
+          'whitespace-pre-wrap rounded-xl border px-4 py-3 text-[17px] leading-[1.47]',
+          className,
+        )}
+      >
         {segments.map((segment, index) =>
           segment.finding || segment.replacement ? (
             highlight(segment, index)
@@ -156,27 +161,31 @@ export default function DlpInterventionDialog({
       <OGDialogTemplate
         title={localize(COPY[decision].title)}
         description={localize(COPY[decision].description)}
-        className="max-w-2xl"
+        className="max-w-[640px]"
+        headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
         main={
-          <div className="flex max-h-[65vh] flex-col gap-4 overflow-y-auto px-1" role="document">
+          <div
+            className="flex max-h-[65vh] flex-col gap-[18px] overflow-y-auto px-1"
+            role="document"
+          >
             {sendFailed && (
               <p
                 role="alert"
-                className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+                className="rounded-xl border border-aimo-block bg-aimo-block-soft px-4 py-3 text-sm text-aimo-block-ink"
               >
                 {localize('com_ui_dlp_send_failed')}
               </p>
             )}
             {textBlock(
               localize('com_ui_dlp_original_prompt'),
-              'border-border-light bg-surface-secondary text-text-primary',
+              'border-transparent bg-aimo-fill text-text-primary',
               originalSegments,
               (segment, index) => (
                 <mark
                   key={index}
                   title={categoryLabel(segment.finding!.category)}
-                  className="rounded bg-amber-200 px-0.5 text-gray-950 outline outline-1 outline-amber-500 dark:bg-amber-700 dark:text-white"
+                  className="rounded-md bg-aimo-warn-soft px-0.5 text-aimo-warn-ink outline outline-1 outline-aimo-warn"
                 >
                   {segment.text}
                   <span className="sr-only"> ({categoryLabel(segment.finding!.category)})</span>
@@ -186,7 +195,7 @@ export default function DlpInterventionDialog({
 
             {result.findings.length > 0 && (
               <section>
-                <h3 className="mb-2 text-sm font-semibold text-text-primary">
+                <h3 className="mb-2 text-xs font-semibold tracking-[-0.01em] text-text-secondary">
                   {localize('com_ui_dlp_findings')}
                 </h3>
                 <ul className="flex flex-wrap gap-2">
@@ -194,7 +203,7 @@ export default function DlpInterventionDialog({
                     <li
                       key={index}
                       className={cn(
-                        'rounded-full border px-2.5 py-1 text-xs font-medium',
+                        'rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em]',
                         ACTION_CLASS[finding.action],
                       )}
                     >
@@ -210,12 +219,12 @@ export default function DlpInterventionDialog({
               <>
                 {textBlock(
                   localize('com_ui_dlp_masked_prompt'),
-                  'border-blue-300 bg-blue-50 text-gray-950 dark:border-blue-800 dark:bg-blue-950/30 dark:text-white',
+                  'border-aimo-line-solid bg-surface-dialog text-text-primary',
                   maskedSegments,
                   (segment, index) => (
                     <span
                       key={index}
-                      className="rounded bg-blue-200 px-1 font-mono font-semibold text-blue-950 dark:bg-blue-800 dark:text-blue-100"
+                      className="rounded-md bg-aimo-mask-soft px-1 font-mono text-[15px] font-semibold text-aimo-mask-ink"
                     >
                       {segment.text}
                     </span>
