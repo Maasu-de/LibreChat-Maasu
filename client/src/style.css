@@ -338,13 +338,13 @@ html {
 }
 
 .aimo-sidebar-brand-logo-long {
-  width: 66px;
+  width: 83px;
   mask-image: url('./assets/brand/logo.svg');
 }
 
 .aimo-sidebar-brand-logo-small {
   display: none;
-  width: 17px;
+  width: 22px;
   mask-image: url('./assets/brand/logo_small.svg');
 }
 
