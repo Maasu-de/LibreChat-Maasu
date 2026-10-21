@@ -19,10 +19,10 @@ import {
 import KeyboardShortcutsDialog from '~/components/Nav/KeyboardShortcutsDialog';
 import KeyboardDeleteDialog from '~/components/Nav/KeyboardDeleteDialog';
 import { useUserTermsQuery, useGetStartupConfig } from '~/data-provider';
+import { useHealthCheck, useGatewaySessionWatch } from '~/data-provider';
 import useKeyboardShortcuts from '~/hooks/useKeyboardShortcuts';
 import { UnifiedSidebar } from '~/components/UnifiedSidebar';
 import { TermsAndConditionsModal } from '~/components/ui';
-import { useHealthCheck } from '~/data-provider';
 import { Banner } from '~/components/Banners';
 import store from '~/store';
 
@@ -46,6 +46,7 @@ export default function Root() {
   const { isAuthenticated, logout } = useAuthContext();
 
   useHealthCheck(isAuthenticated);
+  useGatewaySessionWatch(isAuthenticated);
 
   const assistantsMap = useAssistantsMap({ isAuthenticated });
   const agentsMap = useAgentsMap({ isAuthenticated });

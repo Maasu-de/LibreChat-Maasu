@@ -35,6 +35,15 @@ import { filterPersistableAbortContent } from './abortContent';
 /** Error surfaced to any client still attached when a stale/hung job is reaped. */
 const REAPED_JOB_ERROR = 'Generation timed out';
 const OAUTH_TOOL_CALL_PREFIX = `oauth${Constants.mcp_delimiter}`;
+const TERMINAL_JOB_STATUSES = new Set<SerializableJobData['status']>([
+  'complete',
+  'error',
+  'aborted',
+]);
+
+function isTerminalJob(job: SerializableJobData | null): job is SerializableJobData {
+  return job != null && TERMINAL_JOB_STATUSES.has(job.status);
+}
 
 function getToolCallName(toolCall: unknown): unknown {
   return toolCall != null && typeof toolCall === 'object' && 'name' in toolCall
@@ -882,7 +891,7 @@ class GenerationJobManagerClass {
     // If job already complete/error, send final event or error
     // Error status takes precedence to ensure errors aren't misreported as successes
     setImmediate(() => {
-      if (jobData && ['complete', 'error', 'aborted'].includes(jobData.status)) {
+      if (isTerminalJob(jobData)) {
         // Check for error status FIRST and prioritize error handling
         if (jobData.status === 'error' && (runtime.errorEvent || jobData.error)) {
           const errorToSend = runtime.errorEvent ?? jobData.error;
@@ -1013,11 +1022,13 @@ class GenerationJobManagerClass {
     onDone?: t.DoneHandler,
     onError?: t.ErrorHandler,
   ): Promise<t.SubscribeWithResumeResult> {
+    const jobAtSnapshot = await this.jobStore.getJob(streamId);
+    const terminalAtSnapshot = isTerminalJob(jobAtSnapshot);
     const bufferLengthAtSnapshot = !this._isRedis
       ? (this.runtimeState.get(streamId)?.earlyEventBuffer.length ?? 0)
       : 0;
 
-    const resumeState = await this.getResumeState(streamId);
+    const resumeState = terminalAtSnapshot ? null : await this.getResumeState(streamId);
     recordGenerationStreamSubscription(
       this.storeLabel,
       'resume_state',
@@ -1030,18 +1041,26 @@ class GenerationJobManagerClass {
       if (runtime) {
         pendingEvents = runtime.earlyEventBuffer.slice(bufferLengthAtSnapshot);
         runtime.earlyEventBuffer = [];
-        if (pendingEvents.length > 0) {
-          recordGenerationStreamResumePendingEvents(this.storeLabel, pendingEvents.length);
-          logger.debug(
-            `[GenerationJobManager] Captured ${pendingEvents.length} gap events for ${streamId}`,
-          );
-        }
       }
     }
 
     const subscription = await this.subscribe(streamId, onChunk, onDone, onError, {
       skipBufferReplay: true,
     });
+
+    const jobAfterSubscribe = terminalAtSnapshot
+      ? jobAtSnapshot
+      : await this.jobStore.getJob(streamId);
+    if (isTerminalJob(jobAfterSubscribe)) {
+      return { subscription, resumeState: null, pendingEvents: [] };
+    }
+
+    if (pendingEvents.length > 0) {
+      recordGenerationStreamResumePendingEvents(this.storeLabel, pendingEvents.length);
+      logger.debug(
+        `[GenerationJobManager] Captured ${pendingEvents.length} gap events for ${streamId}`,
+      );
+    }
 
     return { subscription, resumeState, pendingEvents };
   }
