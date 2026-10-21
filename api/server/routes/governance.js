@@ -14,7 +14,7 @@ const governanceGroups = require('./governanceGroups');
 
 const router = express.Router();
 
-// The Governance Admin server authenticates with its own Keycloak token, not a
+// The Admin Panel server authenticates with its own Keycloak token, not a
 // LibreChat session, so this route is mounted before requireJwtAuth.
 router.use('/groups', governanceGroups);
 

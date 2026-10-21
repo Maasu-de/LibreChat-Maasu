@@ -97,7 +97,7 @@ async function verifyAdminToken(
 }
 
 /**
- * Authorizes the trusted Governance Admin server by verifying its admin's own
+ * Authorizes the trusted Admin Panel server by verifying its admin's own
  * Keycloak access token against the shared realm's JWKS -- the same token
  * already authenticating that admin's policy-version calls (see
  * authenticate_administrator in the governance backend) -- rather than
@@ -194,7 +194,7 @@ export const createListGovernanceGroups =
   ({ listGroups }: GovernanceGroupsDeps) =>
   async (_req: Request, res: Response): Promise<void> => {
     try {
-      /** The Governance Admin manages the whole deployment, so this read is deliberately cross-tenant */
+      /** The Admin Panel manages the whole deployment, so this read is deliberately cross-tenant */
       const groups = await runAsSystem(() => listAllGroups(listGroups));
       res.status(200).json({
         groups: groups.map((group) => ({ id: group._id.toString(), name: group.name })),
