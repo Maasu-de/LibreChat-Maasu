@@ -1257,7 +1257,7 @@ export function healthCheck(): Promise<string> {
 
 /** Rejects with the gateway's 401 once the central session has ended */
 export function checkGatewaySession(): Promise<void> {
-  return request.get(endpoints.gatewaySession());
+  return request.get(endpoints.gatewaySession(), { timeout: config.Time.TEN_SECONDS });
 }
 
 export function getUserTerms(): Promise<t.TUserTermsResponse> {

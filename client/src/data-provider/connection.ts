@@ -91,8 +91,18 @@ export const useGatewaySessionWatch = (isAuthenticated = false) => {
       return;
     }
 
+    let inFlight = false;
     const check = () => {
-      dataService.checkGatewaySession().catch(() => undefined);
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
+      dataService
+        .checkGatewaySession()
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
     };
     const checkWhenVisible = () => {
       if (document.visibilityState === 'visible') {

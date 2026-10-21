@@ -333,20 +333,24 @@ describe('useGatewaySessionWatch', () => {
     expect(checkGatewaySession).not.toHaveBeenCalled();
   });
 
-  it('checks the gateway session every thirty seconds', () => {
+  it('checks the gateway session every thirty seconds', async () => {
     renderHook(() => useGatewaySessionWatch(true));
     expect(checkGatewaySession).not.toHaveBeenCalled();
-    act(() => {
-      jest.advanceTimersByTime(Time.THIRTY_SECONDS * 3);
-    });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        jest.advanceTimersByTime(Time.THIRTY_SECONDS);
+      });
+    }
     expect(checkGatewaySession).toHaveBeenCalledTimes(3);
   });
 
-  it('checks when the window regains focus or the tab becomes visible', () => {
+  it('checks when the window regains focus or the tab becomes visible', async () => {
     const visibility = jest.spyOn(document, 'visibilityState', 'get');
     renderHook(() => useGatewaySessionWatch(true));
 
-    window.dispatchEvent(new Event('focus'));
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
     visibility.mockReturnValue('hidden');
     document.dispatchEvent(new Event('visibilitychange'));
     visibility.mockReturnValue('visible');
@@ -354,6 +358,35 @@ describe('useGatewaySessionWatch', () => {
 
     expect(checkGatewaySession).toHaveBeenCalledTimes(2);
     visibility.mockRestore();
+  });
+
+  it('shares one request between focus and visibility events', () => {
+    renderHook(() => useGatewaySessionWatch(true));
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(checkGatewaySession).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips checks while one is still pending', () => {
+    checkGatewaySession.mockReturnValue(new Promise(() => undefined));
+    renderHook(() => useGatewaySessionWatch(true));
+    act(() => {
+      jest.advanceTimersByTime(Time.THIRTY_SECONDS * 3);
+    });
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(checkGatewaySession).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks again once a pending check settles', async () => {
+    renderHook(() => useGatewaySessionWatch(true));
+    await act(async () => {
+      jest.advanceTimersByTime(Time.THIRTY_SECONDS);
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(checkGatewaySession).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a failed check', async () => {

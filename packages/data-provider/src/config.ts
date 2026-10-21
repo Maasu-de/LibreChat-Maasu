@@ -2126,6 +2126,7 @@ export enum Time {
   TWO_MINUTES = 120000,
   ONE_MINUTE = 60000,
   THIRTY_SECONDS = 30000,
+  TEN_SECONDS = 10000,
 }
 
 /**
