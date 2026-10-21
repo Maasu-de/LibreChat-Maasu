@@ -1,11 +1,12 @@
 const express = require('express');
-const { createAdminGroupsHandlers } = require('@librechat/api');
+const { createAdminGroupsHandlers, startGovernanceGroupAuditDelivery } = require('@librechat/api');
 const { SystemCapabilities } = require('@librechat/data-schemas');
 const { requireCapability } = require('~/server/middleware/roles/capabilities');
 const { requireJwtAuth } = require('~/server/middleware');
 const db = require('~/models');
 
 const router = express.Router();
+startGovernanceGroupAuditDelivery();
 
 const requireAdminAccess = requireCapability(SystemCapabilities.ACCESS_ADMIN);
 const requireReadGroups = requireCapability(SystemCapabilities.READ_GROUPS);

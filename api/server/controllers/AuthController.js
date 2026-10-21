@@ -6,6 +6,7 @@ const {
   math,
   isEnabled,
   findOpenIDUser,
+  syncOidcAdministrator,
   getOpenIdIssuer,
   buildOpenIDRefreshParams,
 } = require('@librechat/api');
@@ -170,7 +171,10 @@ const refreshController = async (req, res) => {
        * Stale, missing, or near-expiry tokens fall through to refreshTokenGrant so
        * upstream revocations and cookie/session extension are checked regularly.
        */
-      const reusableSessionToken = getReusableOpenIDSessionToken(req.session?.openidTokens);
+      const reusableSessionToken =
+        process.env.GOVERNANCE_PILOT_ENABLED === 'true'
+          ? null
+          : getReusableOpenIDSessionToken(req.session?.openidTokens);
       const reuseUserId = reusableSessionToken ? getValidOpenIDReuseUserId(parsedCookies) : null;
       if (reuseUserId) {
         const user = await getUserById(reuseUserId, AUTH_REFRESH_USER_PROJECTION);
@@ -241,6 +245,13 @@ const refreshController = async (req, res) => {
           `[refreshController] Updated user ${user.email} openidId (${reason}): ${user.openidId ?? 'null'} -> ${claims.sub}`,
         );
       }
+
+      await syncOidcAdministrator(
+        user,
+        tokenset,
+        updateUser,
+        openIdConfig.serverMetadata?.()?.userinfo_endpoint,
+      );
 
       const token = setOpenIDAuthTokens(tokenset, req, res, {
         userId: user._id.toString(),

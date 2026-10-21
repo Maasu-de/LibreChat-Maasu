@@ -18,6 +18,7 @@ const {
   tenantContextMiddleware,
   preAuthTenantMiddleware,
   applyAdminRefresh,
+  syncOidcAdministrator,
   AdminRefreshError,
   buildOpenIDRefreshParams,
 } = require('@librechat/api');
@@ -26,6 +27,7 @@ const { hasCapability, requireCapability } = require('~/server/middleware/roles/
 const { createOAuthHandler } = require('~/server/controllers/auth/oauth');
 const {
   findBalanceByUser,
+  updateUser,
   findUsers,
   generateToken,
   getUserById,
@@ -41,6 +43,7 @@ const requireAdminAccess = requireCapability(SystemCapabilities.ACCESS_ADMIN);
 const setBalanceConfig = createSetBalanceConfig({
   getAppConfig,
   findBalanceByUser,
+  updateUser,
   upsertBalanceFields,
 });
 
@@ -573,8 +576,20 @@ router.post(
           {
             findUsers,
             getUserById,
+            synchronizeAdministrator: (user, refreshed) =>
+              syncOidcAdministrator(
+                user,
+                refreshed,
+                updateUser,
+                openIdConfig.serverMetadata?.()?.userinfo_endpoint,
+              ),
             canAccessAdmin: async (user) => {
               try {
+                if (
+                  process.env.GOVERNANCE_PILOT_ENABLED === 'true' &&
+                  (user.provider !== 'openid' || user.role !== 'ADMIN')
+                )
+                  return false;
                 return await hasCapability(
                   {
                     id: user.id ?? user._id?.toString(),

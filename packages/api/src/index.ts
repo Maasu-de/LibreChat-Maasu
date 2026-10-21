@@ -59,6 +59,7 @@ export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
 export * from './governance/groups';
+export { startGovernanceGroupAuditDelivery } from './governance/audit';
 export { createReviewEvent, createApprovalRetryEvent } from './governance/review';
 /* Files */
 export * from './files';

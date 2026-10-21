@@ -25,6 +25,7 @@ jest.mock('@librechat/api', () => ({
   math: jest.fn((value, fallback) => fallback),
   isEnabled: jest.fn(),
   findOpenIDUser: jest.fn(),
+  syncOidcAdministrator: jest.fn(),
   getOpenIdIssuer: jest.fn(() => 'https://issuer.example.com'),
   buildOpenIDRefreshParams: jest.fn(() => {
     const params = {};
@@ -41,7 +42,12 @@ jest.mock('@librechat/api', () => ({
 const openIdClient = require('openid-client');
 const jwt = require('jsonwebtoken');
 const { logger } = require('@librechat/data-schemas');
-const { isEnabled, findOpenIDUser, buildOpenIDRefreshParams } = require('@librechat/api');
+const {
+  isEnabled,
+  findOpenIDUser,
+  syncOidcAdministrator,
+  buildOpenIDRefreshParams,
+} = require('@librechat/api');
 const { graphTokenController, refreshController } = require('./AuthController');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
 const {
@@ -302,6 +308,49 @@ describe('refreshController – OpenID path', () => {
       }),
     );
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('synchronizes the IdP entitlement before issuing refreshed chat credentials', async () => {
+    await refreshController(req, res);
+    expect(syncOidcAdministrator).toHaveBeenCalledWith(
+      expect.objectContaining({ openidId: baseClaims.sub }),
+      mockTokenset,
+      updateUser,
+      undefined,
+    );
+    expect(syncOidcAdministrator.mock.invocationCallOrder[0]).toBeLessThan(
+      setOpenIDAuthTokens.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not issue refreshed credentials when entitlement synchronization fails', async () => {
+    syncOidcAdministrator.mockRejectedValueOnce(new Error('OIDC unavailable'));
+    await refreshController(req, res);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
+  });
+
+  it('always refreshes through the IdP in governed mode to recheck administrator entitlement', async () => {
+    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    req.session = {
+      openidTokens: {
+        accessToken: makeSessionToken(),
+        idToken: makeSessionToken(),
+        refreshToken: 'stored-refresh',
+        lastRefreshedAt: Date.now(),
+      },
+    };
+    setOpenIDReuseCookies();
+    try {
+      await refreshController(req, res);
+      expect(openIdClient.refreshTokenGrant).toHaveBeenCalled();
+      expect(syncOidcAdministrator).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    } finally {
+      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+    }
   });
 
   it('reuses valid OpenID session tokens and refreshes CloudFront cookies', async () => {

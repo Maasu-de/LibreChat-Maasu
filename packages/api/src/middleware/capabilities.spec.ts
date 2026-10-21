@@ -117,6 +117,37 @@ describe('generateCapabilityCheck', () => {
       expect(statusMock).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['local', 'ADMIN', false],
+      ['openid', 'USER', false],
+      ['openid', 'delegated', false],
+      ['openid', 'ADMIN', true],
+    ])(
+      'governed administration requires an OIDC administrator: %s %s',
+      async (provider, role, allowed) => {
+        const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        try {
+          mockReq.user = { id: 'user-123', provider, role } as ServerRequest['user'];
+          mockGetUserPrincipals.mockResolvedValue(adminPrincipals);
+          mockHasCapabilityForPrincipals.mockResolvedValue(true);
+          await requireCapability(SystemCapabilities.ACCESS_ADMIN)(
+            mockReq as ServerRequest,
+            mockRes as Response,
+            mockNext,
+          );
+          if (allowed) expect(mockNext).toHaveBeenCalled();
+          else {
+            expect(mockNext).not.toHaveBeenCalled();
+            expect(statusMock).toHaveBeenCalledWith(403);
+          }
+        } finally {
+          if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+          else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        }
+      },
+    );
+
     it('returns 403 when user lacks the capability', async () => {
       mockReq.user = { id: 'user-456', role: 'USER' } as ServerRequest['user'];
       mockGetUserPrincipals.mockResolvedValue(userPrincipals);

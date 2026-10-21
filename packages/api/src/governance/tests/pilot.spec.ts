@@ -131,13 +131,33 @@ describe('pilot HTTP boundary', () => {
     '/api/files',
     '/api/files/config',
     '/api/files/speech/config',
-    '/api/admin/config',
     '/api/user/plugins',
     '/api/user/settings/skills/active',
     '/api/agents/chat/active',
     '/api/agents/chat/stream/job',
     '/api/agents/chat/status/convo',
   ])('preserves read-only history, config, and stream controls: %s', async (path) => {
+    await expect(request(app()).get(path)).resolves.toMatchObject({ status: 204 });
+  });
+
+  it.each([
+    '/api/admin/config',
+    '/api/admin/roles',
+    '/api/admin/grants',
+    '/api/admin/users',
+    '/api/admin/audit-log',
+    '/api/admin/login/local',
+  ])('denies hidden admin API %s', async (path) => {
+    await expect(request(app()).get(path)).resolves.toMatchObject({ status: 403 });
+  });
+
+  it.each([
+    '/api/admin/verify',
+    '/api/admin/grants/effective',
+    '/api/admin/users/search',
+    '/api/admin/groups',
+    '/api/admin/oauth/openid/check',
+  ])('retains group/session API %s', async (path) => {
     await expect(request(app()).get(path)).resolves.toMatchObject({ status: 204 });
   });
 
@@ -167,9 +187,9 @@ describe('pilot HTTP boundary', () => {
     await expect(request(app()).get('/api/convos/gen_title/id')).resolves.toMatchObject({
       status: 204,
     });
-    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject(
-      { status: 403 },
-    );
+    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject({
+      status: 403,
+    });
     await expect(request(app()).post('/api/convos/import').send({})).resolves.toMatchObject({
       status: 403,
     });

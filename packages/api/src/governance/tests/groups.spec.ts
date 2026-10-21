@@ -38,6 +38,7 @@ type TokenOptions = {
   roles?: string[];
   typ?: string;
   privateKey?: string;
+  claims?: jwt.JwtPayload;
 };
 
 const signToken = ({
@@ -45,8 +46,9 @@ const signToken = ({
   roles = [ADMIN_ROLE],
   typ = 'Bearer',
   privateKey = realmKeys.privateKey,
+  claims = {},
 }: TokenOptions = {}) =>
-  jwt.sign({ typ, realm_access: { roles } }, privateKey, {
+  jwt.sign({ sub: 'admin-subject', typ, realm_access: { roles }, ...claims }, privateKey, {
     algorithm: 'RS256',
     keyid: KID,
     issuer,
@@ -74,6 +76,7 @@ const savedEnv = { ...process.env };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env = { ...savedEnv };
   clearGovernanceJwksCache();
   mockGetSigningKey.mockResolvedValue({ getPublicKey: () => realmKeys.publicKey });
   process.env.OPENID_ISSUER = ISSUER;
@@ -125,6 +128,62 @@ describe('GET /api/governance/groups', () => {
 
     expect(response.status).toBe(200);
     expect(tenants).toEqual([SYSTEM_TENANT_ID]);
+  });
+
+  it.each(['access', 'id'])(
+    'uses a customer nested administrator claim from %s tokens',
+    async (source) => {
+      process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'company.permissions';
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
+      process.env.OPENID_ADMIN_ROLE = 'company-admin';
+      listGroups.mockResolvedValue([]);
+      const response = await getGroups(
+        signToken({
+          roles: [],
+          typ: source === 'id' ? 'ID' : 'Bearer',
+          claims: { company: { permissions: ['company-admin'] } },
+        }),
+      );
+      expect(response.status).toBe(200);
+      const revoked = await getGroups(signToken({ claims: { company: { permissions: [] } } }));
+      expect(revoked.status).toBe(401);
+    },
+  );
+
+  it('reads administrator entitlement from subject-bound userinfo', async () => {
+    process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'company.admin';
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+    listGroups.mockResolvedValue([]);
+    const userinfo = jest.spyOn(global, 'fetch').mockResolvedValue(
+      Response.json({
+        sub: 'admin-subject',
+        company: { admin: true },
+      }),
+    );
+    try {
+      expect((await getGroups(signToken({ roles: [] }))).status).toBe(200);
+      userinfo.mockResolvedValueOnce(Response.json({ sub: 'other', company: { admin: true } }));
+      expect((await getGroups(signToken())).status).toBe(401);
+    } finally {
+      userinfo.mockRestore();
+    }
+  });
+
+  it('preserves a customer issuer trailing slash from validated discovery metadata', async () => {
+    const issuer = 'https://identity.company.test/';
+    process.env.OPENID_ISSUER = issuer;
+    listGroups.mockResolvedValue([]);
+    const discovery = jest.spyOn(global, 'fetch').mockResolvedValue(
+      Response.json({
+        issuer,
+        jwks_uri: 'https://identity.company.test/jwks',
+      }),
+    );
+    try {
+      expect((await getGroups(signToken({ issuer }))).status).toBe(200);
+    } finally {
+      discovery.mockRestore();
+    }
   });
 
   it('rejects a missing token without querying groups', async () => {

@@ -1,3 +1,4 @@
+import { SystemRoles } from 'librechat-data-provider';
 import { isMainThread } from 'node:worker_threads';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -200,6 +201,15 @@ export function generateCapabilityCheck(deps: CapabilityDeps): {
         const id = req.user.id ?? req.user._id?.toString();
         if (!id) {
           res.status(401).json({ message: 'Authentication required' });
+          return;
+        }
+
+        if (
+          process.env.GOVERNANCE_PILOT_ENABLED === 'true' &&
+          capability === SystemCapabilities.ACCESS_ADMIN &&
+          (req.user.provider !== 'openid' || req.user.role !== SystemRoles.ADMIN)
+        ) {
+          res.status(403).json({ message: 'OIDC administrator entitlement required' });
           return;
         }
 

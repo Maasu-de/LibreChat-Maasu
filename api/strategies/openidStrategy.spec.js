@@ -2147,6 +2147,23 @@ describe('setupOpenId', () => {
       expect(user.role).toBe('ADMIN');
     });
 
+    it('does not retain an ID-token entitlement when the configured userinfo source removes it', async () => {
+      process.env.OPENID_ADMIN_ROLE = 'admin';
+      process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'organization.permissions';
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+      require('openid-client').fetchUserInfo.mockResolvedValue({
+        organization: { permissions: [] },
+      });
+      jwtDecode.mockReturnValue({ roles: ['requiredRole'] });
+      await setupOpenId();
+      verifyCallback = require('openid-client/passport').__getVerifyCallbackByName('openid');
+      const { user } = await validate({
+        ...tokenset,
+        claims: () => ({ ...tokenset.claims(), organization: { permissions: ['admin'] } }),
+      });
+      expect(user.role).not.toBe('ADMIN');
+    });
+
     it('should extract admin role from nested path in userinfo', async () => {
       process.env.OPENID_ADMIN_ROLE = 'admin';
       process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'organization.permissions';

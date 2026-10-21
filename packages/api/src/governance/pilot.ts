@@ -107,6 +107,18 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     deny(res);
     return;
   }
+  if (path.startsWith('/admin/')) {
+    const allowed =
+      /^\/admin\/oauth\/openid(?:\/|$)/.test(path) ||
+      ['/admin/oauth/refresh', '/admin/oauth/exchange', '/admin/verify'].includes(path) ||
+      (req.method === 'GET' && path === '/admin/grants/effective') ||
+      (req.method === 'GET' && path === '/admin/users/search') ||
+      /^\/admin\/groups(?:\/|$)/.test(path);
+    if (!allowed) {
+      deny(res);
+      return;
+    }
+  }
   const readOnly = req.method === 'GET' || req.method === 'HEAD';
   const chat = '/agents/chat';
   if (path.startsWith(`${chat}/`) || path === chat) {

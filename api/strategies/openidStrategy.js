@@ -572,9 +572,11 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     ...claims,
   };
 
+  let administratorUserinfo = {};
   if (tokenset.access_token) {
     const providerUserinfo = await getUserInfo(openidConfig, tokenset.access_token, claims.sub);
     Object.assign(userinfo, providerUserinfo);
+    administratorUserinfo = providerUserinfo;
   }
 
   const email = getOpenIdEmail(userinfo);
@@ -719,7 +721,12 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   let adminRoleGranted = false;
 
   if (adminRole && adminRoleParameterPath && adminRoleTokenKind) {
-    const adminRoleObject = getRoleSource(adminRoleTokenKind, 'admin role', tokenset, userinfo);
+    const adminRoleObject = getRoleSource(
+      adminRoleTokenKind,
+      'admin role',
+      tokenset,
+      adminRoleTokenKind === 'userinfo' ? administratorUserinfo : userinfo,
+    );
 
     let adminRoles = get(adminRoleObject, adminRoleParameterPath);
 

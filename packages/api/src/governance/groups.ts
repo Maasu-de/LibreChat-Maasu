@@ -4,6 +4,7 @@ import { logger, runAsSystem } from '@librechat/data-schemas';
 import type { NextFunction, Request, Response } from 'express';
 import type { IGroup } from '@librechat/data-schemas';
 import type { JwtPayload } from 'jsonwebtoken';
+import { hasOidcAdministratorClaim } from '../auth/administrator';
 import { normalizeOpenIdIssuer } from '../auth/openid';
 
 const PAGE_SIZE = 200;
@@ -12,7 +13,6 @@ const JWKS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 type GroupRef = Pick<IGroup, '_id' | 'name'>;
 type AdminClaims = JwtPayload & {
   typ?: string;
-  realm_access?: { roles?: string[] };
 };
 
 export interface GovernanceGroupsDeps {
@@ -27,18 +27,30 @@ export interface UserGroupIdsDeps {
 }
 
 /** Keyed by the configured issuer (never a token value), so it holds one entry per realm */
-const jwksClients = new Map<string, jwksRsa.JwksClient>();
+type OidcSigningKeys = { client: jwksRsa.JwksClient; issuer: string };
+const jwksClients = new Map<string, OidcSigningKeys>();
 
 export function clearGovernanceJwksCache(): void {
   jwksClients.clear();
 }
 
-function getJwksClient(issuer: string): jwksRsa.JwksClient {
+async function getJwksClient(issuer: string): Promise<OidcSigningKeys> {
   const cached = jwksClients.get(issuer);
   if (cached) {
     return cached;
   }
-  const jwksUri = `${issuer}/protocol/openid-connect/certs`;
+  let jwksUri = process.env.OIDC_JWKS_URI || `${issuer}/protocol/openid-connect/certs`;
+  let tokenIssuer = issuer;
+  if (!issuer.includes('/realms/')) {
+    const response = await fetch(`${issuer}/.well-known/openid-configuration`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error('OIDC discovery unavailable');
+    const metadata = (await response.json()) as { issuer: string; jwks_uri: string };
+    if (metadata.issuer.replace(/\/$/, '') !== issuer) throw new Error('OIDC issuer mismatch');
+    jwksUri = process.env.OIDC_JWKS_URI || metadata.jwks_uri;
+    tokenIssuer = metadata.issuer;
+  }
   logger.debug('[GovernanceGroups] Creating JWKS client', { jwksUri });
   const client = jwksRsa({
     jwksUri,
@@ -46,13 +58,9 @@ function getJwksClient(issuer: string): jwksRsa.JwksClient {
     cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
     rateLimit: true,
   });
-  jwksClients.set(issuer, client);
-  return client;
-}
-
-function hasAdminRole(claims: AdminClaims, adminRole: string): boolean {
-  const roles = claims.realm_access?.roles;
-  return Array.isArray(roles) && roles.includes(adminRole);
+  const keys = { client, issuer: tokenIssuer };
+  jwksClients.set(issuer, keys);
+  return keys;
 }
 
 function readBearer(header: string | undefined): string {
@@ -71,10 +79,11 @@ async function verifyAdminToken(
   }
 
   try {
-    const signingKey = await getJwksClient(issuer).getSigningKey(kid);
+    const keys = await getJwksClient(issuer);
+    const signingKey = await keys.client.getSigningKey(kid);
     return jwt.verify(token, signingKey.getPublicKey(), {
       algorithms: ['RS256'],
-      issuer,
+      issuer: keys.issuer,
       audience,
     }) as AdminClaims;
   } catch (error) {
@@ -115,17 +124,52 @@ export async function requireGovernanceAdminToken(
   }
 
   const token = readBearer(req.headers.authorization);
+  const source = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? 'access';
+  if (!['access', 'id', 'userinfo'].includes(source)) {
+    res.status(503).json({ message: 'Unsupported OIDC administrator source' });
+    return;
+  }
   const claims = token ? await verifyAdminToken(token, issuer, audience) : null;
+  let roleClaims: object | null = claims;
+  if (claims && source === 'userinfo') {
+    try {
+      let endpoint = process.env.OIDC_USERINFO_URI || `${issuer}/protocol/openid-connect/userinfo`;
+      if (!issuer.includes('/realms/') && !process.env.OIDC_USERINFO_URI) {
+        const discovery = await fetch(`${issuer}/.well-known/openid-configuration`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!discovery.ok) throw new Error('OIDC discovery unavailable');
+        const metadata = (await discovery.json()) as { issuer: string; userinfo_endpoint: string };
+        if (metadata.issuer.replace(/\/$/, '') !== issuer) throw new Error('OIDC issuer mismatch');
+        endpoint = metadata.userinfo_endpoint;
+      }
+      const response = await fetch(endpoint, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      const info = response.ok ? ((await response.json()) as { sub?: string }) : null;
+      roleClaims = info?.sub === claims.sub ? info : null;
+    } catch {
+      roleClaims = null;
+    }
+  }
 
-  // Keycloak issues the same signature scheme for ID and refresh tokens;
-  // only an access token ("Bearer") proves this is a live admin session.
-  if (claims?.typ !== 'Bearer' || !hasAdminRole(claims, adminRole)) {
+  // The configured source determines which JWT the trusted Gateway forwards.
+  if (
+    !claims?.sub ||
+    typeof claims.exp !== 'number' ||
+    claims.typ === 'Refresh' ||
+    (source !== 'id' && claims.typ === 'ID') ||
+    (claims.azp !== undefined && claims.azp !== audience) ||
+    !roleClaims ||
+    !hasOidcAdministratorClaim(roleClaims)
+  ) {
     if (!token) {
       logger.warn('[GovernanceGroups] Rejected request without a bearer token');
     } else if (claims) {
       logger.warn('[GovernanceGroups] Rejected verified token', {
         typ: claims.typ,
-        hasAdminRole: hasAdminRole(claims, adminRole),
+        hasAdminRole: roleClaims ? hasOidcAdministratorClaim(roleClaims) : false,
       });
     }
     res.status(401).json({ message: 'Unauthorized' });

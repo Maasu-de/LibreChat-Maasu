@@ -519,7 +519,7 @@ export function createAdminRolesHandlers(deps: AdminRolesDeps): {
         return res.status(400).json({ error: 'Invalid user ID format' });
       }
 
-      if (isSystemRoleName(name) && name !== SystemRoles.ADMIN) {
+      if (isSystemRoleName(name)) {
         return res.status(403).json({ error: 'Cannot directly assign members to a system role' });
       }
 
@@ -537,31 +537,13 @@ export function createAdminRolesHandlers(deps: AdminRolesDeps): {
         return res.status(200).json({ success: true });
       }
 
-      if (user.role === SystemRoles.ADMIN && name !== SystemRoles.ADMIN) {
-        const adminCount = await countUsersByRole(SystemRoles.ADMIN);
-        if (adminCount <= 1) {
-          return res.status(400).json({ error: 'Cannot remove the last admin user' });
-        }
+      if (user.role === SystemRoles.ADMIN) {
+        return res.status(403).json({ error: 'ADMIN membership is managed by OIDC' });
       }
 
       const updated = await updateUser(userId, { role: name });
       if (!updated) {
         return res.status(404).json({ error: 'User not found' });
-      }
-
-      if (user.role === SystemRoles.ADMIN && name !== SystemRoles.ADMIN) {
-        const postCount = await countUsersByRole(SystemRoles.ADMIN);
-        if (postCount === 0) {
-          try {
-            await updateUser(userId, { role: SystemRoles.ADMIN });
-          } catch (rollbackError) {
-            logger.error(
-              `[adminRoles] CRITICAL: admin rollback failed in addRoleMember for user ${userId}:`,
-              rollbackError,
-            );
-          }
-          return res.status(400).json({ error: 'Cannot remove the last admin user' });
-        }
       }
 
       return res.status(200).json({ success: true });
@@ -582,7 +564,7 @@ export function createAdminRolesHandlers(deps: AdminRolesDeps): {
         return res.status(400).json({ error: 'Invalid user ID format' });
       }
 
-      if (isSystemRoleName(name) && name !== SystemRoles.ADMIN) {
+      if (isSystemRoleName(name)) {
         return res.status(403).json({ error: 'Cannot remove members from a system role' });
       }
 
@@ -600,31 +582,9 @@ export function createAdminRolesHandlers(deps: AdminRolesDeps): {
         return res.status(400).json({ error: 'User is not a member of this role' });
       }
 
-      if (name === SystemRoles.ADMIN) {
-        const adminCount = await countUsersByRole(SystemRoles.ADMIN);
-        if (adminCount <= 1) {
-          return res.status(400).json({ error: 'Cannot remove the last admin user' });
-        }
-      }
-
       const removed = await updateUser(userId, { role: SystemRoles.USER });
       if (!removed) {
         return res.status(404).json({ error: 'User not found' });
-      }
-
-      if (name === SystemRoles.ADMIN) {
-        const postCount = await countUsersByRole(SystemRoles.ADMIN);
-        if (postCount === 0) {
-          try {
-            await updateUser(userId, { role: SystemRoles.ADMIN });
-          } catch (rollbackError) {
-            logger.error(
-              `[adminRoles] CRITICAL: admin rollback failed for user ${userId}:`,
-              rollbackError,
-            );
-          }
-          return res.status(400).json({ error: 'Cannot remove the last admin user' });
-        }
       }
 
       return res.status(200).json({ success: true });
