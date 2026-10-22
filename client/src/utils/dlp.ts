@@ -1,5 +1,10 @@
-import type { BatchFile } from 'librechat-data-provider';
+import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
+import type { BatchFile, GovernanceDlpResult } from 'librechat-data-provider';
 import type { ExtendedFile, TPendingDlpReview } from '~/common';
+
+/** The text a review approves: the masked preview of the typed message. */
+export const getApprovedDlpText = (result: GovernanceDlpResult): string | undefined =>
+  result.maskedPreview?.find((item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION)?.text;
 
 /** True for a file uploaded for the message itself, unlike one attached from the user's files. */
 const isMessageUpload = (
