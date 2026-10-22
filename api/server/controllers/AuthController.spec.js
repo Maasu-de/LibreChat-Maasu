@@ -28,6 +28,7 @@ jest.mock('~/models', () => ({
 jest.mock('@librechat/api', () => ({
   math: jest.fn((value, fallback) => fallback),
   isEnabled: jest.fn(),
+  isGovernancePilotEnabled: jest.requireActual('@librechat/api').isGovernancePilotEnabled,
   findOpenIDUser: jest.fn(),
   syncOidcAdministrator: jest.fn(),
   getOpenIdIssuer: jest.fn(() => 'https://issuer.example.com'),
@@ -341,28 +342,31 @@ describe('refreshController – OpenID path', () => {
     expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
   });
 
-  it('always refreshes through the IdP in governed mode to recheck administrator entitlement', async () => {
-    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
-    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
-    req.session = {
-      openidTokens: {
-        accessToken: makeSessionToken(),
-        idToken: makeSessionToken(),
-        refreshToken: 'stored-refresh',
-        lastRefreshedAt: Date.now(),
-      },
-    };
-    setOpenIDReuseCookies();
-    try {
-      await refreshController(req, res);
-      expect(openIdClient.refreshTokenGrant).toHaveBeenCalled();
-      expect(syncOidcAdministrator).toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(200);
-    } finally {
-      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
-      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
-    }
-  });
+  it.each(['true', 'TRUE', 'True', ' true '])(
+    'rechecks entitlement through the IdP with pilot mode %j',
+    async (enabled) => {
+      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+      process.env.GOVERNANCE_PILOT_ENABLED = enabled;
+      req.session = {
+        openidTokens: {
+          accessToken: makeSessionToken(),
+          idToken: makeSessionToken(),
+          refreshToken: 'stored-refresh',
+          lastRefreshedAt: Date.now(),
+        },
+      };
+      setOpenIDReuseCookies();
+      try {
+        await refreshController(req, res);
+        expect(openIdClient.refreshTokenGrant).toHaveBeenCalled();
+        expect(syncOidcAdministrator).toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(200);
+      } finally {
+        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      }
+    },
+  );
 
   it('reuses valid OpenID session tokens and refreshes CloudFront cookies', async () => {
     const reusableIdToken = makeSessionToken();

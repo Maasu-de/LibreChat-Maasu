@@ -4,6 +4,7 @@ import { logger } from '@librechat/data-schemas';
 import type { ClientSession } from 'mongoose';
 import type { IGroup } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
+import { isGovernancePilotEnabled } from './mode';
 
 export type GroupMutationAction =
   | 'group.created'
@@ -31,7 +32,7 @@ function outbox() {
 
 export function isGovernanceGroupAuditConfigured(req: ServerRequest): boolean {
   return (
-    process.env.GOVERNANCE_PILOT_ENABLED !== 'true' ||
+    !isGovernancePilotEnabled() ||
     Boolean(
       process.env.GOVERNANCE_AUDIT_URL &&
         process.env.LIBRECHAT_SERVICE_CREDENTIAL &&
@@ -52,7 +53,7 @@ export async function mutateGovernanceGroup(
   operation: (session?: ClientSession) => Promise<IGroup | null>,
   affectedUserIds: string[] = [],
 ): Promise<IGroup | null> {
-  if (process.env.GOVERNANCE_PILOT_ENABLED !== 'true') return operation();
+  if (!isGovernancePilotEnabled()) return operation();
   const actor = req.user;
   if (!isGovernanceGroupAuditConfigured(req) || !actor?.openidIssuer || !actor.openidId) {
     throw new Error('Governance group audit is not configured');
@@ -141,7 +142,7 @@ export function flushGovernanceGroupAudit(): Promise<void> {
 
 let worker: ReturnType<typeof setInterval> | undefined;
 export function startGovernanceGroupAuditDelivery(): void {
-  if (worker || process.env.GOVERNANCE_PILOT_ENABLED !== 'true') return;
+  if (worker || !isGovernancePilotEnabled()) return;
   worker = setInterval(() => {
     void flushGovernanceGroupAudit();
   }, 5000);

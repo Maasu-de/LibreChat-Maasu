@@ -5,6 +5,7 @@ const { logger } = require('@librechat/data-schemas');
 const {
   math,
   isEnabled,
+  isGovernancePilotEnabled,
   findOpenIDUser,
   syncOidcAdministrator,
   getOpenIdIssuer,
@@ -171,10 +172,9 @@ const refreshController = async (req, res) => {
        * Stale, missing, or near-expiry tokens fall through to refreshTokenGrant so
        * upstream revocations and cookie/session extension are checked regularly.
        */
-      const reusableSessionToken =
-        process.env.GOVERNANCE_PILOT_ENABLED === 'true'
-          ? null
-          : getReusableOpenIDSessionToken(req.session?.openidTokens);
+      const reusableSessionToken = isGovernancePilotEnabled()
+        ? null
+        : getReusableOpenIDSessionToken(req.session?.openidTokens);
       const reuseUserId = reusableSessionToken ? getValidOpenIDReuseUserId(parsedCookies) : null;
       if (reuseUserId) {
         const user = await getUserById(reuseUserId, AUTH_REFRESH_USER_PROJECTION);

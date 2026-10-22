@@ -12,6 +12,7 @@ import type { NextFunction, Response } from 'express';
 import type { Types, ClientSession } from 'mongoose';
 import type { ResolvedPrincipal } from '~/types/principal';
 import type { ServerRequest } from '~/types/http';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 
 interface CapabilityDeps {
   getUserPrincipals: (
@@ -205,7 +206,7 @@ export function generateCapabilityCheck(deps: CapabilityDeps): {
         }
 
         if (
-          process.env.GOVERNANCE_PILOT_ENABLED === 'true' &&
+          isGovernancePilotEnabled() &&
           capability === SystemCapabilities.ACCESS_ADMIN &&
           (req.user.provider !== 'openid' || req.user.role !== SystemRoles.ADMIN)
         ) {

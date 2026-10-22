@@ -11,6 +11,7 @@ const {
 } = require('@librechat/data-schemas');
 const {
   isEnabled,
+  isGovernancePilotEnabled,
   getAdminPanelUrl,
   exchangeAdminCode,
   createSetBalanceConfig,
@@ -583,7 +584,7 @@ router.post(
             canAccessAdmin: async (user) => {
               try {
                 if (
-                  process.env.GOVERNANCE_PILOT_ENABLED === 'true' &&
+                  isGovernancePilotEnabled() &&
                   (user.provider !== 'openid' || user.role !== 'ADMIN')
                 )
                   return false;

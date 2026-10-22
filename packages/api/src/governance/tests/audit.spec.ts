@@ -6,7 +6,7 @@ import { createModels, createMethods, runAsSystem } from '@librechat/data-schema
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import { createAdminGroupsHandlers } from '../../admin/groups';
-import { flushGovernanceGroupAudit } from '../audit';
+import { flushGovernanceGroupAudit, startGovernanceGroupAuditDelivery } from '../audit';
 
 const environment = process.env;
 let replica: MongoMemoryReplSet;
@@ -85,45 +85,85 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-it('uses existing group persistence and group context, auditing CRUD and memberships', async () => {
-  const sink = jest
-    .spyOn(global, 'fetch')
-    .mockImplementation(async () => new Response(null, { status: 204 }));
-  const user = await runAsSystem(() =>
-    models.User.create({ email: 'member@test.example', provider: 'openid', role: 'USER' }),
-  );
-  const created = await request(app).post('/groups').send({ name: 'Engineering', source: 'local' });
-  expect(created.status).toBe(201);
-  const id = created.body.group._id;
-  expect((await request(app).patch(`/groups/${id}`).send({ name: 'Platform' })).status).toBe(200);
-  expect(
-    (await request(app).post(`/groups/${id}/members`).send({ userId: user._id.toString() })).status,
-  ).toBe(200);
-  const groups = await runAsSystem(() => methods.getUserGroups(user._id));
-  expect(groups.map((group) => group._id.toString())).toContain(id);
-  expect((await request(app).delete(`/groups/${id}/members/${user._id}`)).status).toBe(200);
-  expect(await runAsSystem(() => methods.getUserGroups(user._id))).toHaveLength(0);
-  expect((await request(app).delete(`/groups/${id}`)).status).toBe(200);
-  expect(await runAsSystem(() => methods.findGroupById(id))).toBeNull();
-  const events = sink.mock.calls.map((call) => JSON.parse(call[1]?.body as string));
-  expect(events.map((event) => event.action)).toEqual([
-    'group.created',
-    'group.updated',
-    'membership.added',
-    'membership.removed',
-    'group.deleted',
-  ]);
-  expect(new Set(events.map((event) => event.mutation_id)).size).toBe(5);
-  for (const event of events) {
-    expect(event.actor).toEqual({ issuer: 'https://identity.example', user_id: 'stable-subject' });
-    expect(event.resource.id).toBe(id);
-    expect(event.outcome).toBe('success');
-    expect(event).not.toHaveProperty('email');
-    expect(event).not.toHaveProperty('token');
-    if (event.action.startsWith('membership.'))
-      expect(event.resource.affected_user_id).toBe(user._id.toString());
-  }
+it.each(['true', 'TRUE', 'True', ' true '])(
+  'audits CRUD and memberships with pilot mode %j',
+  async (enabled) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = enabled;
+    const sink = jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    const user = await runAsSystem(() =>
+      models.User.create({ email: 'member@test.example', provider: 'openid', role: 'USER' }),
+    );
+    const created = await request(app)
+      .post('/groups')
+      .send({ name: 'Engineering', source: 'local' });
+    expect(created.status).toBe(201);
+    const id = created.body.group._id;
+    expect((await request(app).patch(`/groups/${id}`).send({ name: 'Platform' })).status).toBe(200);
+    expect(
+      (await request(app).post(`/groups/${id}/members`).send({ userId: user._id.toString() }))
+        .status,
+    ).toBe(200);
+    const groups = await runAsSystem(() => methods.getUserGroups(user._id));
+    expect(groups.map((group) => group._id.toString())).toContain(id);
+    expect((await request(app).delete(`/groups/${id}/members/${user._id}`)).status).toBe(200);
+    expect(await runAsSystem(() => methods.getUserGroups(user._id))).toHaveLength(0);
+    expect((await request(app).delete(`/groups/${id}`)).status).toBe(200);
+    expect(await runAsSystem(() => methods.findGroupById(id))).toBeNull();
+    const events = sink.mock.calls.map((call) => JSON.parse(call[1]?.body as string));
+    expect(events.map((event) => event.action)).toEqual([
+      'group.created',
+      'group.updated',
+      'membership.added',
+      'membership.removed',
+      'group.deleted',
+    ]);
+    expect(new Set(events.map((event) => event.mutation_id)).size).toBe(5);
+    for (const event of events) {
+      expect(event.actor).toEqual({
+        issuer: 'https://identity.example',
+        user_id: 'stable-subject',
+      });
+      expect(event.resource.id).toBe(id);
+      expect(event.outcome).toBe('success');
+      expect(event).not.toHaveProperty('email');
+      expect(event).not.toHaveProperty('token');
+      if (event.action.startsWith('membership.'))
+        expect(event.resource.affected_user_id).toBe(user._id.toString());
+    }
+    expect(await outbox().countDocuments()).toBe(0);
+  },
+);
+
+it.each(['TRUE', ' True '])('requires audit configuration with pilot mode %j', async (enabled) => {
+  process.env.GOVERNANCE_PILOT_ENABLED = enabled;
+  delete process.env.GOVERNANCE_AUDIT_URL;
+
+  const response = await request(app).post('/groups').send({ name: 'Must be audited' });
+
+  expect(response.status).toBe(503);
+  expect(await runAsSystem(() => models.Group.countDocuments())).toBe(0);
   expect(await outbox().countDocuments()).toBe(0);
+});
+
+it('starts audit retries for normalized pilot mode and only starts one worker', () => {
+  const interval = jest.spyOn(global, 'setInterval');
+  process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+  startGovernanceGroupAuditDelivery();
+  expect(interval).not.toHaveBeenCalled();
+
+  process.env.GOVERNANCE_PILOT_ENABLED = ' TRUE ';
+  try {
+    startGovernanceGroupAuditDelivery();
+    startGovernanceGroupAuditDelivery();
+    expect(interval).toHaveBeenCalledTimes(1);
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 5000);
+  } finally {
+    for (const result of interval.mock.results) {
+      if (result.type === 'return') clearInterval(result.value);
+    }
+  }
 });
 
 it('keeps a durable event through an outage and reconnection, retrying the same ID', async () => {

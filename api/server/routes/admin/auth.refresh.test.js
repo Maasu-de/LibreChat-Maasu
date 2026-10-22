@@ -9,10 +9,6 @@ jest.mock('openid-client', () => ({
   refreshTokenGrant: jest.fn(),
 }));
 
-jest.mock('librechat-data-provider', () => ({
-  CacheKeys: { ADMIN_OAUTH_EXCHANGE: 'admin-oauth-exchange' },
-}));
-
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
     debug: jest.fn(),
@@ -36,6 +32,7 @@ jest.mock('@librechat/api', () => {
 
   return {
     isEnabled: jest.fn(),
+    isGovernancePilotEnabled: jest.requireActual('@librechat/api').isGovernancePilotEnabled,
     getAdminPanelUrl: jest.fn(() => 'http://admin.example.com'),
     exchangeAdminCode: jest.fn(),
     createSetBalanceConfig: jest.fn(() => (req, res, next) => next()),
@@ -115,6 +112,7 @@ const {
 } = require('@librechat/api');
 const { getOpenIdConfig, getUserInfo } = require('~/strategies');
 const { updateUser } = require('~/models');
+const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const adminAuthRouter = require('./auth');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
@@ -236,6 +234,36 @@ describe('admin auth OpenID refresh route', () => {
       'admin-openid-id',
     );
   });
+
+  it.each(['true', 'TRUE', 'True', ' true '])(
+    'requires OIDC administrator entitlement on admin refresh with pilot mode %j',
+    async (enabled) => {
+      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+      process.env.GOVERNANCE_PILOT_ENABLED = enabled;
+      try {
+        const response = await request(app)
+          .post('/api/admin/oauth/refresh')
+          .send({ refresh_token: 'incoming-refresh-token' });
+
+        expect(response.status).toBe(200);
+        const { canAccessAdmin } = applyAdminRefresh.mock.calls[0][1];
+        await expect(
+          canAccessAdmin({ id: 'user-id', provider: 'local', role: 'ADMIN' }),
+        ).resolves.toBe(false);
+        await expect(
+          canAccessAdmin({ id: 'user-id', provider: 'openid', role: 'USER' }),
+        ).resolves.toBe(false);
+        expect(hasCapability).not.toHaveBeenCalled();
+        await expect(
+          canAccessAdmin({ id: 'user-id', provider: 'openid', role: 'ADMIN' }),
+        ).resolves.toBe(true);
+        expect(hasCapability).toHaveBeenCalledTimes(1);
+      } finally {
+        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      }
+    },
+  );
 
   it('returns the existing refresh failure response when the IdP rejects the grant', async () => {
     openIdClient.refreshTokenGrant.mockRejectedValue({

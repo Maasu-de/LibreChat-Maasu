@@ -117,16 +117,18 @@ describe('generateCapabilityCheck', () => {
       expect(statusMock).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ['local', 'ADMIN', false],
-      ['openid', 'USER', false],
-      ['openid', 'delegated', false],
-      ['openid', 'ADMIN', true],
-    ])(
-      'governed administration requires an OIDC administrator: %s %s',
-      async (provider, role, allowed) => {
+    it.each(
+      ['true', 'TRUE', 'True', ' true '].flatMap<[string, string, string, boolean]>((enabled) => [
+        [enabled, 'local', 'ADMIN', false],
+        [enabled, 'openid', 'USER', false],
+        [enabled, 'openid', 'delegated', false],
+        [enabled, 'openid', 'ADMIN', true],
+      ]),
+    )(
+      'pilot mode %j requires an OIDC administrator: %s %s',
+      async (enabled, provider, role, allowed) => {
         const previous = process.env.GOVERNANCE_PILOT_ENABLED;
-        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        process.env.GOVERNANCE_PILOT_ENABLED = enabled;
         try {
           mockReq.user = { id: 'user-123', provider, role } as ServerRequest['user'];
           mockGetUserPrincipals.mockResolvedValue(adminPrincipals);
