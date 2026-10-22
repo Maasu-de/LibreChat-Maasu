@@ -11,6 +11,15 @@ authentication refresh contacts the IdP and synchronizes administrator entitleme
 OpenID users with older LibreChat refresh sessions must sign in again; those local
 sessions cannot renew credentials in pilot mode, even after token reuse is enabled.
 
+Administrator mapping must be explicit in pilot mode. Set `OPENID_ADMIN_ROLE`,
+`OPENID_ADMIN_ROLE_PARAMETER_PATH`, and `OPENID_ADMIN_ROLE_TOKEN_KIND` to the IdP's
+administrator value, claim path, and token source (`access`, `id`, or `userinfo`).
+For bundled Keycloak use `governance-admin`, `realm_access.roles`, and `access`.
+Missing or blank mapping settings, or an unsupported token source, reject pilot
+startup, OpenID login, and authentication refresh. A stored LibreChat `ADMIN` role
+cannot substitute for this mapping. Outside pilot mode, administrator mapping
+remains optional.
+
 Group and membership auditing uses the same service credential. The audit endpoint
 defaults to the Gateway base URL with `/api/v1/dlp` replaced by
 `/api/v1/internal/group-audit`, preserving any reverse-proxy prefix. To use a

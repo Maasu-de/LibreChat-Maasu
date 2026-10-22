@@ -5,6 +5,21 @@ import type { IUser } from '@librechat/data-schemas';
 import type { RefreshTokenset } from './refresh';
 import { isGovernancePilotEnabled } from '../governance/mode';
 
+export function assertOidcAdministratorConfigured(): void {
+  if (!isGovernancePilotEnabled()) return;
+  if (!process.env.OPENID_ADMIN_ROLE?.trim()) {
+    throw new Error('Governed pilot requires OPENID_ADMIN_ROLE');
+  }
+  if (!process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH?.trim()) {
+    throw new Error('Governed pilot requires OPENID_ADMIN_ROLE_PARAMETER_PATH');
+  }
+  if (!['access', 'id', 'userinfo'].includes(process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? '')) {
+    throw new Error(
+      'Governed pilot requires OPENID_ADMIN_ROLE_TOKEN_KIND to be access, id, or userinfo',
+    );
+  }
+}
+
 export function requiresOidcEntitlementRefresh(user: Pick<IUser, 'provider'>): boolean {
   return isGovernancePilotEnabled() && user.provider === 'openid';
 }
@@ -24,6 +39,7 @@ export async function syncOidcAdministrator(
   updateUser: (id: string, data: Partial<IUser>) => Promise<IUser | null>,
   getUserInfo?: (accessToken: string, subject: string) => Promise<{ sub?: string } | null>,
 ): Promise<void> {
+  assertOidcAdministratorConfigured();
   if (!process.env.OPENID_ADMIN_ROLE) return;
   const source = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? 'access';
   let claims: object | null = null;

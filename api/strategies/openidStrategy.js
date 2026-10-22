@@ -9,6 +9,7 @@ const { CacheKeys, ErrorTypes, SystemRoles } = require('librechat-data-provider'
 const {
   isEnabled,
   isGovernancePilotEnabled,
+  assertOidcAdministratorConfigured,
   logHeaders,
   safeStringify,
   findOpenIDUser,
@@ -567,6 +568,7 @@ async function applyOpenIdRoleSync({
  * @returns {Promise<Object>} The authenticated user object with tokenset
  */
 async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
+  assertOidcAdministratorConfigured();
   const claims = tokenset.claims ? tokenset.claims() : tokenset;
   const userinfo = {
     ...claims,

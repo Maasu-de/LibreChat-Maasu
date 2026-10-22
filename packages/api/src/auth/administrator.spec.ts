@@ -141,3 +141,57 @@ it('rejects missing subjects before requesting userinfo', async () => {
   expect(getUserInfo).not.toHaveBeenCalled();
   expect(update).not.toHaveBeenCalled();
 });
+
+it.each([undefined, '', '   '])(
+  'rejects pilot admin refresh with role setting %j',
+  async (value) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = ' TRUE ';
+    if (value === undefined) delete process.env.OPENID_ADMIN_ROLE;
+    else process.env.OPENID_ADMIN_ROLE = value;
+    const actor = user();
+    const update = jest.fn(async () => actor);
+    const mintToken = jest.fn();
+
+    await expect(
+      applyAdminRefresh(
+        tokens([]),
+        {
+          findUsers: async () => [actor],
+          getUserById: async () => actor,
+          mintToken,
+          synchronizeAdministrator: (resolved, refreshed) =>
+            syncOidcAdministrator(resolved, refreshed, update),
+          canAccessAdmin: async (resolved) => resolved.role === 'ADMIN',
+        },
+        { userId: actor._id.toString(), expectedIssuer: actor.openidIssuer },
+      ),
+    ).rejects.toThrow('OPENID_ADMIN_ROLE');
+
+    expect(update).not.toHaveBeenCalled();
+    expect(mintToken).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['OPENID_ADMIN_ROLE_PARAMETER_PATH', 'OPENID_ADMIN_ROLE_TOKEN_KIND'])(
+  'rejects pilot synchronization without %s',
+  async (key) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    delete process.env[key];
+    const update = jest.fn();
+
+    await expect(syncOidcAdministrator(user(), tokens([]), update)).rejects.toThrow(key);
+    expect(update).not.toHaveBeenCalled();
+  },
+);
+
+it('preserves optional administrator mapping outside pilot mode', async () => {
+  process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+  delete process.env.OPENID_ADMIN_ROLE;
+  const actor = user();
+  const update = jest.fn();
+
+  await syncOidcAdministrator(actor, tokens([]), update);
+
+  expect(update).not.toHaveBeenCalled();
+  expect(actor.role).toBe('ADMIN');
+});

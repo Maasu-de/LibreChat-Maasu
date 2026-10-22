@@ -377,6 +377,38 @@ describe('refreshController – OpenID path', () => {
     }
   });
 
+  it.each([undefined, '', '   '])(
+    'does not issue pilot chat credentials without administrator role configuration %j',
+    async (value) => {
+      const environment = process.env;
+      process.env = {
+        ...environment,
+        GOVERNANCE_PILOT_ENABLED: 'true',
+        OPENID_ADMIN_ROLE_PARAMETER_PATH: 'realm_access.roles',
+        OPENID_ADMIN_ROLE_TOKEN_KIND: 'access',
+      };
+      if (value === undefined) delete process.env.OPENID_ADMIN_ROLE;
+      else process.env.OPENID_ADMIN_ROLE = value;
+      findOpenIDUser.mockResolvedValueOnce({
+        user: { ...defaultUser, provider: 'openid', role: 'ADMIN' },
+        error: null,
+        migration: false,
+      });
+      syncOidcAdministrator.mockImplementationOnce(
+        jest.requireActual('@librechat/api').syncOidcAdministrator,
+      );
+      try {
+        await refreshController(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
+        expect(updateUser).not.toHaveBeenCalled();
+      } finally {
+        process.env = environment;
+      }
+    },
+  );
+
   it.each(['true', 'TRUE', 'True', ' true '])(
     'rechecks entitlement through the IdP with pilot mode %j',
     async (enabled) => {

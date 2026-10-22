@@ -1,5 +1,6 @@
 import type { TCustomConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
+import { assertOidcAdministratorConfigured } from '../auth/administrator';
 import {
   GOVERNANCE_ENDPOINT,
   isGovernancePilotEnabled,
@@ -103,6 +104,7 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
       'Governed pilot requires OPENID_REUSE_TOKENS=true for OIDC entitlement refresh',
     );
   }
+  assertOidcAdministratorConfigured();
   const baseURL = process.env.GOVERNANCE_API_BASE_URL;
   const apiKey = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!baseURL || !apiKey || apiKey === 'user_provided') {

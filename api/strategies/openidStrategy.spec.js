@@ -357,6 +357,25 @@ describe('setupOpenId', () => {
       expect(user).toMatchObject({ email: 'test@example.com', role: 'ADMIN' });
     });
 
+    it.each([
+      'OPENID_ADMIN_ROLE',
+      'OPENID_ADMIN_ROLE_PARAMETER_PATH',
+      'OPENID_ADMIN_ROLE_TOKEN_KIND',
+    ])('rejects pilot login without %s before trusting a stored administrator', async (key) => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      delete process.env[key];
+      findUser.mockResolvedValue({
+        _id: 'existing-admin',
+        email: 'test@example.com',
+        provider: 'openid',
+        role: 'ADMIN',
+      });
+
+      await expect(validate(tokenset)).rejects.toThrow(key);
+      expect(createUser).not.toHaveBeenCalled();
+      expect(updateUser).not.toHaveBeenCalled();
+    });
+
     it('still requires an existing user outside the governed pilot', async () => {
       await expect(validateAdmin(tokenset)).rejects.toThrow('User does not exist');
       expect(createUser).not.toHaveBeenCalled();
