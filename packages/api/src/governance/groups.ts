@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import jwksRsa from 'jwks-rsa';
 import { logger, runAsSystem } from '@librechat/data-schemas';
-import type { NextFunction, Request, Response } from 'express';
+import type { RequestHandler, Request, Response } from 'express';
 import type { IGroup } from '@librechat/data-schemas';
 import type { JwtPayload } from 'jsonwebtoken';
 import { hasOidcAdministratorClaim } from '../auth/administrator';
@@ -17,6 +17,10 @@ type AdminClaims = JwtPayload & {
 
 export interface GovernanceGroupsDeps {
   listGroups: (filter: { limit: number; offset: number }) => Promise<GroupRef[]>;
+}
+
+export interface GovernanceAdminTokenDeps {
+  exchangeAccessToken: (accessToken: string, subject: string) => Promise<string>;
 }
 
 export interface UserGroupIdsDeps {
@@ -104,80 +108,86 @@ async function verifyAdminToken(
  * requiring a LibreChat user session. There is no LibreChat account behind
  * this call, so it deliberately skips LibreChat's own user lookup.
  */
-export async function requireGovernanceAdminToken(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  // OPENID_ISSUER may be the discovery URL; the JWKS path and `iss` claim need the bare issuer
-  const issuer = normalizeOpenIdIssuer(process.env.OPENID_ISSUER) ?? '';
-  const audience = process.env.GOVERNANCE_ADMIN_CLIENT_ID ?? '';
-  const adminRole = process.env.OPENID_ADMIN_ROLE ?? '';
-  if (!issuer || !audience || !adminRole) {
-    logger.warn('[GovernanceGroups] Group lookup is not configured', {
-      hasIssuer: Boolean(issuer),
-      hasAudience: Boolean(audience),
-      hasAdminRole: Boolean(adminRole),
-    });
-    res.status(503).json({ message: 'Group lookup is not configured.' });
-    return;
-  }
+export function createRequireGovernanceAdminToken({
+  exchangeAccessToken,
+}: GovernanceAdminTokenDeps): RequestHandler {
+  return async (req, res, next): Promise<void> => {
+    // OPENID_ISSUER may be the discovery URL; the JWKS path and `iss` claim need the bare issuer
+    const issuer = normalizeOpenIdIssuer(process.env.OPENID_ISSUER) ?? '';
+    const audience = process.env.GOVERNANCE_ADMIN_CLIENT_ID ?? '';
+    const adminRole = process.env.OPENID_ADMIN_ROLE ?? '';
+    if (!issuer || !audience || !adminRole) {
+      logger.warn('[GovernanceGroups] Group lookup is not configured', {
+        hasIssuer: Boolean(issuer),
+        hasAudience: Boolean(audience),
+        hasAdminRole: Boolean(adminRole),
+      });
+      res.status(503).json({ message: 'Group lookup is not configured.' });
+      return;
+    }
 
-  const token = readBearer(req.headers.authorization);
-  const source = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? 'access';
-  if (!['access', 'id', 'userinfo'].includes(source)) {
-    res.status(503).json({ message: 'Unsupported OIDC administrator source' });
-    return;
-  }
-  const claims = token ? await verifyAdminToken(token, issuer, audience) : null;
-  let roleClaims: object | null = claims;
-  if (claims && source === 'userinfo') {
-    try {
-      let endpoint = process.env.OIDC_USERINFO_URI || `${issuer}/protocol/openid-connect/userinfo`;
-      if (!issuer.includes('/realms/') && !process.env.OIDC_USERINFO_URI) {
-        const discovery = await fetch(`${issuer}/.well-known/openid-configuration`, {
+    const token = readBearer(req.headers.authorization);
+    const source = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? 'access';
+    if (!['access', 'id', 'userinfo'].includes(source)) {
+      res.status(503).json({ message: 'Unsupported OIDC administrator source' });
+      return;
+    }
+    const claims = token ? await verifyAdminToken(token, issuer, audience) : null;
+    let roleClaims: object | null = claims;
+    if (claims?.sub && source === 'userinfo') {
+      try {
+        let endpoint =
+          process.env.OIDC_USERINFO_URI || `${issuer}/protocol/openid-connect/userinfo`;
+        if (!issuer.includes('/realms/') && !process.env.OIDC_USERINFO_URI) {
+          const discovery = await fetch(`${issuer}/.well-known/openid-configuration`, {
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!discovery.ok) throw new Error('OIDC discovery unavailable');
+          const metadata = (await discovery.json()) as {
+            issuer: string;
+            userinfo_endpoint: string;
+          };
+          if (metadata.issuer.replace(/\/$/, '') !== issuer)
+            throw new Error('OIDC issuer mismatch');
+          endpoint = metadata.userinfo_endpoint;
+        }
+        const userinfoToken = await exchangeAccessToken(token, claims.sub);
+        const response = await fetch(endpoint, {
+          headers: { authorization: `Bearer ${userinfoToken}` },
           signal: AbortSignal.timeout(5000),
         });
-        if (!discovery.ok) throw new Error('OIDC discovery unavailable');
-        const metadata = (await discovery.json()) as { issuer: string; userinfo_endpoint: string };
-        if (metadata.issuer.replace(/\/$/, '') !== issuer) throw new Error('OIDC issuer mismatch');
-        endpoint = metadata.userinfo_endpoint;
+        const info = response.ok ? ((await response.json()) as { sub?: string }) : null;
+        roleClaims = info?.sub === claims.sub ? info : null;
+      } catch {
+        roleClaims = null;
       }
-      const response = await fetch(endpoint, {
-        headers: { authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(5000),
-      });
-      const info = response.ok ? ((await response.json()) as { sub?: string }) : null;
-      roleClaims = info?.sub === claims.sub ? info : null;
-    } catch {
-      roleClaims = null;
     }
-  }
 
-  // The configured source determines which JWT the trusted Gateway forwards.
-  if (
-    !claims?.sub ||
-    typeof claims.exp !== 'number' ||
-    claims.typ === 'Refresh' ||
-    (source === 'id' && claims.typ !== 'ID') ||
-    (source !== 'id' && claims.typ === 'ID') ||
-    (claims.azp !== undefined && claims.azp !== audience) ||
-    !roleClaims ||
-    !hasOidcAdministratorClaim(roleClaims)
-  ) {
-    if (!token) {
-      logger.warn('[GovernanceGroups] Rejected request without a bearer token');
-    } else if (claims) {
-      logger.warn('[GovernanceGroups] Rejected verified token', {
-        typ: claims.typ,
-        hasAdminRole: roleClaims ? hasOidcAdministratorClaim(roleClaims) : false,
-      });
+    // The configured source determines which JWT the trusted Gateway forwards.
+    if (
+      !claims?.sub ||
+      typeof claims.exp !== 'number' ||
+      claims.typ === 'Refresh' ||
+      (source === 'id' && claims.typ !== 'ID') ||
+      (source !== 'id' && claims.typ === 'ID') ||
+      (claims.azp !== undefined && claims.azp !== audience) ||
+      !roleClaims ||
+      !hasOidcAdministratorClaim(roleClaims)
+    ) {
+      if (!token) {
+        logger.warn('[GovernanceGroups] Rejected request without a bearer token');
+      } else if (claims) {
+        logger.warn('[GovernanceGroups] Rejected verified token', {
+          typ: claims.typ,
+          hasAdminRole: roleClaims ? hasOidcAdministratorClaim(roleClaims) : false,
+        });
+      }
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
     }
-    res.status(401).json({ message: 'Unauthorized' });
-    return;
-  }
 
-  next();
+    next();
+  };
 }
 
 async function listAllGroups(listGroups: GovernanceGroupsDeps['listGroups']): Promise<GroupRef[]> {

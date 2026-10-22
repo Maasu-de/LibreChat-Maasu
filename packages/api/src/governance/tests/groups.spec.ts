@@ -8,7 +8,7 @@ import { getTenantId, SYSTEM_TENANT_ID } from '@librechat/data-schemas';
 import type { GovernanceGroupsDeps } from '../groups';
 import {
   createListGovernanceGroups,
-  requireGovernanceAdminToken,
+  createRequireGovernanceAdminToken,
   clearGovernanceJwksCache,
   createGetUserGroupIds,
 } from '../groups';
@@ -59,11 +59,12 @@ const signToken = ({
 const objectId = (n: number) => n.toString(16).padStart(24, '0');
 const group = (id: string, name: string) => ({ _id: new Types.ObjectId(id), name });
 const listGroups = jest.fn() as jest.MockedFunction<GovernanceGroupsDeps['listGroups']>;
+const exchangeAccessToken = jest.fn<Promise<string>, [string, string]>();
 
 const app = express();
 app.get(
   '/api/governance/groups',
-  requireGovernanceAdminToken,
+  createRequireGovernanceAdminToken({ exchangeAccessToken }),
   createListGovernanceGroups({ listGroups }),
 );
 
@@ -82,6 +83,7 @@ beforeEach(() => {
   process.env.OPENID_ISSUER = ISSUER;
   process.env.GOVERNANCE_ADMIN_CLIENT_ID = CLIENT_ID;
   process.env.OPENID_ADMIN_ROLE = ADMIN_ROLE;
+  exchangeAccessToken.mockReset().mockImplementation(async (token) => token);
 });
 
 afterAll(() => {
@@ -164,6 +166,50 @@ describe('GET /api/governance/groups', () => {
       expect((await getGroups(signToken({ roles: [] }))).status).toBe(200);
       userinfo.mockResolvedValueOnce(Response.json({ sub: 'other', company: { admin: true } }));
       expect((await getGroups(signToken())).status).toBe(401);
+    } finally {
+      userinfo.mockRestore();
+    }
+  });
+
+  it('queries the configured userinfo endpoint with the exchanged token', async () => {
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+    process.env.OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED = 'true';
+    process.env.OIDC_USERINFO_URI = 'https://identity.company.test/custom-userinfo';
+    exchangeAccessToken.mockResolvedValue('exchanged-userinfo-token');
+    listGroups.mockResolvedValue([]);
+    const userinfo = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        Response.json({ sub: 'admin-subject', realm_access: { roles: [ADMIN_ROLE] } }),
+      );
+    const token = signToken({ roles: [] });
+    try {
+      expect((await getGroups(token)).status).toBe(200);
+      expect(exchangeAccessToken).toHaveBeenCalledWith(token, 'admin-subject');
+      expect(userinfo).toHaveBeenCalledWith(
+        process.env.OIDC_USERINFO_URI,
+        expect.objectContaining({
+          headers: { authorization: 'Bearer exchanged-userinfo-token' },
+        }),
+      );
+      userinfo.mockResolvedValueOnce(
+        Response.json({ sub: 'other', realm_access: { roles: [ADMIN_ROLE] } }),
+      );
+      expect((await getGroups(token)).status).toBe(401);
+    } finally {
+      userinfo.mockRestore();
+    }
+  });
+
+  it('does not send the original token to userinfo if the exchange fails', async () => {
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+    process.env.OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED = 'true';
+    exchangeAccessToken.mockRejectedValue(new Error('OBO unavailable'));
+    const userinfo = jest.spyOn(global, 'fetch');
+    try {
+      expect((await getGroups(signToken())).status).toBe(401);
+      expect(userinfo).not.toHaveBeenCalled();
+      expect(listGroups).not.toHaveBeenCalled();
     } finally {
       userinfo.mockRestore();
     }

@@ -993,4 +993,5 @@ module.exports = {
   getOpenIdEmail,
   getRoleSource,
   getUserInfo,
+  exchangeAccessTokenIfNeeded,
 };

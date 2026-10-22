@@ -66,6 +66,7 @@ beforeEach(async () => {
     GOVERNANCE_AUDIT_URL: 'https://gateway.example/internal/group-audit',
     LIBRECHAT_SERVICE_CREDENTIAL: 'test-credential',
   };
+  delete process.env.GOVERNANCE_API_BASE_URL;
   await runAsSystem(async () => {
     await models.Group.deleteMany({});
     await models.User.deleteMany({});
@@ -145,6 +146,56 @@ it.each(['TRUE', ' True '])('requires audit configuration with pilot mode %j', a
   expect(response.status).toBe(503);
   expect(await runAsSystem(() => models.Group.countDocuments())).toBe(0);
   expect(await outbox().countDocuments()).toBe(0);
+});
+
+it.each([
+  ['https://gateway.example/api/v1/dlp', 'https://gateway.example/api/v1/internal/group-audit'],
+  ['https://gateway.example/api/v1/dlp/', 'https://gateway.example/api/v1/internal/group-audit'],
+  [
+    'https://gateway.example/prefix/api/v1/dlp/',
+    'https://gateway.example/prefix/api/v1/internal/group-audit',
+  ],
+])('derives and delivers audit events from gateway base %s', async (base, endpoint) => {
+  delete process.env.GOVERNANCE_AUDIT_URL;
+  process.env.GOVERNANCE_API_BASE_URL = base;
+  const sink = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+
+  const response = await request(app).post('/groups').send({ name: 'Audited by default' });
+
+  expect(response.status).toBe(201);
+  expect(sink).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: 'POST' }));
+  expect(await outbox().countDocuments()).toBe(0);
+});
+
+it('prefers an explicit audit endpoint over the gateway base URL', async () => {
+  process.env.GOVERNANCE_API_BASE_URL = 'https://gateway.example/api/v1/dlp';
+  process.env.GOVERNANCE_AUDIT_URL = 'https://audit.example/custom-group-audit';
+  const sink = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+
+  const response = await request(app).post('/groups').send({ name: 'Explicit audit endpoint' });
+
+  expect(response.status).toBe(201);
+  expect(sink).toHaveBeenCalledWith(
+    process.env.GOVERNANCE_AUDIT_URL,
+    expect.objectContaining({ method: 'POST' }),
+  );
+});
+
+it.each([
+  'not-a-url',
+  'file:///api/v1/dlp',
+  'https://user:password@gateway.example/api/v1/dlp',
+  'https://gateway.example/api/v1/dlp?key=secret',
+  'https://gateway.example/api/v1/dlp#fragment',
+  'https://gateway.example/unrelated',
+])('rejects an invalid audit base %s before mutating groups', async (base) => {
+  delete process.env.GOVERNANCE_AUDIT_URL;
+  process.env.GOVERNANCE_API_BASE_URL = base;
+
+  const response = await request(app).post('/groups').send({ name: 'Must be audited' });
+
+  expect(response.status).toBe(503);
+  expect(await runAsSystem(() => models.Group.countDocuments())).toBe(0);
 });
 
 it('starts audit retries for normalized pilot mode and only starts one worker', () => {

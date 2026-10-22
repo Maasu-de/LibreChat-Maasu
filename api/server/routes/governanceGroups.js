@@ -1,6 +1,12 @@
 const express = require('express');
-const { requireGovernanceAdminToken, createListGovernanceGroups } = require('@librechat/api');
+const { createRequireGovernanceAdminToken, createListGovernanceGroups } = require('@librechat/api');
 const { listGroups } = require('~/models');
+const { getOpenIdConfig, exchangeAccessTokenIfNeeded } = require('~/strategies');
+
+const requireGovernanceAdminToken = createRequireGovernanceAdminToken({
+  exchangeAccessToken: (accessToken, subject) =>
+    exchangeAccessTokenIfNeeded(getOpenIdConfig(), accessToken, subject),
+});
 
 const router = express.Router();
 

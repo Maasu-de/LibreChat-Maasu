@@ -30,11 +30,36 @@ function outbox() {
   return mongoose.connection.db.collection<GroupAuditDelivery>('governance_group_audit_outbox');
 }
 
+function getGovernanceGroupAuditUrl(): string | undefined {
+  const explicit = process.env.GOVERNANCE_AUDIT_URL?.trim();
+  const configured = explicit || process.env.GOVERNANCE_API_BASE_URL?.trim();
+  if (!configured) return;
+  try {
+    const url = new URL(configured);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      return;
+    if (!explicit) {
+      const path = url.pathname.replace(/\/+$/, '');
+      if (!path.endsWith('/api/v1/dlp')) return;
+      url.pathname = path.replace(/\/dlp$/, '/internal/group-audit');
+    }
+    return url.href;
+  } catch {
+    return;
+  }
+}
+
 export function isGovernanceGroupAuditConfigured(req: ServerRequest): boolean {
   return (
     !isGovernancePilotEnabled() ||
     Boolean(
-      process.env.GOVERNANCE_AUDIT_URL &&
+      getGovernanceGroupAuditUrl() &&
         process.env.LIBRECHAT_SERVICE_CREDENTIAL &&
         req.user?.openidIssuer &&
         req.user.openidId,
@@ -111,7 +136,7 @@ export async function mutateGovernanceGroup(
 let delivery: Promise<void> | undefined;
 
 async function deliverPendingAudit(): Promise<void> {
-  const endpoint = process.env.GOVERNANCE_AUDIT_URL;
+  const endpoint = getGovernanceGroupAuditUrl();
   const credential = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!endpoint || !credential || mongoose.connection.readyState !== 1) return;
   const records = await outbox().find().sort({ createdAt: 1, _id: 1 }).limit(100).toArray();
