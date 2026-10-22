@@ -6,6 +6,14 @@ import type { ExtendedFile, TPendingDlpReview } from '~/common';
 export const getApprovedDlpText = (result: GovernanceDlpResult): string | undefined =>
   result.maskedPreview?.find((item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION)?.text;
 
+/**
+ * Whether the composer still shows the unsent message a review is about. A turn that ends unsent
+ * puts its text back as the draft: the typed text when a review opens, the approved text when its
+ * send failed. Any other text was typed for the next message.
+ */
+export const isUnsentDlpText = (review: TPendingDlpReview, text: string): boolean =>
+  text === review.text || text === getApprovedDlpText(review.result);
+
 /** True for a file uploaded for the message itself, unlike one attached from the user's files. */
 const isMessageUpload = (
   file: ExtendedFile,
