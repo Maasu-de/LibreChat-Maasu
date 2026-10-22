@@ -98,6 +98,11 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
   if (!isGovernancePilotEnabled()) {
     return config;
   }
+  if (!isEnabled(process.env.OPENID_REUSE_TOKENS)) {
+    throw new Error(
+      'Governed pilot requires OPENID_REUSE_TOKENS=true for OIDC entitlement refresh',
+    );
+  }
   const baseURL = process.env.GOVERNANCE_API_BASE_URL;
   const apiKey = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!baseURL || !apiKey || apiKey === 'user_provided') {

@@ -8,6 +8,7 @@ const {
   isGovernancePilotEnabled,
   findOpenIDUser,
   syncOidcAdministrator,
+  requiresOidcEntitlementRefresh,
   getOpenIdIssuer,
   buildOpenIDRefreshParams,
 } = require('@librechat/api');
@@ -274,6 +275,10 @@ const refreshController = async (req, res) => {
     const user = await getUserById(payload.id, AUTH_REFRESH_USER_PROJECTION);
     if (!user) {
       return res.status(401).redirect('/login');
+    }
+
+    if (requiresOidcEntitlementRefresh(user)) {
+      return res.status(403).send('Sign in again with OpenID to refresh this session');
     }
 
     const userId = payload.id;

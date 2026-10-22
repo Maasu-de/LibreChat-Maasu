@@ -3,6 +3,11 @@ import jwt from 'jsonwebtoken';
 import { SystemRoles } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { RefreshTokenset } from './refresh';
+import { isGovernancePilotEnabled } from '../governance/mode';
+
+export function requiresOidcEntitlementRefresh(user: Pick<IUser, 'provider'>): boolean {
+  return isGovernancePilotEnabled() && user.provider === 'openid';
+}
 
 export function hasOidcAdministratorClaim(claims: object): boolean {
   const role = process.env.OPENID_ADMIN_ROLE ?? 'governance-admin';

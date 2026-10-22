@@ -23,6 +23,7 @@ const plain = {
 beforeEach(() => {
   process.env.GOVERNANCE_PILOT_ENABLED = 'true';
   process.env.GOVERNANCE_DLP_ENABLED = 'true';
+  process.env.OPENID_REUSE_TOKENS = 'true';
   process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.OPENAI_MODERATION = 'false';
@@ -435,8 +436,23 @@ describe('pilot configuration', () => {
     process.env.OPENAI_MODERATION = 'true';
     expect(() => restrictGovernanceConfig({})).toThrow(/moderation/);
   });
+  it.each([undefined, '', 'false', 'FALSE', '0'])(
+    'rejects pilot startup when OpenID token reuse is %j',
+    (value) => {
+      if (value === undefined) delete process.env.OPENID_REUSE_TOKENS;
+      else process.env.OPENID_REUSE_TOKENS = value;
+
+      expect(() => restrictGovernanceConfig({})).toThrow(/OPENID_REUSE_TOKENS/);
+    },
+  );
+  it.each(['true', 'TRUE', ' True '])('accepts OpenID token reuse %j', (value) => {
+    process.env.OPENID_REUSE_TOKENS = value;
+
+    expect(() => restrictGovernanceConfig({})).not.toThrow();
+  });
   it('does not change non-pilot configuration', () => {
     delete process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.OPENID_REUSE_TOKENS = 'false';
     const config = { interface: { agents: true } };
     expect(restrictGovernanceConfig(config)).toBe(config);
   });

@@ -1,9 +1,15 @@
 # Governance Gateway pilot
 
 Set `GOVERNANCE_PILOT_ENABLED=true`, `GOVERNANCE_DLP_ENABLED=true`,
+`OPENID_REUSE_TOKENS=true`,
 `GOVERNANCE_API_BASE_URL` (the gateway's `/api/v1/dlp` base URL), and
 `LIBRECHAT_SERVICE_CREDENTIAL`. Keep `OPENAI_MODERATION=false`.
 The gateway repository's Compose deployment fixes these switches for the pilot.
+
+Pilot configuration rejects disabled or missing OpenID token reuse. Every OpenID
+authentication refresh contacts the IdP and synchronizes administrator entitlement.
+OpenID users with older LibreChat refresh sessions must sign in again; those local
+sessions cannot renew credentials in pilot mode, even after token reuse is enabled.
 
 Group and membership auditing uses the same service credential. The audit endpoint
 defaults to the Gateway base URL with `/api/v1/dlp` replaced by
