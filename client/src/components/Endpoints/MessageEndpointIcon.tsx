@@ -28,7 +28,7 @@ function getOpenAIColor(_model: string | null | undefined) {
   if (model && (/\b(o\d)\b/i.test(model) || /\bgpt-[5-9](?:\.\d+)?\b/i.test(model))) {
     return '#010001';
   }
-  return model.includes('gpt-4') ? '#0115e9' : '#191970';
+  return model.includes('gpt-4') ? '#000000' : '#000000';
 }
 
 function getGoogleIcon(model: string | null | undefined, size: number) {
@@ -125,7 +125,7 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
     [EModelEndpoint.azureAssistants]: assistantsIcon,
     [EModelEndpoint.azureOpenAI]: {
       icon: <AzureMinimalIcon size={size * 0.5555555555555556} />,
-      bg: 'linear-gradient(0.375turn, #89cff0, #0115e9)',
+      bg: '#000000',
       name: 'ChatGPT',
     },
     [EModelEndpoint.openAI]: {
@@ -139,12 +139,12 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
     },
     [EModelEndpoint.anthropic]: {
       icon: <AnthropicIcon size={size * 0.5555555555555556} />,
-      bg: '#191970',
+      bg: '#000000',
       name: 'Claude',
     },
     [EModelEndpoint.bedrock]: {
       icon: <BedrockIcon className="icon-xl text-white" />,
-      bg: '#0115e9',
+      bg: '#000000',
       name: alternateName[EModelEndpoint.bedrock],
     },
     [EModelEndpoint.custom]: {
