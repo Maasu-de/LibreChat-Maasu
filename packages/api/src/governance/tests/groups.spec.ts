@@ -215,7 +215,17 @@ describe('GET /api/governance/groups', () => {
     }
   });
 
-  it.each(['Bearer', 'Refresh', 'other', undefined])(
+  it('accepts a signed ID token without a provider-specific type claim', async () => {
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';
+    listGroups.mockResolvedValueOnce([]);
+
+    const response = await getGroups(signToken({ claims: { typ: undefined } }));
+
+    expect(response.status).toBe(200);
+    expect(listGroups).toHaveBeenCalled();
+  });
+
+  it.each(['Bearer', 'Refresh', 'other', null])(
     'rejects token type %s when ID-token claims are authoritative',
     async (typ) => {
       process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';

@@ -44,7 +44,6 @@ const requireAdminAccess = requireCapability(SystemCapabilities.ACCESS_ADMIN);
 const setBalanceConfig = createSetBalanceConfig({
   getAppConfig,
   findBalanceByUser,
-  updateUser,
   upsertBalanceFields,
 });
 

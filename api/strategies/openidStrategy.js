@@ -10,6 +10,7 @@ const {
   isEnabled,
   isGovernancePilotEnabled,
   assertOidcAdministratorConfigured,
+  hasOidcAdministratorClaim,
   logHeaders,
   safeStringify,
   findOpenIDUser,
@@ -730,7 +731,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       adminRoleTokenKind === 'userinfo' ? administratorUserinfo : userinfo,
     );
 
-    let adminRoles = get(adminRoleObject, adminRoleParameterPath);
+    let adminGroups;
 
     // Handle Azure AD group overage for admin role when using ID token groups
     if (adminRoleTokenKind === 'id' && adminRoleParameterPath === 'groups' && adminRoleObject) {
@@ -744,19 +745,12 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
           resolvedOverageGroups ||
           (await resolveGroupsFromOverage(tokenset.access_token, claims.sub));
         if (overageGroups) {
-          adminRoles = overageGroups;
+          adminGroups = overageGroups;
         }
       }
     }
 
-    let adminRoleValues = [];
-    if (Array.isArray(adminRoles)) {
-      adminRoleValues = adminRoles;
-    } else if (typeof adminRoles === 'string') {
-      adminRoleValues = adminRoles.split(/[\s,]+/).filter(Boolean);
-    }
-
-    if (adminRoles && (adminRoles === true || adminRoleValues.includes(adminRole))) {
+    if (hasOidcAdministratorClaim(adminRoleObject ?? {}, adminGroups)) {
       user.role = SystemRoles.ADMIN;
       adminRoleGranted = true;
       logger.info(`[openidStrategy] User ${username} is an admin based on role: ${adminRole}`);

@@ -168,7 +168,7 @@ export function createRequireGovernanceAdminToken({
       !claims?.sub ||
       typeof claims.exp !== 'number' ||
       claims.typ === 'Refresh' ||
-      (source === 'id' && claims.typ !== 'ID') ||
+      (source === 'id' && claims.typ !== undefined && claims.typ !== 'ID') ||
       (source !== 'id' && claims.typ === 'ID') ||
       (claims.azp !== undefined && claims.azp !== audience) ||
       !roleClaims ||

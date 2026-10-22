@@ -24,9 +24,11 @@ export function requiresOidcEntitlementRefresh(user: Pick<IUser, 'provider'>): b
   return isGovernancePilotEnabled() && user.provider === 'openid';
 }
 
-export function hasOidcAdministratorClaim(claims: object): boolean {
+export function hasOidcAdministratorClaim(claims: object, resolvedGroups?: string[]): boolean {
   const role = process.env.OPENID_ADMIN_ROLE ?? 'governance-admin';
-  const value = get(claims, process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH ?? 'realm_access.roles');
+  const value =
+    resolvedGroups ??
+    get(claims, process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH ?? 'realm_access.roles');
   if (value === true) return true;
   const values = typeof value === 'string' ? value.split(/[\s,]+/).filter(Boolean) : value;
   return Array.isArray(values) && values.includes(role);

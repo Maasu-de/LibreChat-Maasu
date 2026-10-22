@@ -28,6 +28,13 @@ it.each([false, null, 'reader', ['reader'], {}])('denies absent entitlement %s',
   expect(hasOidcAdministratorClaim({ company: { permissions: value } })).toBe(false);
 });
 
+it('uses resolved overage groups instead of stale embedded claims', () => {
+  expect(hasOidcAdministratorClaim({}, ['company-admin'])).toBe(true);
+  expect(hasOidcAdministratorClaim({ company: { permissions: ['company-admin'] } }, [])).toBe(
+    false,
+  );
+});
+
 function user(): IUser {
   return {
     _id: new Types.ObjectId(),
