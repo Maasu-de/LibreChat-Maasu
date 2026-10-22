@@ -68,6 +68,17 @@ const emailFinding = (location: string, start: number): GovernanceFinding => ({
   replacement: '[EMAIL]',
 });
 
+const CROSSING_TERMS = 'Project Phoenix Secret';
+
+const termFinding = (location: string, start: number, end: number): GovernanceFinding => ({
+  location,
+  start,
+  end,
+  category: 'TENANT_TERM',
+  action: 'MASK',
+  replacement: '[TERM]',
+});
+
 const sseResponse = (...events: string[]): Response =>
   new Response(events.map((event) => `data: ${event}\n\n`).join(''), {
     status: 200,
@@ -337,6 +348,22 @@ describe('submitted text helpers', () => {
     ];
     expect(maskText(text, findings)).toBe('🙂 [EMAIL] and [EMAIL]');
   });
+
+  it('masks the rest of a crossing finding like the gateway', () => {
+    const findings = [
+      termFinding('/messages/0/content', 0, 15),
+      termFinding('/messages/0/content', 8, 22),
+    ];
+    expect(maskText(CROSSING_TERMS, findings)).toBe('[TERM] [TERM]');
+  });
+
+  it('drops a finding inside an earlier one like the gateway', () => {
+    const findings = [
+      termFinding('/messages/0/content', 0, 7),
+      termFinding('/messages/0/content', 0, 15),
+    ];
+    expect(maskText('Project Phoenix', findings)).toBe('[TERM]');
+  });
 });
 
 describe('createReviewEvent', () => {
@@ -451,6 +478,33 @@ describe('DLP approval flow', () => {
       expiresAt,
     });
     expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it('stores a review of crossing findings that the gateway masked separately', async () => {
+    const crossing = [messages[0], { role: 'user', content: CROSSING_TERMS }];
+    const { onReview, reviews, send } = setup({
+      text: CROSSING_TERMS,
+      responses: [
+        reviewResponse({
+          review_id: 'review-1',
+          action: 'MASK',
+          policy_version: 5,
+          findings: [
+            termFinding('/messages/1/content', 0, 15),
+            termFinding('/messages/1/content', 8, 22),
+          ],
+          messages: [messages[0], { role: 'user', content: '[TERM] [TERM]' }],
+          dlp_token: 'approval-token',
+          expires_at: Math.floor(Date.now() / 1000) + 600,
+        }),
+      ],
+    });
+
+    const response = await send(crossing);
+
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
+    expect(onReview).toHaveBeenCalledTimes(1);
+    expect(reviews.entries.get('review-1')?.text).toBe('[TERM] [TERM]');
   });
 
   it('rejects a review whose findings are all outside the submitted text, without approving it', async () => {
