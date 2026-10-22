@@ -25,7 +25,8 @@ export function hasGovernanceTokenSource(
   const accessHeader = typeof headerType === 'string' && headerType.toLowerCase() === 'at+jwt';
   if (claims.token_use !== undefined && claims.token_use !== expected) return false;
   if (accessHeader && expected !== 'access') return false;
-  if (Object.hasOwn(claims, 'typ')) return claims.typ === (source === 'id' ? 'ID' : 'Bearer');
+  if (Object.prototype.hasOwnProperty.call(claims, 'typ'))
+    return claims.typ === (source === 'id' ? 'ID' : 'Bearer');
   if (claims.token_use === 'id' || claims.token_use === 'access')
     return claims.token_use === expected;
   if (accessHeader) return expected === 'access';
