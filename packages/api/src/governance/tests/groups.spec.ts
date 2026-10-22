@@ -4,6 +4,7 @@ import jwksRsa from 'jwks-rsa';
 import request from 'supertest';
 import { Types } from 'mongoose';
 import { generateKeyPairSync } from 'crypto';
+import { createHmac } from 'node:crypto';
 import { getTenantId, SYSTEM_TENANT_ID } from '@librechat/data-schemas';
 import type { GovernanceGroupsDeps } from '../groups';
 import {
@@ -68,8 +69,9 @@ app.get(
   createListGovernanceGroups({ listGroups }),
 );
 
-const getGroups = (token?: string) => {
+const getGroups = (token?: string, proof?: string) => {
   const req = request(app).get('/api/governance/groups');
+  if (proof) req.set('X-Governance-Token-Proof', proof);
   return token ? req.set('Authorization', `Bearer ${token}`) : req;
 };
 
@@ -215,14 +217,19 @@ describe('GET /api/governance/groups', () => {
     }
   });
 
-  it('accepts a signed ID token without a provider-specific type claim', async () => {
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';
-    listGroups.mockResolvedValueOnce([]);
-
-    const response = await getGroups(signToken({ claims: { typ: undefined } }));
-
-    expect(response.status).toBe(200);
-    expect(listGroups).toHaveBeenCalled();
+  it.each(['access', 'id'])('requires a Gateway proof for untyped %s tokens', async (source) => {
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
+    process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'test-credential';
+    listGroups.mockResolvedValue([]);
+    const token = signToken({ claims: { typ: undefined } });
+    expect((await getGroups(token)).status).toBe(401);
+    const issuedAt = Math.floor(Date.now() / 1000).toString();
+    const proof = createHmac('sha256', 'test-credential')
+      .update(`governance-admin-token:v1\n${source}\n${issuedAt}\n${token}`)
+      .digest('base64url');
+    expect((await getGroups(token, `${issuedAt}.${proof}`)).status).toBe(200);
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source === 'id' ? 'access' : 'id';
+    expect((await getGroups(token, `${issuedAt}.${proof}`)).status).toBe(401);
   });
 
   it.each(['Bearer', 'Refresh', 'other', null])(

@@ -91,6 +91,7 @@ jest.mock('~/cache/getLogStores', () =>
 jest.mock('~/strategies', () => ({
   getOpenIdConfig: jest.fn(),
   getUserInfo: jest.fn(),
+  resolveGroupsFromOverage: jest.fn(),
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -110,7 +111,7 @@ const {
   syncOidcAdministrator,
   buildOpenIDRefreshParams,
 } = require('@librechat/api');
-const { getOpenIdConfig, getUserInfo } = require('~/strategies');
+const { getOpenIdConfig, getUserInfo, resolveGroupsFromOverage } = require('~/strategies');
 const { updateUser } = require('~/models');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const adminAuthRouter = require('./auth');
@@ -225,6 +226,7 @@ describe('admin auth OpenID refresh route', () => {
       tokenset,
       updateUser,
       expect.any(Function),
+      resolveGroupsFromOverage,
     );
     const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
     await fetchUserInfo(tokenset.access_token, 'admin-openid-id');

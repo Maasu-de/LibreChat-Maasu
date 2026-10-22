@@ -6,6 +6,7 @@ import type { IGroup } from '@librechat/data-schemas';
 import type { JwtPayload } from 'jsonwebtoken';
 import { hasOidcAdministratorClaim } from '../auth/administrator';
 import { normalizeOpenIdIssuer } from '../auth/openid';
+import { hasGovernanceTokenSource } from './token';
 
 const PAGE_SIZE = 200;
 const JWKS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -102,11 +103,12 @@ async function verifyAdminToken(
 
 /**
  * Authorizes the trusted Admin Panel server by verifying its admin's own
- * Keycloak access token against the shared realm's JWKS -- the same token
+ * selected OIDC token against the issuer's JWKS -- the same token
  * already authenticating that admin's policy-version calls (see
  * authenticate_administrator in the governance backend) -- rather than
- * requiring a LibreChat user session. There is no LibreChat account behind
- * this call, so it deliberately skips LibreChat's own user lookup.
+ * requiring a LibreChat user session. Untyped tokens additionally require the
+ * Gateway's source attestation. There is no LibreChat account behind this call,
+ * so it deliberately skips LibreChat's own user lookup.
  */
 export function createRequireGovernanceAdminToken({
   exchangeAccessToken,
@@ -167,9 +169,13 @@ export function createRequireGovernanceAdminToken({
     if (
       !claims?.sub ||
       typeof claims.exp !== 'number' ||
-      claims.typ === 'Refresh' ||
-      (source === 'id' && claims.typ !== undefined && claims.typ !== 'ID') ||
-      (source !== 'id' && claims.typ === 'ID') ||
+      !hasGovernanceTokenSource(
+        token,
+        claims,
+        jwt.decode(token, { complete: true })?.header.typ,
+        source,
+        req.get('x-governance-token-proof'),
+      ) ||
       (claims.azp !== undefined && claims.azp !== audience) ||
       !roleClaims ||
       !hasOidcAdministratorClaim(roleClaims)

@@ -34,12 +34,41 @@ export function hasOidcAdministratorClaim(claims: object, resolvedGroups?: strin
   return Array.isArray(values) && values.includes(role);
 }
 
+type ResolveAdministratorGroups = (
+  accessToken: string,
+  subject: string,
+) => Promise<string[] | null>;
+
+export async function resolveOidcAdministratorGroups(
+  claims: object,
+  accessToken: string | undefined,
+  subject: string | undefined,
+  resolveGroups?: ResolveAdministratorGroups,
+): Promise<string[] | undefined> {
+  if (
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND !== 'id' ||
+    process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH !== 'groups'
+  )
+    return;
+  const groupSource: string | undefined = get(claims, '_claim_names.groups');
+  const hasOverage =
+    get(claims, 'hasgroups') || (groupSource && get(claims, ['_claim_sources', groupSource]));
+  if (!hasOverage) return;
+  if (!accessToken || !subject || !resolveGroups) {
+    throw new Error('OIDC administrator group resolution unavailable');
+  }
+  const groups = await resolveGroups(accessToken, subject);
+  if (!groups) throw new Error('OIDC administrator group resolution unavailable');
+  return groups;
+}
+
 /** Tokensets must come from the validated OIDC login or refresh grant. */
 export async function syncOidcAdministrator(
   user: IUser,
   tokenset: RefreshTokenset,
   updateUser: (id: string, data: Partial<IUser>) => Promise<IUser | null>,
   getUserInfo?: (accessToken: string, subject: string) => Promise<{ sub?: string } | null>,
+  resolveGroups?: ResolveAdministratorGroups,
 ): Promise<void> {
   assertOidcAdministratorConfigured();
   if (!process.env.OPENID_ADMIN_ROLE) return;
@@ -58,8 +87,14 @@ export async function syncOidcAdministrator(
     claims = info;
   } else throw new Error('Unsupported OIDC administrator source');
   if (!claims) throw new Error('Missing OIDC administrator claims');
+  const groups = await resolveOidcAdministratorGroups(
+    claims,
+    tokenset.access_token,
+    tokenset.claims().sub,
+    resolveGroups,
+  );
   let role = user.role;
-  if (hasOidcAdministratorClaim(claims)) role = SystemRoles.ADMIN;
+  if (hasOidcAdministratorClaim(claims, groups)) role = SystemRoles.ADMIN;
   else if (role === SystemRoles.ADMIN) role = SystemRoles.USER;
   if (role === user.role) return;
   const updated = await updateUser(user._id.toString(), { role });

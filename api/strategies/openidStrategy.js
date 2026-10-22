@@ -11,6 +11,7 @@ const {
   isGovernancePilotEnabled,
   assertOidcAdministratorConfigured,
   hasOidcAdministratorClaim,
+  resolveOidcAdministratorGroups,
   logHeaders,
   safeStringify,
   findOpenIDUser,
@@ -731,24 +732,13 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       adminRoleTokenKind === 'userinfo' ? administratorUserinfo : userinfo,
     );
 
-    let adminGroups;
-
-    // Handle Azure AD group overage for admin role when using ID token groups
-    if (adminRoleTokenKind === 'id' && adminRoleParameterPath === 'groups' && adminRoleObject) {
-      const hasAdminOverage =
-        adminRoleObject.hasgroups ||
-        (adminRoleObject._claim_names?.groups &&
-          adminRoleObject._claim_sources?.[adminRoleObject._claim_names.groups]);
-
-      if (hasAdminOverage) {
-        const overageGroups =
-          resolvedOverageGroups ||
-          (await resolveGroupsFromOverage(tokenset.access_token, claims.sub));
-        if (overageGroups) {
-          adminGroups = overageGroups;
-        }
-      }
-    }
+    const adminGroups = await resolveOidcAdministratorGroups(
+      adminRoleObject ?? {},
+      tokenset.access_token,
+      claims.sub,
+      async (accessToken, subject) =>
+        resolvedOverageGroups ?? resolveGroupsFromOverage(accessToken, subject),
+    );
 
     if (hasOidcAdministratorClaim(adminRoleObject ?? {}, adminGroups)) {
       user.role = SystemRoles.ADMIN;
@@ -990,4 +980,5 @@ module.exports = {
   getRoleSource,
   getUserInfo,
   exchangeAccessTokenIfNeeded,
+  resolveGroupsFromOverage,
 };

@@ -1,5 +1,17 @@
 # Governance Gateway pilot
 
+Governance cross-system JWTs without a signed token-kind discriminator require
+the Gateway's `X-Governance-Token-Proof` header. The server-generated HMAC binds
+the selected token and configured source to a 60-second validity window using
+`LIBRECHAT_SERVICE_CREDENTIAL`, shared with Gateway web and backend. OIDC signature,
+issuer, audience, expiry and entitlement checks still apply. Signed Keycloak
+`typ`, provider `token_use`, and access-token `at+jwt` header discriminators remain
+supported without a proof. Conflicting signed type markers are rejected.
+
+Entra administrator group-overage claims are resolved on login and both chat and
+admin refresh paths. A confirmed missing group removes administrator access;
+an unavailable Graph lookup denies refresh without persisting a role change.
+
 Set `GOVERNANCE_PILOT_ENABLED=true`, `GOVERNANCE_DLP_ENABLED=true`,
 `OPENID_REUSE_TOKENS=true`,
 `GOVERNANCE_API_BASE_URL` (the gateway's `/api/v1/dlp` base URL), and

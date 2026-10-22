@@ -36,7 +36,7 @@ const {
 } = require('~/models');
 const { getAppConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
-const { getOpenIdConfig, getUserInfo } = require('~/strategies');
+const { getOpenIdConfig, getUserInfo, resolveGroupsFromOverage } = require('~/strategies');
 const middleware = require('~/server/middleware');
 
 const requireAdminAccess = requireCapability(SystemCapabilities.ACCESS_ADMIN);
@@ -577,8 +577,12 @@ router.post(
             findUsers,
             getUserById,
             synchronizeAdministrator: (user, refreshed) =>
-              syncOidcAdministrator(user, refreshed, updateUser, (accessToken, subject) =>
-                getUserInfo(openIdConfig, accessToken, subject),
+              syncOidcAdministrator(
+                user,
+                refreshed,
+                updateUser,
+                (accessToken, subject) => getUserInfo(openIdConfig, accessToken, subject),
+                resolveGroupsFromOverage,
               ),
             canAccessAdmin: async (user) => {
               try {

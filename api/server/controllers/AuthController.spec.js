@@ -16,6 +16,7 @@ jest.mock('~/strategies', () => ({
   getOpenIdConfig: jest.fn(),
   getOpenIdEmail: jest.fn(),
   getUserInfo: jest.fn(),
+  resolveGroupsFromOverage: jest.fn(),
 }));
 jest.mock('openid-client', () => ({ refreshTokenGrant: jest.fn() }));
 jest.mock('~/models', () => ({
@@ -62,7 +63,12 @@ const {
   setCloudFrontAuthCookies,
   setAuthTokens,
 } = require('~/server/services/AuthService');
-const { getOpenIdConfig, getOpenIdEmail, getUserInfo } = require('~/strategies');
+const {
+  getOpenIdConfig,
+  getOpenIdEmail,
+  getUserInfo,
+  resolveGroupsFromOverage,
+} = require('~/strategies');
 const { getUserById, findSession, updateUser } = require('~/models');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
@@ -323,6 +329,7 @@ describe('refreshController – OpenID path', () => {
       mockTokenset,
       updateUser,
       expect.any(Function),
+      resolveGroupsFromOverage,
     );
     const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
     await fetchUserInfo('refreshed-access-token', baseClaims.sub);
