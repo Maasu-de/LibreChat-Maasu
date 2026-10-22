@@ -9,8 +9,8 @@ import type {
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { TranslationKeys } from '~/hooks';
+import { cn, getApprovedDlpText } from '~/utils';
 import { useLocalize } from '~/hooks';
-import { cn } from '~/utils';
 
 type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: boolean };
 
@@ -135,9 +135,7 @@ export default function DlpInterventionDialog({
     () => buildFindingSegments(originalText, result.findings),
     [originalText, result.findings],
   );
-  const maskedText = result.maskedPreview?.find(
-    (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
-  )?.text;
+  const maskedText = getApprovedDlpText(result);
   const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
   const maskedSegments = useMemo(
     () => buildReplacementSegments(maskedText ?? '', result.findings),
