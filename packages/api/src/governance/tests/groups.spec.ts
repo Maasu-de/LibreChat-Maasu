@@ -169,6 +169,38 @@ describe('GET /api/governance/groups', () => {
     }
   });
 
+  it.each(['Bearer', 'Refresh', 'other', undefined])(
+    'rejects token type %s when ID-token claims are authoritative',
+    async (typ) => {
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';
+
+      const response = await getGroups(signToken({ claims: { typ } }));
+
+      expect(response.status).toBe(401);
+      expect(listGroups).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['access', 'userinfo'])(
+    'rejects ID tokens when %s claims are authoritative',
+    async (source) => {
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
+      const userinfo = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(
+          Response.json({ sub: 'admin-subject', realm_access: { roles: [ADMIN_ROLE] } }),
+        );
+      try {
+        const response = await getGroups(signToken({ typ: 'ID' }));
+
+        expect(response.status).toBe(401);
+        expect(listGroups).not.toHaveBeenCalled();
+      } finally {
+        userinfo.mockRestore();
+      }
+    },
+  );
+
   it('preserves a customer issuer trailing slash from validated discovery metadata', async () => {
     const issuer = 'https://identity.company.test/';
     process.env.OPENID_ISSUER = issuer;

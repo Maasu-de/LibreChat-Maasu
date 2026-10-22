@@ -43,6 +43,7 @@ jest.mock('@librechat/api', () => {
     tenantContextMiddleware: jest.fn((req, res, next) => next()),
     preAuthTenantMiddleware: jest.fn((req, res, next) => next()),
     applyAdminRefresh: jest.fn(),
+    syncOidcAdministrator: jest.fn(),
     AdminRefreshError,
     buildOpenIDRefreshParams: jest.fn(() => {
       const params = {};
@@ -75,6 +76,7 @@ jest.mock('~/models', () => ({
   findUsers: jest.fn(),
   generateToken: jest.fn(() => Promise.resolve('minted-token')),
   getUserById: jest.fn(),
+  updateUser: jest.fn(),
   upsertBalanceFields: jest.fn(),
 }));
 
@@ -91,6 +93,7 @@ jest.mock('~/cache/getLogStores', () =>
 
 jest.mock('~/strategies', () => ({
   getOpenIdConfig: jest.fn(),
+  getUserInfo: jest.fn(),
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -104,8 +107,14 @@ jest.mock('~/server/middleware', () => ({
 
 const openIdClient = require('openid-client');
 const { logger } = require('@librechat/data-schemas');
-const { isEnabled, applyAdminRefresh, buildOpenIDRefreshParams } = require('@librechat/api');
-const { getOpenIdConfig } = require('~/strategies');
+const {
+  isEnabled,
+  applyAdminRefresh,
+  syncOidcAdministrator,
+  buildOpenIDRefreshParams,
+} = require('@librechat/api');
+const { getOpenIdConfig, getUserInfo } = require('~/strategies');
+const { updateUser } = require('~/models');
 const adminAuthRouter = require('./auth');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
@@ -201,6 +210,30 @@ describe('admin auth OpenID refresh route', () => {
       tokenset,
       expect.any(Object),
       expect.objectContaining({ previousRefreshToken: 'incoming-refresh-token' }),
+    );
+  });
+
+  it('uses the configured userinfo helper during administrator synchronization', async () => {
+    const response = await request(app)
+      .post('/api/admin/oauth/refresh')
+      .send({ refresh_token: 'incoming-refresh-token' });
+
+    expect(response.status).toBe(200);
+    const actor = { _id: 'user-id' };
+    const { synchronizeAdministrator } = applyAdminRefresh.mock.calls[0][1];
+    await synchronizeAdministrator(actor, tokenset);
+    expect(syncOidcAdministrator).toHaveBeenCalledWith(
+      actor,
+      tokenset,
+      updateUser,
+      expect.any(Function),
+    );
+    const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
+    await fetchUserInfo(tokenset.access_token, 'admin-openid-id');
+    expect(getUserInfo).toHaveBeenCalledWith(
+      openIdConfig,
+      tokenset.access_token,
+      'admin-openid-id',
     );
   });
 

@@ -48,10 +48,8 @@ it.each(['access', 'id', 'userinfo'])('removes stored ADMIN on next %s refresh',
   process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
   const actor = user();
   const update = jest.fn(async () => actor);
-  jest
-    .spyOn(global, 'fetch')
-    .mockResolvedValue(Response.json({ sub: 'subject', company: { permissions: [] } }));
-  await syncOidcAdministrator(actor, tokens([]), update, 'https://id.example/userinfo');
+  const getUserInfo = jest.fn(async () => ({ sub: 'subject', company: { permissions: [] } }));
+  await syncOidcAdministrator(actor, tokens([]), update, getUserInfo);
   expect(actor.role).toBe('USER');
   expect(update).toHaveBeenCalledWith(actor._id.toString(), { role: 'USER' });
 });
@@ -80,14 +78,66 @@ it('synchronizes before deciding whether to mint an admin bearer', async () => {
 
 it('rejects userinfo for a different subject', async () => {
   process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
-  jest
-    .spyOn(global, 'fetch')
-    .mockResolvedValue(
-      Response.json({ sub: 'other', company: { permissions: ['company-admin'] } }),
-    );
+  const getUserInfo = async () => ({ sub: 'other', company: { permissions: ['company-admin'] } });
   const update = jest.fn();
+  await expect(syncOidcAdministrator(user(), tokens([]), update, getUserInfo)).rejects.toThrow(
+    'subject mismatch',
+  );
+  expect(update).not.toHaveBeenCalled();
+});
+
+it('uses provider userinfo instead of token roles to grant administrator access', async () => {
+  process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+  const actor = user();
+  actor.role = 'USER';
+  const refreshed = tokens([]);
+  const update = jest.fn(async () => actor);
+  const getUserInfo = jest.fn(async () => ({
+    sub: 'subject',
+    company: { permissions: ['company-admin'] },
+  }));
+
+  await syncOidcAdministrator(actor, refreshed, update, getUserInfo);
+
+  expect(getUserInfo).toHaveBeenCalledWith(refreshed.access_token, 'subject');
+  expect(actor.role).toBe('ADMIN');
+  expect(update).toHaveBeenCalledWith(actor._id.toString(), { role: 'ADMIN' });
+});
+
+it('does not mint an admin bearer when provider userinfo is unavailable', async () => {
+  process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+  const actor = user();
+  const update = jest.fn(async () => actor);
+  const mintToken = jest.fn();
+
   await expect(
-    syncOidcAdministrator(user(), tokens([]), update, 'https://id.example/userinfo'),
-  ).rejects.toThrow('subject mismatch');
+    applyAdminRefresh(
+      tokens(['company-admin']),
+      {
+        findUsers: async () => [actor],
+        getUserById: async () => actor,
+        mintToken,
+        synchronizeAdministrator: (resolved, refreshed) =>
+          syncOidcAdministrator(resolved, refreshed, update, async () => null),
+      },
+      { userId: actor._id.toString(), expectedIssuer: actor.openidIssuer },
+    ),
+  ).rejects.toThrow('OIDC userinfo unavailable');
+
+  expect(update).not.toHaveBeenCalled();
+  expect(mintToken).not.toHaveBeenCalled();
+});
+
+it('rejects missing subjects before requesting userinfo', async () => {
+  process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+  const refreshed = { ...tokens([]), claims: () => ({}) };
+  const getUserInfo = jest.fn();
+  const update = jest.fn();
+
+  await expect(syncOidcAdministrator(user(), refreshed, update, getUserInfo)).rejects.toThrow(
+    'Missing OIDC subject',
+  );
+
+  expect(getUserInfo).not.toHaveBeenCalled();
   expect(update).not.toHaveBeenCalled();
 });

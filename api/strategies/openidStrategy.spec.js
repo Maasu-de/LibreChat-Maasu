@@ -8,10 +8,11 @@ const {
   resolveAppConfigForUser,
   getOpenIdIssuer,
   isEnabled,
+  syncOidcAdministrator,
 } = require('@librechat/api');
 const { resizeAvatar } = require('~/server/services/Files/images/avatar');
 const { getAppConfig } = require('~/server/services/Config');
-const { setupOpenId } = require('./openidStrategy');
+const { setupOpenId, getOpenIdConfig, getUserInfo } = require('./openidStrategy');
 
 const mockCloudfrontFileSource = FileSources.cloudfront ?? 'cloudfront';
 
@@ -283,6 +284,60 @@ describe('setupOpenId', () => {
     // Call the setup function and capture the verify callback for the regular 'openid' strategy.
     await setupOpenId();
     verifyCallback = require('openid-client/passport').__getVerifyCallbackByName('openid');
+  });
+
+  describe('administrator userinfo refresh', () => {
+    it.each([
+      [['admin'], 'USER', 'ADMIN'],
+      [[], 'ADMIN', 'USER'],
+    ])('synchronizes roles %j through OBO', async (permissions, initialRole, expectedRole) => {
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+      process.env.OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED = 'true';
+      process.env.OPENID_ON_BEHALF_FLOW_USERINFO_SCOPE = 'custom.userinfo';
+      const user = { _id: 'user-id', role: initialRole };
+      const client = require('openid-client');
+      client.fetchUserInfo.mockResolvedValueOnce({ sub: '1234', permissions });
+
+      await syncOidcAdministrator(user, tokenset, updateUser, (accessToken, subject) =>
+        getUserInfo(getOpenIdConfig(), accessToken, subject),
+      );
+
+      expect(client.genericGrantRequest).toHaveBeenCalledWith(
+        getOpenIdConfig(),
+        'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        {
+          scope: 'custom.userinfo',
+          assertion: tokenset.access_token,
+          requested_token_use: 'on_behalf_of',
+        },
+      );
+      expect(client.fetchUserInfo).toHaveBeenCalledWith(
+        getOpenIdConfig(),
+        'exchanged_graph_token',
+        '1234',
+      );
+      expect(user.role).toBe(expectedRole);
+      expect(updateUser).toHaveBeenCalledWith('user-id', { role: expectedRole });
+    });
+
+    it('rejects refresh when the required token exchange fails', async () => {
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+      process.env.OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED = 'true';
+      const client = require('openid-client');
+      client.genericGrantRequest.mockRejectedValueOnce(new Error('OBO unavailable'));
+
+      await expect(
+        syncOidcAdministrator(
+          { _id: 'user-id', role: 'ADMIN' },
+          tokenset,
+          updateUser,
+          (accessToken, subject) => getUserInfo(getOpenIdConfig(), accessToken, subject),
+        ),
+      ).rejects.toThrow('OIDC userinfo unavailable');
+
+      expect(client.fetchUserInfo).not.toHaveBeenCalled();
+      expect(updateUser).not.toHaveBeenCalled();
+    });
   });
 
   describe('admin first sign-in', () => {

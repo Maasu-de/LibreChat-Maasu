@@ -12,7 +12,11 @@ jest.mock('~/server/services/AuthService', () => ({
   setAuthTokens: jest.fn(),
   registerUser: jest.fn(),
 }));
-jest.mock('~/strategies', () => ({ getOpenIdConfig: jest.fn(), getOpenIdEmail: jest.fn() }));
+jest.mock('~/strategies', () => ({
+  getOpenIdConfig: jest.fn(),
+  getOpenIdEmail: jest.fn(),
+  getUserInfo: jest.fn(),
+}));
 jest.mock('openid-client', () => ({ refreshTokenGrant: jest.fn() }));
 jest.mock('~/models', () => ({
   deleteAllUserSessions: jest.fn(),
@@ -55,7 +59,7 @@ const {
   setCloudFrontAuthCookies,
   setAuthTokens,
 } = require('~/server/services/AuthService');
-const { getOpenIdConfig, getOpenIdEmail } = require('~/strategies');
+const { getOpenIdConfig, getOpenIdEmail, getUserInfo } = require('~/strategies');
 const { getUserById, findSession, updateUser } = require('~/models');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
@@ -316,7 +320,14 @@ describe('refreshController – OpenID path', () => {
       expect.objectContaining({ openidId: baseClaims.sub }),
       mockTokenset,
       updateUser,
-      undefined,
+      expect.any(Function),
+    );
+    const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
+    await fetchUserInfo('refreshed-access-token', baseClaims.sub);
+    expect(getUserInfo).toHaveBeenCalledWith(
+      getOpenIdConfig(),
+      'refreshed-access-token',
+      baseClaims.sub,
     );
     expect(syncOidcAdministrator.mock.invocationCallOrder[0]).toBeLessThan(
       setOpenIDAuthTokens.mock.invocationCallOrder[0],

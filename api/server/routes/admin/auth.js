@@ -35,7 +35,7 @@ const {
 } = require('~/models');
 const { getAppConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
-const { getOpenIdConfig } = require('~/strategies');
+const { getOpenIdConfig, getUserInfo } = require('~/strategies');
 const middleware = require('~/server/middleware');
 
 const requireAdminAccess = requireCapability(SystemCapabilities.ACCESS_ADMIN);
@@ -577,11 +577,8 @@ router.post(
             findUsers,
             getUserById,
             synchronizeAdministrator: (user, refreshed) =>
-              syncOidcAdministrator(
-                user,
-                refreshed,
-                updateUser,
-                openIdConfig.serverMetadata?.()?.userinfo_endpoint,
+              syncOidcAdministrator(user, refreshed, updateUser, (accessToken, subject) =>
+                getUserInfo(openIdConfig, accessToken, subject),
               ),
             canAccessAdmin: async (user) => {
               try {

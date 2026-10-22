@@ -26,7 +26,7 @@ const {
   findUser,
 } = require('~/models');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
-const { getOpenIdConfig, getOpenIdEmail } = require('~/strategies');
+const { getOpenIdConfig, getOpenIdEmail, getUserInfo } = require('~/strategies');
 
 const AUTH_REFRESH_USER_PROJECTION = '-password -__v -totpSecret -backupCodes -federatedTokens';
 const OPENID_REUSE_EXPIRY_BUFFER_SECONDS = 30;
@@ -246,11 +246,8 @@ const refreshController = async (req, res) => {
         );
       }
 
-      await syncOidcAdministrator(
-        user,
-        tokenset,
-        updateUser,
-        openIdConfig.serverMetadata?.()?.userinfo_endpoint,
+      await syncOidcAdministrator(user, tokenset, updateUser, (accessToken, subject) =>
+        getUserInfo(openIdConfig, accessToken, subject),
       );
 
       const token = setOpenIDAuthTokens(tokenset, req, res, {

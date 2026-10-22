@@ -17,7 +17,7 @@ export async function syncOidcAdministrator(
   user: IUser,
   tokenset: RefreshTokenset,
   updateUser: (id: string, data: Partial<IUser>) => Promise<IUser | null>,
-  userinfoEndpoint?: string,
+  getUserInfo?: (accessToken: string, subject: string) => Promise<{ sub?: string } | null>,
 ): Promise<void> {
   if (!process.env.OPENID_ADMIN_ROLE) return;
   const source = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? 'access';
@@ -26,14 +26,12 @@ export async function syncOidcAdministrator(
   else if (source === 'access') {
     const decoded = tokenset.access_token ? jwt.decode(tokenset.access_token) : null;
     claims = typeof decoded === 'object' ? decoded : null;
-  } else if (source === 'userinfo' && userinfoEndpoint && tokenset.access_token) {
-    const response = await fetch(userinfoEndpoint, {
-      headers: { authorization: `Bearer ${tokenset.access_token}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) throw new Error('OIDC userinfo unavailable');
-    const info = (await response.json()) as { sub?: string };
-    if (info.sub !== tokenset.claims().sub) throw new Error('OIDC subject mismatch');
+  } else if (source === 'userinfo' && getUserInfo && tokenset.access_token) {
+    const subject = tokenset.claims().sub;
+    if (!subject) throw new Error('Missing OIDC subject');
+    const info = await getUserInfo(tokenset.access_token, subject);
+    if (!info) throw new Error('OIDC userinfo unavailable');
+    if (info.sub !== subject) throw new Error('OIDC subject mismatch');
     claims = info;
   } else throw new Error('Unsupported OIDC administrator source');
   if (!claims) throw new Error('Missing OIDC administrator claims');

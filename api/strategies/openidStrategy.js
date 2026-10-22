@@ -992,4 +992,5 @@ module.exports = {
   getOpenIdConfig,
   getOpenIdEmail,
   getRoleSource,
+  getUserInfo,
 };
