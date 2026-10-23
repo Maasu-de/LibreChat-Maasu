@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
 import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
@@ -12,7 +12,10 @@ import type { TranslationKeys } from '~/hooks';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
-type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: boolean };
+/** A finding covering a text segment, underlined on row `lane`; `ends` marks its last segment. */
+type SegmentFinding = { finding: GovernanceFinding; lane: number; ends: boolean };
+type TextSegment = { text: string; findings?: SegmentFinding[]; replacement?: boolean };
+type FindingTerm = { finding: GovernanceFinding; term?: string };
 
 const label = (category: string) => category.replaceAll('_', ' ');
 
@@ -49,36 +52,68 @@ const ACTION_CLASS: Record<GovernanceDecision, string> = {
     'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200',
 };
 
+const byPosition = (a: GovernanceFinding, b: GovernanceFinding) =>
+  a.start - b.start || b.end - a.end;
+
+const isInText = (chars: string[], f: GovernanceFinding) =>
+  f.location === GOVERNANCE_DLP_TEXT_LOCATION &&
+  f.start >= 0 &&
+  f.end > f.start &&
+  f.start < chars.length;
+
+/**
+ * Splits the text at every finding boundary. Each finding keeps its whole span on the first
+ * underline row that is free there, so overlapping findings are each underlined in full.
+ */
 export function buildFindingSegments(text: string, findings: GovernanceFinding[]): TextSegment[] {
   const chars = Array.from(text);
-  const relevant = findings
-    .filter(
-      (f) =>
-        f.location === GOVERNANCE_DLP_TEXT_LOCATION &&
-        f.start >= 0 &&
-        f.end > f.start &&
-        f.start < chars.length,
-    )
-    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const laneEnds: number[] = [];
+  const laned = findings
+    .filter((f) => isInText(chars, f))
+    .map((f) => (f.end > chars.length ? { ...f, end: chars.length } : f))
+    .sort(byPosition)
+    .map((finding) => {
+      const free = laneEnds.findIndex((end) => end <= finding.start);
+      const lane = free === -1 ? laneEnds.length : free;
+      laneEnds[lane] = finding.end;
+      return { finding, lane };
+    });
+  if (laned.length === 0) {
+    return [{ text }];
+  }
+
+  const boundaries = [
+    ...new Set([0, chars.length, ...laned.flatMap(({ finding }) => [finding.start, finding.end])]),
+  ].sort((a, b) => a - b);
 
   const segments: TextSegment[] = [];
-  let cursor = 0;
-  for (const finding of relevant) {
-    const start = Math.max(cursor, finding.start);
-    const end = Math.min(chars.length, finding.end);
-    if (start >= end) {
-      continue;
+  let active: Omit<SegmentFinding, 'ends'>[] = [];
+  let next = 0;
+  for (let i = 1; i < boundaries.length; i++) {
+    const from = boundaries[i - 1];
+    const to = boundaries[i];
+    active = active.filter(({ finding }) => finding.end > from);
+    while (next < laned.length && laned[next].finding.start === from) {
+      active.push(laned[next++]);
     }
-    if (start > cursor) {
-      segments.push({ text: chars.slice(cursor, start).join('') });
+    const segment: TextSegment = { text: chars.slice(from, to).join('') };
+    if (active.length) {
+      segment.findings = active
+        .map((f) => ({ ...f, ends: f.finding.end === to }))
+        .sort((a, b) => a.lane - b.lane);
     }
-    segments.push({ text: chars.slice(start, end).join(''), finding });
-    cursor = end;
+    segments.push(segment);
   }
-  if (cursor < chars.length) {
-    segments.push({ text: chars.slice(cursor).join('') });
-  }
-  return segments.length ? segments : [{ text }];
+  return segments;
+}
+
+/** Every finding in text order, with the submitted text it covers when it lies in that text. */
+export function buildFindingTerms(text: string, findings: GovernanceFinding[]): FindingTerm[] {
+  const chars = Array.from(text);
+  return [...findings].sort(byPosition).map((finding) => ({
+    finding,
+    term: isInText(chars, finding) ? chars.slice(finding.start, finding.end).join('') : undefined,
+  }));
 }
 
 /** Groups file findings by file, keeping the order in which the files first appear. */
@@ -131,8 +166,14 @@ export default function DlpInterventionDialog({
     const key = CATEGORY_COPY[category];
     return key ? localize(key) : label(category);
   };
+  const findingLabel = ({ category, replacement }: GovernanceFinding) =>
+    `${categoryLabel(category)}${replacement ? ` → ${replacement}` : ''}`;
   const originalSegments = useMemo(
     () => buildFindingSegments(originalText, result.findings),
+    [originalText, result.findings],
+  );
+  const findingTerms = useMemo(
+    () => buildFindingTerms(originalText, result.findings),
     [originalText, result.findings],
   );
   const maskedText = result.maskedPreview?.find(
@@ -154,7 +195,7 @@ export default function DlpInterventionDialog({
       <h3 className="mb-2 text-sm font-semibold text-text-primary">{heading}</h3>
       <div className={cn('whitespace-pre-wrap rounded-lg border p-3 text-sm', className)}>
         {segments.map((segment, index) =>
-          segment.finding || segment.replacement ? (
+          segment.findings || segment.replacement ? (
             highlight(segment, index)
           ) : (
             <span key={index}>{segment.text}</span>
@@ -183,17 +224,36 @@ export default function DlpInterventionDialog({
             )}
             {textBlock(
               localize('com_ui_dlp_original_prompt'),
-              'border-border-light bg-surface-secondary text-text-primary',
+              'border-border-light bg-surface-secondary leading-7 text-text-primary',
               originalSegments,
               (segment, index) => (
-                <mark
-                  key={index}
-                  title={categoryLabel(segment.finding!.category)}
-                  className="rounded bg-amber-200 px-0.5 text-gray-950 outline outline-1 outline-amber-500 dark:bg-amber-700 dark:text-white"
-                >
-                  {segment.text}
-                  <span className="sr-only"> ({categoryLabel(segment.finding!.category)})</span>
-                </mark>
+                <Fragment key={index}>
+                  {segment.findings!.reduce<ReactNode>(
+                    (content, { lane }) => (
+                      <span
+                        className="border-b-2 border-amber-600 dark:border-amber-400"
+                        style={{ paddingBottom: 1 + lane * 4 }}
+                      >
+                        {content}
+                      </span>
+                    ),
+                    <mark
+                      title={segment
+                        .findings!.map(({ finding }) => findingLabel(finding))
+                        .join('\n')}
+                      className="bg-amber-200 text-gray-950 dark:bg-amber-700 dark:text-white"
+                    >
+                      {segment.text}
+                      {segment.findings!.map(({ finding, ends }, i) =>
+                        ends ? (
+                          <span key={i} className="sr-only">
+                            {` (${categoryLabel(finding.category)})`}
+                          </span>
+                        ) : null,
+                      )}
+                    </mark>,
+                  )}
+                </Fragment>
               ),
             )}
 
@@ -202,17 +262,24 @@ export default function DlpInterventionDialog({
                 <h3 className="mb-2 text-sm font-semibold text-text-primary">
                   {localize('com_ui_dlp_findings')}
                 </h3>
-                <ul className="flex flex-wrap gap-2">
-                  {result.findings.map((finding, index) => (
-                    <li
-                      key={index}
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-xs font-medium',
-                        ACTION_CLASS[finding.action],
+                <ul className="flex flex-col gap-2">
+                  {findingTerms.map(({ finding, term }, index) => (
+                    <li key={index} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                      <span
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-xs font-medium',
+                          ACTION_CLASS[finding.action],
+                        )}
+                      >
+                        {categoryLabel(finding.category)} ·{' '}
+                        {localize(DECISION_COPY[finding.action])}
+                      </span>
+                      {term && <span className="break-all text-text-primary">{term}</span>}
+                      {finding.replacement && (
+                        <span className="font-mono text-text-secondary">
+                          → {finding.replacement}
+                        </span>
                       )}
-                    >
-                      {categoryLabel(finding.category)} · {localize(DECISION_COPY[finding.action])}
-                      {finding.replacement ? ` → ${finding.replacement}` : ''}
                     </li>
                   ))}
                 </ul>

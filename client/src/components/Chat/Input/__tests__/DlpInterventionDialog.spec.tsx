@@ -2,6 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
 import DlpInterventionDialog, {
+  buildFindingTerms,
   buildFindingSegments,
   buildReplacementSegments,
 } from '../DlpInterventionDialog';
@@ -20,12 +21,44 @@ const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding 
   ...overrides,
 });
 
+const CROSSING = 'Status of Project Phoenix Secret today';
+const crossingFindings = [
+  finding({ start: 18, end: 32, replacement: '[TERM]' }),
+  finding({ start: 10, end: 25, replacement: '[TERM]' }),
+];
+
 describe('DLP intervention text segmentation', () => {
   it('keeps sensitive original text separate from surrounding text', () => {
     const segments = buildFindingSegments('Discuss Project Acme now', [finding()]);
 
     expect(segments.map((segment) => segment.text)).toEqual(['Discuss ', 'Project Acme', ' now']);
-    expect(segments[1].finding?.category).toBe('PROJECT_NAME');
+    expect(segments[1].findings?.[0].finding.category).toBe('PROJECT_NAME');
+  });
+
+  it('underlines overlapping findings in full on separate rows', () => {
+    const segments = buildFindingSegments(CROSSING, crossingFindings);
+
+    expect(
+      segments.map(({ text, findings }) => [text, findings?.map(({ lane, ends }) => [lane, ends])]),
+    ).toEqual([
+      ['Status of ', undefined],
+      ['Project ', [[0, false]]],
+      [
+        'Phoenix',
+        [
+          [0, true],
+          [1, false],
+        ],
+      ],
+      [' Secret', [[1, true]]],
+      [' today', undefined],
+    ]);
+  });
+
+  it('lists every finding in text order with the whole term it covers', () => {
+    const terms = buildFindingTerms(CROSSING, crossingFindings);
+
+    expect(terms.map(({ term }) => term)).toEqual(['Project Phoenix', 'Phoenix Secret']);
   });
 
   it('uses Unicode code-point offsets supplied by the governance backend', () => {
@@ -65,7 +98,7 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('Project Acme')).toBeInTheDocument();
+    expect(screen.getAllByText('Project Acme')).toHaveLength(2);
     expect(screen.getByText('[CONFIDENTIAL]')).toBeInTheDocument();
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
 
@@ -141,8 +174,34 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(
-      screen.getByText('CUSTOM SECRET · com_ui_dlp_decision_warn → [CONFIDENTIAL]'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('CUSTOM SECRET · com_ui_dlp_decision_warn')).toBeInTheDocument();
+    expect(screen.getByText('→ [CONFIDENTIAL]')).toBeInTheDocument();
+  });
+
+  it('names each overlapping term in full next to its replacement', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: crossingFindings,
+          maskedPreview: [
+            { location: '/messages/0/content', text: 'Status of [TERM] [TERM] today' },
+          ],
+        }}
+        originalText={CROSSING}
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const terms = screen.getAllByRole('listitem').map((item) => item.textContent);
+    expect(terms).toEqual([
+      'com_ui_dlp_category_project_name · com_ui_dlp_decision_maskProject Phoenix→ [TERM]',
+      'com_ui_dlp_category_project_name · com_ui_dlp_decision_maskPhoenix Secret→ [TERM]',
+    ]);
+    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
+      'title',
+      'com_ui_dlp_category_project_name → [TERM]\ncom_ui_dlp_category_project_name → [TERM]',
+    );
   });
 });
