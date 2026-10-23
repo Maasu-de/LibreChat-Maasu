@@ -1,30 +1,14 @@
-import jwt from 'jsonwebtoken';
-import jwksRsa from 'jwks-rsa';
+import { timingSafeEqual } from 'node:crypto';
 import { logger, runAsSystem } from '@librechat/data-schemas';
-import type { RequestHandler, Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import type { IGroup } from '@librechat/data-schemas';
-import type { JwtPayload } from 'jsonwebtoken';
-import type { JSONWebKey } from 'jwks-rsa';
-import { governanceOidcMetadata, clearGovernanceDiscoveryCache } from './discovery';
-import { hasOidcAdministratorClaim } from '../auth/administrator';
-import { normalizeOpenIdIssuer } from '../auth/openid';
-import { hasGovernanceTokenSource } from './token';
-import { fetchOpenId } from '../auth/proxy';
 
 const PAGE_SIZE = 200;
-const JWKS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
 type GroupRef = Pick<IGroup, '_id' | 'name'>;
-type AdminClaims = JwtPayload & {
-  typ?: string;
-};
 
 export interface GovernanceGroupsDeps {
   listGroups: (filter: { limit: number; offset: number }) => Promise<GroupRef[]>;
-}
-
-export interface GovernanceAdminTokenDeps {
-  exchangeAccessToken: (accessToken: string, subject: string) => Promise<string>;
 }
 
 export interface UserGroupIdsDeps {
@@ -34,166 +18,40 @@ export interface UserGroupIdsDeps {
   ) => Promise<Pick<IGroup, '_id'>[]>;
 }
 
-/** Keyed by the configured issuer (never a token value), so it holds one entry per realm */
-type OidcSigningKeys = { client: jwksRsa.JwksClient; issuer: string; expiresAt: number };
-const jwksClients = new Map<string, OidcSigningKeys>();
-
-export function clearGovernanceJwksCache(): void {
-  jwksClients.clear();
-  clearGovernanceDiscoveryCache();
-}
-
-async function getJwksClient(issuer: string): Promise<OidcSigningKeys> {
-  const cached = jwksClients.get(issuer);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached;
-  }
-  let jwksUri = process.env.OIDC_JWKS_URI || `${issuer}/protocol/openid-connect/certs`;
-  let tokenIssuer = issuer;
-  if (!issuer.includes('/realms/')) {
-    const metadata = await governanceOidcMetadata(issuer);
-    jwksUri = process.env.OIDC_JWKS_URI || metadata.jwks_uri;
-    tokenIssuer = metadata.issuer;
-  }
-  logger.debug('[GovernanceGroups] Creating JWKS client', { jwksUri });
-  const client = jwksRsa({
-    jwksUri,
-    cache: true,
-    cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
-    rateLimit: true,
-    fetcher: async (uri) => {
-      const response = await fetchOpenId(uri, { signal: AbortSignal.timeout(5000) });
-      if (!response.ok) throw new Error('OIDC JWKS unavailable');
-      return (await response.json()) as { keys: JSONWebKey[] };
-    },
-  });
-  const keys = { client, issuer: tokenIssuer, expiresAt: Date.now() + JWKS_CACHE_MAX_AGE_MS };
-  jwksClients.set(issuer, keys);
-  return keys;
-}
-
 function readBearer(header: string | undefined): string {
-  return header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+  const match = header?.match(/^Bearer ([^\s]+)$/);
+  return match?.[1] ?? '';
 }
 
-async function verifyAdminToken(
-  token: string,
-  issuer: string,
-  audience: string,
-): Promise<AdminClaims | null> {
-  const kid = jwt.decode(token, { complete: true })?.header?.kid;
-  if (!kid) {
-    logger.warn('[GovernanceGroups] Rejected token without a key id');
-    return null;
-  }
-
-  try {
-    const keys = await getJwksClient(issuer);
-    const signingKey = await keys.client.getSigningKey(kid);
-    return jwt.verify(token, signingKey.getPublicKey(), {
-      algorithms: ['RS256'],
-      issuer: keys.issuer,
-      audience,
-    }) as AdminClaims;
-  } catch (error) {
-    logger.warn('[GovernanceGroups] Access token verification failed', {
-      message: (error as Error)?.message,
-      expectedIssuer: issuer,
-      expectedAudience: audience,
-    });
-    return null;
-  }
+function matchesCredential(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    actualBuffer.byteLength === expectedBuffer.byteLength &&
+    timingSafeEqual(actualBuffer, expectedBuffer)
+  );
 }
 
-/**
- * Authorizes the trusted Admin Panel server by verifying its admin's own
- * selected OIDC token against the issuer's JWKS -- the same token
- * already authenticating that admin's policy-version calls (see
- * authenticate_administrator in the governance backend) -- rather than
- * requiring a LibreChat user session. Untyped tokens additionally require the
- * Gateway's source attestation. There is no LibreChat account behind this call,
- * so it deliberately skips LibreChat's own user lookup.
- */
-export function createRequireGovernanceAdminToken({
-  exchangeAccessToken,
-}: GovernanceAdminTokenDeps): RequestHandler {
-  return async (req, res, next): Promise<void> => {
-    // OPENID_ISSUER may be the discovery URL; the JWKS path and `iss` claim need the bare issuer
-    const issuer = normalizeOpenIdIssuer(process.env.OPENID_ISSUER) ?? '';
-    const audience = process.env.GOVERNANCE_ADMIN_CLIENT_ID ?? '';
-    const adminRole = process.env.OPENID_ADMIN_ROLE ?? '';
-    if (!issuer || !audience || !adminRole) {
-      logger.warn('[GovernanceGroups] Group lookup is not configured', {
-        hasIssuer: Boolean(issuer),
-        hasAudience: Boolean(audience),
-        hasAdminRole: Boolean(adminRole),
-      });
-      res.status(503).json({ message: 'Group lookup is not configured.' });
-      return;
-    }
+/** Authorizes the Governance Gateway itself; end-user OIDC tokens never cross this boundary. */
+export function requireGovernanceGatewayService(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const expected = process.env.GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL?.trim() ?? '';
+  if (!expected) {
+    logger.error('[GovernanceGroups] Gateway service credential is not configured');
+    res.status(503).json({ message: 'Group lookup is not configured.' });
+    return;
+  }
 
-    const token = readBearer(req.headers.authorization);
-    const source = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND ?? 'access';
-    if (!['access', 'id', 'userinfo'].includes(source)) {
-      res.status(503).json({ message: 'Unsupported OIDC administrator source' });
-      return;
-    }
-    const claims = token ? await verifyAdminToken(token, issuer, audience) : null;
-    let roleClaims: object | null = claims;
-    if (claims?.sub && source === 'userinfo') {
-      try {
-        let endpoint =
-          process.env.OIDC_USERINFO_URI || `${issuer}/protocol/openid-connect/userinfo`;
-        if (!issuer.includes('/realms/') && !process.env.OIDC_USERINFO_URI) {
-          const metadata = await governanceOidcMetadata(issuer);
-          endpoint = metadata.userinfo_endpoint;
-        }
-        const userinfoToken = await exchangeAccessToken(token, claims.sub);
-        const response = await fetchOpenId(endpoint, {
-          headers: { authorization: `Bearer ${userinfoToken}` },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (!response.ok && response.status !== 401) {
-          res.status(503).json({ message: 'OIDC userinfo unavailable' });
-          return;
-        }
-        const info = response.ok ? ((await response.json()) as { sub?: string }) : null;
-        roleClaims = info?.sub === claims.sub ? info : null;
-      } catch {
-        res.status(503).json({ message: 'OIDC userinfo unavailable' });
-        return;
-      }
-    }
+  if (!matchesCredential(readBearer(req.headers.authorization), expected)) {
+    logger.warn('[GovernanceGroups] Rejected request with an invalid service credential');
+    res.status(401).json({ message: 'Unauthorized' });
+    return;
+  }
 
-    // The configured source determines which JWT the trusted Gateway forwards.
-    if (
-      !claims?.sub ||
-      typeof claims.exp !== 'number' ||
-      !hasGovernanceTokenSource(
-        token,
-        claims,
-        jwt.decode(token, { complete: true })?.header.typ,
-        source,
-        req.get('x-governance-token-proof'),
-      ) ||
-      (claims.azp !== undefined && claims.azp !== audience) ||
-      !roleClaims ||
-      !hasOidcAdministratorClaim(roleClaims)
-    ) {
-      if (!token) {
-        logger.warn('[GovernanceGroups] Rejected request without a bearer token');
-      } else if (claims) {
-        logger.warn('[GovernanceGroups] Rejected verified token', {
-          typ: claims.typ,
-          hasAdminRole: roleClaims ? hasOidcAdministratorClaim(roleClaims) : false,
-        });
-      }
-      res.status(401).json({ message: 'Unauthorized' });
-      return;
-    }
-
-    next();
-  };
+  next();
 }
 
 async function listAllGroups(listGroups: GovernanceGroupsDeps['listGroups']): Promise<GroupRef[]> {
@@ -211,7 +69,7 @@ export const createListGovernanceGroups =
   ({ listGroups }: GovernanceGroupsDeps) =>
   async (_req: Request, res: Response): Promise<void> => {
     try {
-      /** The Admin Panel manages the whole deployment, so this read is deliberately cross-tenant */
+      /** The Governance Gateway manages the whole deployment, so this read is cross-tenant. */
       const groups = await runAsSystem(() => listAllGroups(listGroups));
       res.status(200).json({
         groups: groups.map((group) => ({ id: group._id.toString(), name: group.name })),

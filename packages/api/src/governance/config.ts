@@ -105,11 +105,6 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
     );
   }
   assertOidcAdministratorConfigured();
-  if (!process.env.GOVERNANCE_ADMIN_CLIENT_ID?.trim()) {
-    throw new Error(
-      'Governed pilot requires GOVERNANCE_ADMIN_CLIENT_ID for the Gateway web OIDC client',
-    );
-  }
   const baseURL = process.env.GOVERNANCE_API_BASE_URL;
   const apiKey = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!baseURL || !apiKey || apiKey === 'user_provided') {

@@ -1,12 +1,9 @@
 # Governance Gateway pilot
 
-Governance cross-system JWTs without a signed token-kind discriminator require
-the Gateway's `X-Governance-Token-Proof` header. The server-generated HMAC binds
-the selected token and configured source to a 60-second validity window using
-`LIBRECHAT_SERVICE_CREDENTIAL`, shared with Gateway web and backend. OIDC signature,
-issuer, audience, expiry and entitlement checks still apply. Signed Keycloak
-`typ`, provider `token_use`, and access-token `at+jwt` header discriminators remain
-supported without a proof. Conflicting signed type markers are rejected.
+The Governance Gateway calls LibreChat's group and usage-label read endpoints
+with `GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL`. This credential is server-only and
+separate from `LIBRECHAT_SERVICE_CREDENTIAL`, which LibreChat sends in the reverse
+direction. End-user OIDC tokens are never forwarded between the services.
 
 Only directly available configured claims are supported for login, administrator
 mapping, and generic role synchronization. Microsoft Graph resolution of Entra
@@ -43,21 +40,9 @@ startup, OpenID login, and authentication refresh. A stored LibreChat `ADMIN` ro
 cannot substitute for this mapping. Outside pilot mode, administrator mapping
 remains optional.
 
-Set `GOVERNANCE_ADMIN_CLIENT_ID` to the **Gateway web OIDC client ID** used by the
-administrator whose token is forwarded to LibreChat. For bundled Keycloak use
-`GOVERNANCE_ADMIN_CLIENT_ID=governance-web`. For a customer IdP, use the Gateway's
-`OIDC_WEB_CLIENT_ID` (or `AUTH_KEYCLOAK_ID` when running its web process outside
-Compose). This audience is required for `/api/governance/groups` and
-`/api/governance/usage-labels`; it must match the forwarded token's audience.
-LibreChat's own `OPENID_CLIENT_ID` identifies a separate client and is not a
-fallback for this setting. Missing or blank `GOVERNANCE_ADMIN_CLIENT_ID` rejects
-pilot startup with an explicit configuration error. Outside pilot mode it is
-required only when using these governance lookup endpoints, which return 503
-when it is absent.
-
-The Gateway repository's Compose deployment supplies this variable automatically
-from `OIDC_WEB_CLIENT_ID`, or defaults to `governance-web` for bundled Keycloak.
-Standalone LibreChat deployments must set it explicitly in their environment.
+Set `GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL` in LibreChat and the Gateway web
+process to the same dedicated secret. The two read endpoints return 503 when it
+is absent and 401 for a missing or incorrect bearer credential.
 
 Group and membership auditing uses the same service credential. The audit endpoint
 defaults to the Gateway base URL with `/api/v1/dlp` replaced by
@@ -80,15 +65,6 @@ matching `MONGO_URI` supplied through a Compose override. For a backend running
 outside Docker, use an address reachable from that host and configure replica-set
 member addresses accordingly; the bundled member advertises `mongodb:27017` on
 the Compose network.
-
-Customer OIDC providers that require a token exchange for userinfo must set
-`OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED=true` and, when needed,
-`OPENID_ON_BEHALF_FLOW_USERINFO_SCOPE`. Login, refresh, and governance group and
-usage-label lookups use the same exchange helper and configured LibreChat OIDC
-client. The provider must allow that client to exchange the forwarded governance
-administrator token. Governance lookups retain `OIDC_USERINFO_URI` as an optional
-userinfo endpoint override and require the returned subject to match the verified
-administrator token.
 
 The [capability inventory and deployment baseline](https://github.com/Maasu-de/ai-governance-gateway/blob/main/docs/librechat-pilot-features.md)
 classifies supported text chat and the integrations excluded from the pilot.
@@ -160,8 +136,3 @@ node scripts/replay-governance-audit.js <mutation-uuid> [more-mutation-uuids]
 Replay resets the selected quarantined records to pending with immediate retry.
 It preserves mutation IDs, actor/resource, and occurrence time. There is no
 browser-facing replay endpoint.
-
-After successful OIDC rotation, refresh credentials are retained even if a later
-administrator/userinfo lookup fails. Such failures issue no new authorized
-bearer and can be retried. Governance OIDC discovery is cached for five minutes;
-userinfo entitlement responses are not cached.

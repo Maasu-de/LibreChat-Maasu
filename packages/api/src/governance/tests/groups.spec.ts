@@ -1,92 +1,40 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
-import jwksRsa from 'jwks-rsa';
 import request from 'supertest';
 import { Types } from 'mongoose';
-import { createHmac } from 'node:crypto';
-import { createPublicKey, generateKeyPairSync } from 'crypto';
 import { getTenantId, SYSTEM_TENANT_ID } from '@librechat/data-schemas';
 import type { GovernanceGroupsDeps } from '../groups';
 import {
-  createListGovernanceGroups,
-  createRequireGovernanceAdminToken,
-  clearGovernanceJwksCache,
   createGetUserGroupIds,
+  createListGovernanceGroups,
+  requireGovernanceGatewayService,
 } from '../groups';
-import { getOpenIdProxyDispatcher } from '../../auth/proxy';
 
-const mockGetSigningKey = jest.fn();
-
-jest.mock('jwks-rsa', () =>
-  jest.fn(() => ({ getSigningKey: (...args: unknown[]) => mockGetSigningKey(...args) })),
-);
-
-const ISSUER = 'http://keycloak:8080/realms/ai-governance';
-const CLIENT_ID = 'governance-web';
-const ADMIN_ROLE = 'governance-admin';
-const KID = 'test-kid';
-
-const keyPair = () =>
-  generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-  });
-const realmKeys = keyPair();
-const foreignKeys = keyPair();
-
-type TokenOptions = {
-  issuer?: string;
-  roles?: string[];
-  typ?: string;
-  privateKey?: string;
-  claims?: jwt.JwtPayload;
-};
-
-const signToken = ({
-  issuer = ISSUER,
-  roles = [ADMIN_ROLE],
-  typ = 'Bearer',
-  privateKey = realmKeys.privateKey,
-  claims = {},
-}: TokenOptions = {}) =>
-  jwt.sign({ sub: 'admin-subject', typ, realm_access: { roles }, ...claims }, privateKey, {
-    algorithm: 'RS256',
-    keyid: KID,
-    issuer,
-    audience: CLIENT_ID,
-    expiresIn: 60,
-  });
-
+const CREDENTIAL = 'gateway-to-librechat-secret';
 const objectId = (n: number) => n.toString(16).padStart(24, '0');
 const group = (id: string, name: string) => ({ _id: new Types.ObjectId(id), name });
 const listGroups = jest.fn() as jest.MockedFunction<GovernanceGroupsDeps['listGroups']>;
-const exchangeAccessToken = jest.fn<Promise<string>, [string, string]>();
 
 const app = express();
 app.get(
   '/api/governance/groups',
-  createRequireGovernanceAdminToken({ exchangeAccessToken }),
+  requireGovernanceGatewayService,
   createListGovernanceGroups({ listGroups }),
 );
 
-const getGroups = (token?: string, proof?: string) => {
+const getGroups = (credential?: string) => {
   const req = request(app).get('/api/governance/groups');
-  if (proof) req.set('X-Governance-Token-Proof', proof);
-  return token ? req.set('Authorization', `Bearer ${token}`) : req;
+  return credential ? req.set('Authorization', `Bearer ${credential}`) : req;
 };
 
 const savedEnv = { ...process.env };
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env = { ...savedEnv };
-  clearGovernanceJwksCache();
-  mockGetSigningKey.mockResolvedValue({ getPublicKey: () => realmKeys.publicKey });
-  process.env.OPENID_ISSUER = ISSUER;
-  process.env.GOVERNANCE_ADMIN_CLIENT_ID = CLIENT_ID;
-  process.env.OPENID_ADMIN_ROLE = ADMIN_ROLE;
-  exchangeAccessToken.mockReset().mockImplementation(async (token) => token);
+  process.env = {
+    ...savedEnv,
+    GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL: CREDENTIAL,
+    LIBRECHAT_SERVICE_CREDENTIAL: 'librechat-to-gateway-secret',
+  };
 });
 
 afterAll(() => {
@@ -94,71 +42,10 @@ afterAll(() => {
 });
 
 describe('GET /api/governance/groups', () => {
-  it.each(['PROXY', 'HTTPS_PROXY', undefined])(
-    'fetches discovery, signing keys, and UserInfo with proxy setting %s',
-    async (proxySetting) => {
-      for (const name of [
-        'PROXY',
-        'proxy',
-        'HTTP_PROXY',
-        'http_proxy',
-        'HTTPS_PROXY',
-        'https_proxy',
-      ]) {
-        delete process.env[name];
-      }
-      if (proxySetting) process.env[proxySetting] = 'http://corporate-proxy.example:8080';
-      const issuer = 'https://identity.company.test';
-      process.env.OPENID_ISSUER = issuer;
-      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
-      delete process.env.OIDC_USERINFO_URI;
-      delete process.env.OIDC_JWKS_URI;
-      listGroups.mockResolvedValue([]);
-      const actualJwksRsa = jest.requireActual<typeof jwksRsa>('jwks-rsa');
-      jest.mocked(jwksRsa).mockImplementationOnce((options) => actualJwksRsa(options));
-      const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
-      const jwksUrl = `${issuer}/jwks`;
-      const userinfoUrl = `${issuer}/userinfo`;
-      const publicKey = createPublicKey(realmKeys.publicKey).export({ format: 'jwk' });
-      const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        if (url === discoveryUrl) {
-          return Response.json({ issuer, jwks_uri: jwksUrl, userinfo_endpoint: userinfoUrl });
-        }
-        if (url === jwksUrl) {
-          return Response.json({ keys: [{ ...publicKey, kid: KID, alg: 'RS256', use: 'sig' }] });
-        }
-        if (url === userinfoUrl) {
-          return Response.json({ sub: 'admin-subject', realm_access: { roles: [ADMIN_ROLE] } });
-        }
-        throw new Error('Unexpected OIDC endpoint');
-      });
-      const token = signToken({ issuer, roles: [] });
-      try {
-        expect((await getGroups(token)).status).toBe(200);
-        const dispatcher = getOpenIdProxyDispatcher();
-        if (proxySetting) expect(dispatcher).toBeDefined();
-        else expect(dispatcher).toBeUndefined();
-        for (const endpoint of [discoveryUrl, jwksUrl, userinfoUrl]) {
-          expect(fetchSpy).toHaveBeenCalledWith(
-            endpoint,
-            expect.objectContaining({ dispatcher, signal: expect.any(AbortSignal) }),
-          );
-        }
-        expect(fetchSpy).toHaveBeenCalledTimes(3);
-        expect(fetchSpy).toHaveBeenLastCalledWith(
-          userinfoUrl,
-          expect.objectContaining({ headers: { authorization: `Bearer ${token}` } }),
-        );
-      } finally {
-        fetchSpy.mockRestore();
-      }
-    },
-  );
-
-  it('lists group ids and names for a valid governance-admin token', async () => {
+  it('lists group ids and names for the trusted Governance Gateway', async () => {
     listGroups.mockResolvedValueOnce([group(objectId(1), 'Engineering'), group(objectId(2), 'HR')]);
 
-    const response = await getGroups(signToken());
+    const response = await getGroups(CREDENTIAL);
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
@@ -167,7 +54,6 @@ describe('GET /api/governance/groups', () => {
         { id: objectId(2), name: 'HR' },
       ],
     });
-    expect(mockGetSigningKey).toHaveBeenCalledWith(KID);
   });
 
   it('follows pagination until a short page', async () => {
@@ -176,7 +62,7 @@ describe('GET /api/governance/groups', () => {
     );
     listGroups.mockResolvedValueOnce(fullPage).mockResolvedValueOnce([group(objectId(9), 'Last')]);
 
-    const response = await getGroups(signToken());
+    const response = await getGroups(CREDENTIAL);
 
     expect(response.body.groups).toHaveLength(201);
     expect(listGroups).toHaveBeenNthCalledWith(1, { limit: 200, offset: 0 });
@@ -190,192 +76,36 @@ describe('GET /api/governance/groups', () => {
       return [group(objectId(1), 'Engineering')];
     });
 
-    const response = await getGroups(signToken());
+    const response = await getGroups(CREDENTIAL);
 
     expect(response.status).toBe(200);
     expect(tenants).toEqual([SYSTEM_TENANT_ID]);
   });
 
-  it.each(['access', 'id'])(
-    'uses a customer nested administrator claim from %s tokens',
-    async (source) => {
-      process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'company.permissions';
-      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
-      process.env.OPENID_ADMIN_ROLE = 'company-admin';
-      listGroups.mockResolvedValue([]);
-      const response = await getGroups(
-        signToken({
-          roles: [],
-          typ: source === 'id' ? 'ID' : 'Bearer',
-          claims: { company: { permissions: ['company-admin'] } },
-        }),
-      );
-      expect(response.status).toBe(200);
-      const revoked = await getGroups(signToken({ claims: { company: { permissions: [] } } }));
-      expect(revoked.status).toBe(401);
-    },
-  );
-
-  it('reads administrator entitlement from subject-bound userinfo', async () => {
-    process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'company.admin';
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
-    listGroups.mockResolvedValue([]);
-    const userinfo = jest.spyOn(global, 'fetch').mockResolvedValue(
-      Response.json({
-        sub: 'admin-subject',
-        company: { admin: true },
-      }),
-    );
-    try {
-      expect((await getGroups(signToken({ roles: [] }))).status).toBe(200);
-      userinfo.mockResolvedValueOnce(Response.json({ sub: 'other', company: { admin: true } }));
-      expect((await getGroups(signToken())).status).toBe(401);
-    } finally {
-      userinfo.mockRestore();
-    }
-  });
-
-  it('queries the configured userinfo endpoint with the exchanged token', async () => {
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
-    process.env.OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED = 'true';
-    process.env.OIDC_USERINFO_URI = 'https://identity.company.test/custom-userinfo';
-    exchangeAccessToken.mockResolvedValue('exchanged-userinfo-token');
-    listGroups.mockResolvedValue([]);
-    const userinfo = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValue(
-        Response.json({ sub: 'admin-subject', realm_access: { roles: [ADMIN_ROLE] } }),
-      );
-    const token = signToken({ roles: [] });
-    try {
-      expect((await getGroups(token)).status).toBe(200);
-      expect(exchangeAccessToken).toHaveBeenCalledWith(token, 'admin-subject');
-      expect(userinfo).toHaveBeenCalledWith(
-        process.env.OIDC_USERINFO_URI,
-        expect.objectContaining({
-          headers: { authorization: 'Bearer exchanged-userinfo-token' },
-        }),
-      );
-      userinfo.mockResolvedValueOnce(
-        Response.json({ sub: 'other', realm_access: { roles: [ADMIN_ROLE] } }),
-      );
-      expect((await getGroups(token)).status).toBe(401);
-    } finally {
-      userinfo.mockRestore();
-    }
-  });
-
-  it('does not send the original token to userinfo if the exchange fails', async () => {
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
-    process.env.OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED = 'true';
-    exchangeAccessToken.mockRejectedValue(new Error('OBO unavailable'));
-    const userinfo = jest.spyOn(global, 'fetch');
-    try {
-      expect((await getGroups(signToken())).status).toBe(503);
-      expect(userinfo).not.toHaveBeenCalled();
-      expect(listGroups).not.toHaveBeenCalled();
-    } finally {
-      userinfo.mockRestore();
-    }
-  });
-
-  it.each(['access', 'id'])('requires a Gateway proof for untyped %s tokens', async (source) => {
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
-    process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'test-credential';
-    listGroups.mockResolvedValue([]);
-    const token = signToken({ claims: { typ: undefined } });
-    expect((await getGroups(token)).status).toBe(401);
-    const issuedAt = Math.floor(Date.now() / 1000).toString();
-    const proof = createHmac('sha256', 'test-credential')
-      .update(`governance-admin-token:v1\n${source}\n${issuedAt}\n${token}`)
-      .digest('base64url');
-    expect((await getGroups(token, `${issuedAt}.${proof}`)).status).toBe(200);
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source === 'id' ? 'access' : 'id';
-    expect((await getGroups(token, `${issuedAt}.${proof}`)).status).toBe(401);
-  });
-
-  it.each(['Bearer', 'Refresh', 'other', null])(
-    'rejects token type %s when ID-token claims are authoritative',
-    async (typ) => {
-      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';
-
-      const response = await getGroups(signToken({ claims: { typ } }));
-
-      expect(response.status).toBe(401);
-      expect(listGroups).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(['access', 'userinfo'])(
-    'rejects ID tokens when %s claims are authoritative',
-    async (source) => {
-      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
-      const userinfo = jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValue(
-          Response.json({ sub: 'admin-subject', realm_access: { roles: [ADMIN_ROLE] } }),
-        );
-      try {
-        const response = await getGroups(signToken({ typ: 'ID' }));
-
-        expect(response.status).toBe(401);
-        expect(listGroups).not.toHaveBeenCalled();
-      } finally {
-        userinfo.mockRestore();
-      }
-    },
-  );
-
-  it('preserves a customer issuer trailing slash from validated discovery metadata', async () => {
-    const issuer = 'https://identity.company.test/';
-    process.env.OPENID_ISSUER = issuer;
-    listGroups.mockResolvedValue([]);
-    const discovery = jest.spyOn(global, 'fetch').mockResolvedValue(
-      Response.json({
-        issuer,
-        jwks_uri: 'https://identity.company.test/jwks',
-      }),
-    );
-    try {
-      expect((await getGroups(signToken({ issuer }))).status).toBe(200);
-    } finally {
-      discovery.mockRestore();
-    }
-  });
-
-  it('rejects a missing token without querying groups', async () => {
-    const response = await getGroups();
-
-    expect(response.status).toBe(401);
-    expect(mockGetSigningKey).not.toHaveBeenCalled();
-    expect(listGroups).not.toHaveBeenCalled();
-  });
-
   it.each([
-    ['is signed by a different key', { privateKey: foreignKeys.privateKey }],
-    ['comes from a different issuer', { issuer: 'http://keycloak:8080/realms/other' }],
-    ['lacks the governance-admin role', { roles: ['governance-user'] }],
-    ['is not an access token', { typ: 'Refresh' }],
-  ])('rejects a token that %s', async (_label, options: TokenOptions) => {
-    const response = await getGroups(signToken(options));
+    ['missing', undefined],
+    ['incorrect', 'wrong-secret'],
+    ['reverse-direction', 'librechat-to-gateway-secret'],
+  ])('rejects a %s service credential', async (_label, credential) => {
+    const response = await getGroups(credential);
 
     expect(response.status).toBe(401);
     expect(listGroups).not.toHaveBeenCalled();
   });
 
-  it('rejects a token without a key id', async () => {
-    const token = jwt.sign({ typ: 'Bearer' }, realmKeys.privateKey, { algorithm: 'RS256' });
-
-    const response = await getGroups(token);
+  it('rejects malformed bearer authentication', async () => {
+    const response = await request(app)
+      .get('/api/governance/groups')
+      .set('Authorization', `Bearer ${CREDENTIAL} extra`);
 
     expect(response.status).toBe(401);
-    expect(mockGetSigningKey).not.toHaveBeenCalled();
+    expect(listGroups).not.toHaveBeenCalled();
   });
 
-  it('is unavailable when OIDC verification is not configured', async () => {
-    delete process.env.GOVERNANCE_ADMIN_CLIENT_ID;
+  it('is unavailable when the dedicated credential is not configured', async () => {
+    delete process.env.GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL;
 
-    const response = await getGroups(signToken());
+    const response = await getGroups(CREDENTIAL);
 
     expect(response.status).toBe(503);
     expect(listGroups).not.toHaveBeenCalled();
@@ -384,42 +114,10 @@ describe('GET /api/governance/groups', () => {
   it('reports a server error without leaking details when the lookup fails', async () => {
     listGroups.mockRejectedValueOnce(new Error('mongo exploded'));
 
-    const response = await getGroups(signToken());
+    const response = await getGroups(CREDENTIAL);
 
     expect(response.status).toBe(500);
     expect(JSON.stringify(response.body)).not.toContain('mongo');
-  });
-
-  it('reuses one JWKS client per issuer and builds a new one when the issuer changes', async () => {
-    listGroups.mockResolvedValue([]);
-    const otherIssuer = 'http://keycloak:8080/realms/other';
-
-    await getGroups(signToken());
-    await getGroups(signToken());
-    process.env.OPENID_ISSUER = `${otherIssuer}/`;
-    await getGroups(signToken({ issuer: otherIssuer }));
-
-    expect(jwksRsa).toHaveBeenCalledTimes(2);
-    expect(jwksRsa).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ jwksUri: `${ISSUER}/protocol/openid-connect/certs` }),
-    );
-    expect(jwksRsa).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ jwksUri: `${otherIssuer}/protocol/openid-connect/certs` }),
-    );
-  });
-
-  it('accepts OPENID_ISSUER in discovery-URL form', async () => {
-    listGroups.mockResolvedValueOnce([]);
-    process.env.OPENID_ISSUER = `${ISSUER}/.well-known/openid-configuration`;
-
-    const response = await getGroups(signToken());
-
-    expect(response.status).toBe(200);
-    expect(jwksRsa).toHaveBeenCalledWith(
-      expect.objectContaining({ jwksUri: `${ISSUER}/protocol/openid-connect/certs` }),
-    );
   });
 });
 

@@ -14,11 +14,10 @@ const governanceGroups = require('./governanceGroups');
 
 const router = express.Router();
 
-// The Admin Panel server authenticates with its own Keycloak token, not a
-// LibreChat session, so this route is mounted before requireJwtAuth.
+// The Governance Gateway uses a dedicated server credential, not a LibreChat session.
 router.use('/groups', governanceGroups);
 
-router.post('/usage-labels', governanceGroups.requireGovernanceAdminToken, async (req, res) => {
+router.post('/usage-labels', governanceGroups.requireGovernanceGatewayService, async (req, res) => {
   const byUser = req.body?.by_user;
   const usesLegacyTeamKey = req.body?.by_group == null && req.body?.by_team != null;
   const byGroup = req.body?.by_group ?? req.body?.by_team;
