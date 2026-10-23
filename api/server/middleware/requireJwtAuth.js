@@ -4,6 +4,7 @@ const passport = require('passport');
 const { logger } = require('@librechat/data-schemas');
 const {
   isEnabled,
+  scopeGovernanceAdministrator,
   tenantContextMiddleware,
   getAuthFailureReason,
   getAuthFailureErrorName,
@@ -180,7 +181,7 @@ const requireJwtAuth = (req, res, next) => {
         logAuthenticationFailure({ strategy, info, status: 401, err });
         return res.status(401).json({ message: 'Unauthorized' });
       }
-      req.user = user;
+      req.user = scopeGovernanceAdministrator(user);
       req.authStrategy = strategy;
       logFallbackSuccess(strategy);
       tenantContextMiddleware(req, res, (tenantErr) => {

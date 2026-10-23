@@ -2,7 +2,11 @@ import jwt from 'jsonwebtoken';
 import { Types } from 'mongoose';
 import type { IUser } from '@librechat/data-schemas';
 import { applyAdminRefresh } from './refresh';
-import { hasOidcAdministratorClaim, syncOidcAdministrator } from './administrator';
+import {
+  hasOidcAdministratorClaim,
+  syncOidcAdministrator,
+  scopeGovernanceAdministrator,
+} from './administrator';
 
 const environment = process.env;
 beforeEach(() => {
@@ -28,69 +32,41 @@ it.each([false, null, 'reader', ['reader'], {}])('denies absent entitlement %s',
   expect(hasOidcAdministratorClaim({ company: { permissions: value } })).toBe(false);
 });
 
-it('uses resolved overage groups instead of stale embedded claims', () => {
-  expect(hasOidcAdministratorClaim({}, ['company-admin'])).toBe(true);
-  expect(hasOidcAdministratorClaim({ company: { permissions: ['company-admin'] } }, [])).toBe(
-    false,
-  );
-});
-
 it.each([
   { hasgroups: true },
   {
     _claim_names: { groups: 'src1' },
     _claim_sources: { src1: { endpoint: 'https://graph.example' } },
   },
-])('resolves administrator group overage on refresh: %j', async (overage) => {
-  process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'groups';
-  process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';
-  const actor = user();
-  const refreshed = { ...tokens([]), claims: () => ({ sub: 'subject', ...overage }) };
-  const resolve = jest.fn(async () => ['company-admin']);
-  const update = jest.fn(async () => actor);
-  await syncOidcAdministrator(actor, refreshed, update, undefined, resolve);
-  expect(actor.role).toBe('ADMIN');
-  expect(update).not.toHaveBeenCalled();
-  expect(resolve).toHaveBeenCalledWith(refreshed.access_token, 'subject');
-
-  resolve.mockResolvedValueOnce([]);
-  await syncOidcAdministrator(actor, refreshed, update, undefined, resolve);
-  expect(actor.role).toBe('USER');
-  expect(update).toHaveBeenCalledWith(actor._id.toString(), { role: 'USER' });
-});
-
-it.each(['missing', 'unavailable', 'network'])(
-  'does not mint a bearer or change the persisted role when overage resolution is %s',
-  async (failure) => {
+])(
+  'denies administrator entitlement when groups are not directly available: %j',
+  async (overage) => {
     process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'groups';
     process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'id';
     const actor = user();
-    const refreshed = { ...tokens([]), claims: () => ({ sub: 'subject', hasgroups: true }) };
     const update = jest.fn(async () => actor);
-    const mintToken = jest.fn();
-    const resolve =
-      failure === 'missing'
-        ? undefined
-        : async () => {
-            if (failure === 'network') throw new Error('Graph unavailable');
-            return null;
-          };
-    await expect(
-      applyAdminRefresh(
-        refreshed,
-        {
-          findUsers: async () => [actor],
-          getUserById: async () => actor,
-          mintToken,
-          synchronizeAdministrator: (resolved, tokenset) =>
-            syncOidcAdministrator(resolved, tokenset, update, undefined, resolve),
-        },
-        { userId: actor._id.toString(), expectedIssuer: actor.openidIssuer },
-      ),
-    ).rejects.toThrow();
-    expect(actor.role).toBe('ADMIN');
-    expect(update).not.toHaveBeenCalled();
-    expect(mintToken).not.toHaveBeenCalled();
+    await syncOidcAdministrator(
+      actor,
+      { ...tokens([]), claims: () => ({ sub: 'subject', ...overage }) },
+      update,
+    );
+    expect(actor.role).toBe('USER');
+  },
+);
+
+it.each(['access', 'id', 'userinfo'])(
+  'assigns a distinct groups-only role in pilot mode from %s',
+  async (source) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = source;
+    const actor = user();
+    const update = jest.fn(async () => actor);
+    await syncOidcAdministrator(actor, tokens(['company-admin']), update, async () => ({
+      sub: 'subject',
+      company: { permissions: ['company-admin'] },
+    }));
+    expect(actor.role).toBe('GOVERNANCE_ADMIN');
+    expect(update).toHaveBeenCalledWith(actor._id.toString(), { role: 'GOVERNANCE_ADMIN' });
   },
 );
 
@@ -260,4 +236,12 @@ it('preserves optional administrator mapping outside pilot mode', async () => {
 
   expect(update).not.toHaveBeenCalled();
   expect(actor.role).toBe('ADMIN');
+});
+
+it('immediately scopes existing OIDC ADMIN sessions in pilot mode', () => {
+  process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+  expect(scopeGovernanceAdministrator(user()).role).toBe('GOVERNANCE_ADMIN');
+  const local = user();
+  local.provider = 'local';
+  expect(scopeGovernanceAdministrator(local).role).toBe('ADMIN');
 });

@@ -1,4 +1,3 @@
-import { SystemRoles } from 'librechat-data-provider';
 import { isMainThread } from 'node:worker_threads';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -13,6 +12,11 @@ import type { Types, ClientSession } from 'mongoose';
 import type { ResolvedPrincipal } from '~/types/principal';
 import type { ServerRequest } from '~/types/http';
 import { isGovernancePilotEnabled } from '~/governance/mode';
+import {
+  governanceGroupCapabilities,
+  isGovernanceAdministrator,
+  isGovernanceGroupApi,
+} from '~/governance/authorization';
 
 interface CapabilityDeps {
   getUserPrincipals: (
@@ -132,6 +136,9 @@ export function generateCapabilityCheck(deps: CapabilityDeps): {
     user: CapabilityUser,
     capability: SystemCapability,
   ): Promise<boolean> {
+    if (isGovernanceAdministrator(user.role)) {
+      return governanceGroupCapabilities().includes(capability);
+    }
     if (!isMainThread && !workerWarned) {
       workerWarned = true;
       logger.warn(
@@ -208,9 +215,17 @@ export function generateCapabilityCheck(deps: CapabilityDeps): {
         if (
           isGovernancePilotEnabled() &&
           capability === SystemCapabilities.ACCESS_ADMIN &&
-          (req.user.provider !== 'openid' || req.user.role !== SystemRoles.ADMIN)
+          (req.user.provider !== 'openid' || !isGovernanceAdministrator(req.user.role))
         ) {
           res.status(403).json({ message: 'OIDC administrator entitlement required' });
+          return;
+        }
+
+        if (
+          isGovernanceAdministrator(req.user.role) &&
+          !isGovernanceGroupApi(req.method, req.originalUrl)
+        ) {
+          res.status(403).json({ message: 'Governance administrators may only manage groups' });
           return;
         }
 

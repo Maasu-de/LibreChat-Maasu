@@ -8,9 +8,20 @@ issuer, audience, expiry and entitlement checks still apply. Signed Keycloak
 `typ`, provider `token_use`, and access-token `at+jwt` header discriminators remain
 supported without a proof. Conflicting signed type markers are rejected.
 
-Entra administrator group-overage claims are resolved on login and both chat and
-admin refresh paths. A confirmed missing group removes administrator access;
-an unavailable Graph lookup denies refresh without persisting a role change.
+Only directly available configured claims are supported for login, administrator
+mapping, and generic role synchronization. Microsoft Graph resolution of Entra
+group-overage signals (`hasgroups`, `_claim_names`, `_claim_sources`) is outside
+the current scope. Configure the IdP to emit the required claim directly; an
+absent claim grants no entitlement.
+
+Pilot OIDC administrators use the separate `GOVERNANCE_ADMIN` role. It inherits
+USER chat permissions, and the API grants only group/membership operations plus
+session verification. The group editor reads its capabilities at
+`/api/admin/groups/capabilities` and searches membership candidates at
+`/api/admin/groups/users/search`; all other management APIs return 403, even if broad grants
+were previously assigned to the user or one of their groups. Full `ADMIN` remains distinct.
+Previously mapped pilot OIDC ADMIN sessions are narrowed at the authentication
+boundary immediately. Their persisted role migrates on the next login or refresh.
 
 Set `GOVERNANCE_PILOT_ENABLED=true`, `GOVERNANCE_DLP_ENABLED=true`,
 `OPENID_REUSE_TOKENS=true`,
@@ -97,3 +108,44 @@ WARN/MASK/BLOCK, stop/reconnect a stream, inspect saved history and manually ren
 a conversation. Check both regular and admin accounts; unsupported feature APIs
 must return 403 even when invoked directly. No live-provider calls are required
 by the regression tests.
+
+
+## Group audit delivery and recovery
+
+MongoDB must support transactions (replica set). A group mutation and its outbox
+event commit atomically; the request returns without contacting the Gateway.
+The background worker polls every five seconds, claims events with a 30-second
+lease, and sends up to 100 due events per pass. Crashed workers' leases expire.
+Each payload carries `occurred_at`, the original UTC mutation time, separately
+from the Gateway/PostgreSQL audit `timestamp` (recording time). Legacy pending
+events use their original outbox `createdAt` when delivered.
+
+The `governance_group_audit_outbox` collection stores `retryCount`,
+`nextAttemptAt`, `status`, and a sanitized `lastError` containing only a fixed
+category and optional HTTP status. Transient failures retry indefinitely with
+exponential backoff from five seconds to five minutes. HTTP 4xx responses other
+than 408, 425, and 429 quarantine the event. Later events keep delivering; the
+mutation UUID keeps retries idempotent at the Gateway.
+
+Alert on error logs containing `[Governance audit] Event quarantined` and
+`[Governance audit] Quarantined events require replay`. The worker repeats a
+quarantine-count alert at most once per minute while quarantined events remain.
+Connect these logs to the deployment's alerting sink before production. Inspect
+quarantined records in MongoDB and correct the rejected payload/configuration
+before replay; no provider response body or token is retained as an error.
+
+After building the packages, run from the repository root with the deployment's
+`MONGO_URI` configured:
+
+```sh
+node scripts/replay-governance-audit.js <mutation-uuid> [more-mutation-uuids]
+```
+
+Replay resets the selected quarantined records to pending with immediate retry.
+It preserves mutation IDs, actor/resource, and occurrence time. There is no
+browser-facing replay endpoint.
+
+After successful OIDC rotation, refresh credentials are retained even if a later
+administrator/userinfo lookup fails. Such failures issue no new authorized
+bearer and can be retried. Governance OIDC discovery is cached for five minutes;
+userinfo entitlement responses are not cached.

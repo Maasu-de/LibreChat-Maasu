@@ -209,7 +209,7 @@ describe('GET /api/governance/groups', () => {
     exchangeAccessToken.mockRejectedValue(new Error('OBO unavailable'));
     const userinfo = jest.spyOn(global, 'fetch');
     try {
-      expect((await getGroups(signToken())).status).toBe(401);
+      expect((await getGroups(signToken())).status).toBe(503);
       expect(userinfo).not.toHaveBeenCalled();
       expect(listGroups).not.toHaveBeenCalled();
     } finally {

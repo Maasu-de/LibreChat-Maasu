@@ -6,7 +6,11 @@ import { createModels, createMethods, runAsSystem } from '@librechat/data-schema
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import { createAdminGroupsHandlers } from '../../admin/groups';
-import { flushGovernanceGroupAudit, startGovernanceGroupAuditDelivery } from '../audit';
+import {
+  flushGovernanceGroupAudit,
+  startGovernanceGroupAuditDelivery,
+  replayGovernanceGroupAudit,
+} from '../audit';
 
 const environment = process.env;
 let replica: MongoMemoryReplSet;
@@ -112,6 +116,9 @@ it.each(['true', 'TRUE', 'True', ' true '])(
     expect(await runAsSystem(() => methods.getUserGroups(user._id))).toHaveLength(0);
     expect((await request(app).delete(`/groups/${id}`)).status).toBe(200);
     expect(await runAsSystem(() => methods.findGroupById(id))).toBeNull();
+    expect(sink).not.toHaveBeenCalled();
+    expect(await outbox().countDocuments()).toBe(5);
+    await flushGovernanceGroupAudit();
     const events = sink.mock.calls.map((call) => JSON.parse(call[1]?.body as string));
     expect(events.map((event) => event.action)).toEqual([
       'group.created',
@@ -128,6 +135,7 @@ it.each(['true', 'TRUE', 'True', ' true '])(
       });
       expect(event.resource.id).toBe(id);
       expect(event.outcome).toBe('success');
+      expect(Number.isFinite(Date.parse(event.occurred_at))).toBe(true);
       expect(event).not.toHaveProperty('email');
       expect(event).not.toHaveProperty('token');
       if (event.action.startsWith('membership.'))
@@ -163,6 +171,8 @@ it.each([
   const response = await request(app).post('/groups').send({ name: 'Audited by default' });
 
   expect(response.status).toBe(201);
+  expect(sink).not.toHaveBeenCalled();
+  await flushGovernanceGroupAudit();
   expect(sink).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: 'POST' }));
   expect(await outbox().countDocuments()).toBe(0);
 });
@@ -175,6 +185,8 @@ it('prefers an explicit audit endpoint over the gateway base URL', async () => {
   const response = await request(app).post('/groups').send({ name: 'Explicit audit endpoint' });
 
   expect(response.status).toBe(201);
+  expect(sink).not.toHaveBeenCalled();
+  await flushGovernanceGroupAudit();
   expect(sink).toHaveBeenCalledWith(
     process.env.GOVERNANCE_AUDIT_URL,
     expect.objectContaining({ method: 'POST' }),
@@ -225,6 +237,12 @@ it('keeps a durable event through an outage and reconnection, retrying the same 
   expect(response.status).toBe(201);
   expect(await runAsSystem(() => methods.findGroupById(response.body.group._id))).toBeTruthy();
   expect(await outbox().findOne()).toBeTruthy();
+  await flushGovernanceGroupAudit();
+  expect(await outbox().findOne()).toMatchObject({
+    retryCount: 1,
+    lastError: { kind: 'http', status: 503 },
+  });
+  await outbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
   await mongoose.disconnect();
   await mongoose.connect(replica.getUri());
   sink.mockImplementation(async () => new Response(null, { status: 204 }));
@@ -253,4 +271,68 @@ it('rolls back group writes if their durable audit cannot be persisted', async (
       validator: {},
     });
   }
+});
+
+it('backs off transient failures without blocking later events and preserves occurrence time', async () => {
+  const sink = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValueOnce(
+      Response.json({ token: 'must not persist', error: 'private detail' }, { status: 503 }),
+    )
+    .mockResolvedValue(new Response(null, { status: 204 }));
+  await request(app).post('/groups').send({ name: 'Retry' });
+  await request(app).post('/groups').send({ name: 'Later' });
+  const original = await outbox().find().sort({ createdAt: 1 }).next();
+  const started = Date.now();
+  await flushGovernanceGroupAudit();
+  const pending = await outbox().findOne();
+  expect(pending?.retryCount).toBe(1);
+  expect(pending?.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(started + 5000);
+  expect(pending?.lastError).toEqual({ kind: 'http', status: 503 });
+  expect(pending?.payload.occurred_at).toBe(original?.payload.occurred_at);
+  expect(await outbox().countDocuments()).toBe(1);
+  await flushGovernanceGroupAudit();
+  expect(sink).toHaveBeenCalledTimes(2);
+  await outbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
+  await flushGovernanceGroupAudit();
+  expect(await outbox().countDocuments()).toBe(0);
+});
+
+it('quarantines rejected events, alerts, delivers later events and supports replay', async () => {
+  const { logger } = await import('@librechat/data-schemas');
+  const alert = jest.spyOn(logger, 'error');
+  const sink = jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValueOnce(Response.json({ message: 'private details' }, { status: 422 }))
+    .mockResolvedValue(new Response(null, { status: 204 }));
+  await request(app).post('/groups').send({ name: 'Rejected' });
+  await request(app).post('/groups').send({ name: 'Deliverable' });
+  await flushGovernanceGroupAudit();
+  const rejected = await outbox().findOne();
+  expect(rejected?.status).toBe('quarantined');
+  expect(rejected?.lastError).toEqual({ kind: 'http', status: 422 });
+  expect(alert).toHaveBeenCalledWith(
+    expect.stringContaining('Event quarantined'),
+    expect.objectContaining({ status: 422 }),
+  );
+  expect(sink).toHaveBeenCalledTimes(2);
+  await flushGovernanceGroupAudit();
+  expect(sink).toHaveBeenCalledTimes(2);
+  expect(await replayGovernanceGroupAudit([rejected!._id.toString()])).toBe(1);
+  await flushGovernanceGroupAudit();
+  expect(JSON.parse(sink.mock.calls[0][1]?.body as string)).toEqual(
+    JSON.parse(sink.mock.calls[2][1]?.body as string),
+  );
+  expect(await outbox().countDocuments()).toBe(0);
+});
+
+it('recovers abandoned delivery leases and excludes active leases across workers', async () => {
+  jest.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+  await request(app).post('/groups').send({ name: 'Lease' });
+  await outbox().updateMany({}, { $set: { leaseUntil: new Date(Date.now() + 60000) } });
+  await flushGovernanceGroupAudit();
+  expect(await outbox().countDocuments()).toBe(1);
+  await outbox().updateMany({}, { $set: { leaseUntil: new Date(0) } });
+  await flushGovernanceGroupAudit();
+  expect(await outbox().countDocuments()).toBe(0);
 });

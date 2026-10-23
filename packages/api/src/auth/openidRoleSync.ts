@@ -2,6 +2,11 @@ import { get } from 'lodash';
 import { SystemRoles } from 'librechat-data-provider';
 import { isEnabled } from '~/utils';
 
+const isAdministratorRole = (role: string) =>
+  [SystemRoles.ADMIN.toLowerCase(), SystemRoles.GOVERNANCE_ADMIN.toLowerCase()].includes(
+    role.toLowerCase(),
+  );
+
 export type OpenIdRoleSyncClaimSource = 'access' | 'id' | 'userinfo';
 
 export type OpenIdRoleSyncOptions = {
@@ -33,7 +38,6 @@ type OpenIdRolesForOpenIdSyncInput = {
   claims?: unknown;
   userinfo?: unknown;
   decodeToken: (token: string) => unknown;
-  resolveGroupOverage?: () => Promise<string[] | null>;
 };
 
 type OpenIdRoleSyncRolesLookup = (
@@ -97,11 +101,11 @@ export function getOpenIdRoleSyncOptions(
     );
   }
 
-  if (rolePriority.some((role) => role.toLowerCase() === SystemRoles.ADMIN.toLowerCase())) {
+  if (rolePriority.some((role) => isAdministratorRole(role))) {
     throw new Error('[openidRoleSync] OPENID_ROLE_SYNC_ROLE_PRIORITY cannot include ADMIN');
   }
 
-  if (fallbackRole?.toLowerCase() === SystemRoles.ADMIN.toLowerCase()) {
+  if (fallbackRole && isAdministratorRole(fallbackRole)) {
     throw new Error('[openidRoleSync] OPENID_ROLE_SYNC_FALLBACK_ROLE cannot be ADMIN');
   }
 
@@ -110,7 +114,7 @@ export function getOpenIdRoleSyncOptions(
 
 /**
  * Extracts the configured role claim from the configured OpenID source.
- * Callers provide token decoding and optional group-overage resolution.
+ * Callers provide token decoding. Only directly available configured claims are supported.
  */
 export async function getOpenIdRolesForOpenIdSync({
   options,
@@ -120,7 +124,6 @@ export async function getOpenIdRolesForOpenIdSync({
   claims,
   userinfo,
   decodeToken,
-  resolveGroupOverage,
 }: OpenIdRolesForOpenIdSyncInput): Promise<string | unknown[] | undefined> {
   let source: unknown;
 
@@ -138,30 +141,6 @@ export async function getOpenIdRolesForOpenIdSync({
 
   if (!source || !options.claim) {
     return;
-  }
-
-  /**
-   * Azure AD/Entra moves an oversized `groups` claim into `_claim_names`/`_claim_sources`
-   * for both ID and access tokens, so overage resolution must cover both sources — not
-   * just the ID token — or `access`-sourced syncs silently see no groups for those users.
-   */
-  const supportsGroupOverage =
-    options.claim === 'groups' &&
-    (options.claimSource === 'id' || options.claimSource === 'access');
-  if (supportsGroupOverage) {
-    const claimsData = source as {
-      hasgroups?: unknown;
-      _claim_names?: { groups?: string };
-      _claim_sources?: Record<string, unknown>;
-    };
-    const groupSource = claimsData._claim_names?.groups;
-    const hasGroupOverage = Boolean(
-      claimsData.hasgroups || (groupSource && claimsData._claim_sources?.[groupSource]),
-    );
-
-    if (hasGroupOverage) {
-      return (await resolveGroupOverage?.()) ?? undefined;
-    }
   }
 
   const openIdRoleValues = get(source, options.claim);
@@ -257,7 +236,7 @@ export function selectOpenIdRole(
   const assignableRoleKeys = new Set(
     assignableRoles
       .map((role) => role.trim().toLowerCase())
-      .filter((role) => role && role !== SystemRoles.ADMIN.toLowerCase()),
+      .filter((role) => role && !isAdministratorRole(role)),
   );
   const openIdRoleKeys = new Set<string>();
 
@@ -272,7 +251,7 @@ export function selectOpenIdRole(
 
     if (
       !trimmed ||
-      key === SystemRoles.ADMIN.toLowerCase() ||
+      isAdministratorRole(key) ||
       (assignableRoleKeys.size > 0 && !assignableRoleKeys.has(key))
     ) {
       continue;
@@ -284,11 +263,7 @@ export function selectOpenIdRole(
   for (const role of input.rolePriority) {
     const trimmed = role.trim();
 
-    if (
-      trimmed &&
-      trimmed.toLowerCase() !== SystemRoles.ADMIN.toLowerCase() &&
-      openIdRoleKeys.has(trimmed.toLowerCase())
-    ) {
+    if (trimmed && !isAdministratorRole(trimmed) && openIdRoleKeys.has(trimmed.toLowerCase())) {
       return { selectedRole: trimmed, reason: 'matched_priority' };
     }
   }
@@ -305,7 +280,7 @@ export function selectOpenIdRole(
   if (input.fallbackRole) {
     const trimmed = input.fallbackRole.trim();
 
-    if (trimmed && trimmed.toLowerCase() !== SystemRoles.ADMIN.toLowerCase()) {
+    if (trimmed && !isAdministratorRole(trimmed)) {
       return { selectedRole: trimmed, reason: 'fallback' };
     }
   }

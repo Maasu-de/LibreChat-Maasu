@@ -148,6 +148,8 @@ describe('pilot HTTP boundary', () => {
     '/api/admin/config',
     '/api/admin/roles',
     '/api/admin/grants',
+    '/api/admin/grants/effective',
+    '/api/admin/users/search',
     '/api/admin/users',
     '/api/admin/audit-log',
     '/api/admin/login/local',
@@ -157,8 +159,8 @@ describe('pilot HTTP boundary', () => {
 
   it.each([
     '/api/admin/verify',
-    '/api/admin/grants/effective',
-    '/api/admin/users/search',
+    '/api/admin/groups/capabilities',
+    '/api/admin/groups/users/search',
     '/api/admin/groups',
     '/api/admin/oauth/openid/check',
   ])('retains group/session API %s', async (path) => {

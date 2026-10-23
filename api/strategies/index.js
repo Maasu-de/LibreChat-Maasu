@@ -4,7 +4,6 @@ const {
   getOpenIdEmail,
   getUserInfo,
   exchangeAccessTokenIfNeeded,
-  resolveGroupsFromOverage,
 } = require('./openidStrategy');
 const openIdJwtLogin = require('./openIdJwtStrategy');
 const facebookLogin = require('./facebookStrategy');
@@ -40,7 +39,6 @@ module.exports = {
   getOpenIdEmail,
   getUserInfo,
   exchangeAccessTokenIfNeeded,
-  resolveGroupsFromOverage,
   ldapLogin,
   setupSaml,
   openIdJwtLogin,

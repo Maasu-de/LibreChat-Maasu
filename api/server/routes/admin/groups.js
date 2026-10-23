@@ -1,7 +1,12 @@
 const express = require('express');
-const { createAdminGroupsHandlers, startGovernanceGroupAuditDelivery } = require('@librechat/api');
+const {
+  createAdminGroupsHandlers,
+  createAdminUsersHandlers,
+  getGovernanceGroupCapabilities,
+  startGovernanceGroupAuditDelivery,
+} = require('@librechat/api');
 const { SystemCapabilities } = require('@librechat/data-schemas');
-const { requireCapability } = require('~/server/middleware/roles/capabilities');
+const { hasCapability, requireCapability } = require('~/server/middleware/roles/capabilities');
 const { requireJwtAuth } = require('~/server/middleware');
 const db = require('~/models');
 
@@ -27,7 +32,20 @@ const handlers = createAdminGroupsHandlers({
   deleteAclEntries: db.deleteAclEntries,
 });
 
+const users = createAdminUsersHandlers({
+  findUsers: db.findUsers,
+  countUsers: db.countUsers,
+  deleteUserById: db.deleteUserById,
+  deleteConfig: db.deleteConfig,
+  deleteAclEntries: db.deleteAclEntries,
+});
+
 router.use(requireJwtAuth, requireAdminAccess);
+
+router.get('/capabilities', requireReadGroups, async (req, res) =>
+  res.json({ capabilities: await getGovernanceGroupCapabilities(req.user, hasCapability) }),
+);
+router.get('/users/search', requireManageGroups, users.searchUsers);
 
 router.get('/', requireReadGroups, handlers.listGroups);
 router.post('/', requireManageGroups, handlers.createGroup);

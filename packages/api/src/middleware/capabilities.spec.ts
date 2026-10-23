@@ -122,7 +122,8 @@ describe('generateCapabilityCheck', () => {
         [enabled, 'local', 'ADMIN', false],
         [enabled, 'openid', 'USER', false],
         [enabled, 'openid', 'delegated', false],
-        [enabled, 'openid', 'ADMIN', true],
+        [enabled, 'openid', 'ADMIN', false],
+        [enabled, 'openid', 'GOVERNANCE_ADMIN', true],
       ]),
     )(
       'pilot mode %j requires an OIDC administrator: %s %s',
@@ -130,6 +131,8 @@ describe('generateCapabilityCheck', () => {
         const previous = process.env.GOVERNANCE_PILOT_ENABLED;
         process.env.GOVERNANCE_PILOT_ENABLED = enabled;
         try {
+          mockReq.method = 'GET';
+          mockReq.originalUrl = '/api/admin/groups';
           mockReq.user = { id: 'user-123', provider, role } as ServerRequest['user'];
           mockGetUserPrincipals.mockResolvedValue(adminPrincipals);
           mockHasCapabilityForPrincipals.mockResolvedValue(true);

@@ -129,15 +129,14 @@ describe('getOpenIdRolesForOpenIdSync', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('uses overage resolution for id token groups', async () => {
+  it('treats missing direct ID-token groups as empty', async () => {
     await expect(
       getOpenIdRolesForOpenIdSync({
         options: { ...options, claim: 'groups' },
         idToken: 'id-token',
         decodeToken: () => ({ hasgroups: true }),
-        resolveGroupOverage: async () => ['group-a'],
       }),
-    ).resolves.toEqual(['group-a']);
+    ).resolves.toEqual([]);
   });
 
   it('decodes only the configured access token source', async () => {
@@ -154,7 +153,7 @@ describe('getOpenIdRolesForOpenIdSync', () => {
     expect(decodeToken).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves group overage from an access token source (not just id)', async () => {
+  it('treats missing direct access-token groups as empty', async () => {
     await expect(
       getOpenIdRolesForOpenIdSync({
         options: { ...options, claimSource: 'access', claim: 'groups' },
@@ -163,9 +162,8 @@ describe('getOpenIdRolesForOpenIdSync', () => {
           _claim_sources: { src1: { endpoint: 'https://graph' } },
         },
         decodeToken: () => ({}),
-        resolveGroupOverage: async () => ['group-a'],
       }),
-    ).resolves.toEqual(['group-a']);
+    ).resolves.toEqual([]);
   });
 
   it('uses claims for the id source when no id token is available', async () => {

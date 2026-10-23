@@ -16,8 +16,16 @@ export type GroupMutationAction =
 interface GroupAuditDelivery {
   _id: string;
   createdAt: Date;
+  status?: 'pending' | 'quarantined';
+  retryCount?: number;
+  nextAttemptAt?: Date;
+  leaseUntil?: Date;
+  leaseId?: string;
+  lastError?: { kind: 'http' | 'network'; status?: number };
+  quarantinedAt?: Date;
   payload: {
     mutation_id: string;
+    occurred_at: string;
     action: GroupMutationAction;
     outcome: 'success';
     actor: { issuer: string; user_id: string };
@@ -103,13 +111,18 @@ export async function mutateGovernanceGroup(
                 })),
               ]
             : [{ action, userId: affectedUserIds[0] }];
+        const occurredAt = new Date();
         const deliveries: GroupAuditDelivery[] = events.map((event) => {
           const id = randomUUID();
           return {
             _id: id,
-            createdAt: new Date(),
+            createdAt: occurredAt,
+            status: 'pending',
+            retryCount: 0,
+            nextAttemptAt: occurredAt,
             payload: {
               mutation_id: id,
+              occurred_at: occurredAt.toISOString(),
               action: event.action,
               outcome: 'success',
               actor: identity,
@@ -126,7 +139,6 @@ export async function mutateGovernanceGroup(
       },
       { writeConcern: { w: 'majority' } },
     );
-    await flushGovernanceGroupAudit();
     return result;
   } finally {
     await session.endSession();
@@ -135,21 +147,97 @@ export async function mutateGovernanceGroup(
 
 let delivery: Promise<void> | undefined;
 
+const RETRY_BASE_MS = 5000;
+const RETRY_MAX_MS = 5 * 60 * 1000;
+const LEASE_MS = 30000;
+let lastQuarantineAlert = 0;
+
 async function deliverPendingAudit(): Promise<void> {
   const endpoint = getGovernanceGroupAuditUrl();
   const credential = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!endpoint || !credential || mongoose.connection.readyState !== 1) return;
-  const records = await outbox().find().sort({ createdAt: 1, _id: 1 }).limit(100).toArray();
-  for (const record of records) {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      signal: AbortSignal.timeout(5000),
-      headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
-      body: JSON.stringify(record.payload),
+  for (let i = 0; i < 100; i++) {
+    const now = new Date();
+    const leaseId = randomUUID();
+    const record = await outbox().findOneAndUpdate(
+      {
+        status: { $ne: 'quarantined' },
+        $and: [
+          { $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: { $lte: now } }] },
+          { $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: now } }] },
+        ],
+      },
+      { $set: { leaseId, leaseUntil: new Date(now.getTime() + LEASE_MS) } },
+      { sort: { createdAt: 1, _id: 1 }, returnDocument: 'after' },
+    );
+    if (!record) break;
+    const filter = { _id: record._id, leaseId };
+    let status: number | undefined;
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        signal: AbortSignal.timeout(5000),
+        headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...record.payload,
+          occurred_at: record.payload.occurred_at ?? record.createdAt.toISOString(),
+        }),
+      });
+      status = response.status;
+      if (response.ok) {
+        await outbox().deleteOne(filter);
+        continue;
+      }
+    } catch {
+      // Store only a fixed error category; provider bodies and credentials stay out of the outbox.
+    }
+    const retryCount = (record.retryCount ?? 0) + 1;
+    const rejected =
+      status != null && status >= 400 && status < 500 && ![408, 425, 429].includes(status);
+    const lastError: NonNullable<GroupAuditDelivery['lastError']> =
+      status == null ? { kind: 'network' } : { kind: 'http', status };
+    await outbox().updateOne(filter, {
+      $set: {
+        status: rejected ? 'quarantined' : 'pending',
+        retryCount,
+        lastError,
+        ...(rejected
+          ? { quarantinedAt: new Date() }
+          : {
+              nextAttemptAt: new Date(
+                Date.now() +
+                  Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(retryCount - 1, 16)),
+              ),
+            }),
+      },
+      $unset: { leaseUntil: '', leaseId: '' },
     });
-    if (!response.ok) throw new Error('Governance audit delivery pending');
-    await outbox().deleteOne({ _id: record._id });
+    if (rejected)
+      logger.error('[Governance audit] Event quarantined; operator replay required', {
+        mutationId: record._id,
+        retryCount,
+        status,
+      });
   }
+  if (Date.now() - lastQuarantineAlert >= 60000) {
+    const quarantined = await outbox().countDocuments({ status: 'quarantined' });
+    if (quarantined)
+      logger.error('[Governance audit] Quarantined events require replay', { count: quarantined });
+    lastQuarantineAlert = Date.now();
+  }
+}
+
+/** Operator-only recovery after correcting the rejection; preserves identity and chronology. */
+export async function replayGovernanceGroupAudit(mutationIds: string[]): Promise<number> {
+  if (!mutationIds.length) throw new Error('Specify quarantined mutation IDs to replay');
+  const result = await outbox().updateMany(
+    { _id: { $in: mutationIds }, status: 'quarantined' },
+    {
+      $set: { status: 'pending', retryCount: 0, nextAttemptAt: new Date() },
+      $unset: { quarantinedAt: '', lastError: '', leaseUntil: '', leaseId: '' },
+    },
+  );
+  return result.modifiedCount;
 }
 
 /** Retain pending events on network failures; duplicate deliveries are deduplicated by the Gateway. */

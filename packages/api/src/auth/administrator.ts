@@ -5,6 +5,16 @@ import type { IUser } from '@librechat/data-schemas';
 import type { RefreshTokenset } from './refresh';
 import { isGovernancePilotEnabled } from '../governance/mode';
 
+export const GOVERNANCE_ADMIN_ROLE: SystemRoles.GOVERNANCE_ADMIN = SystemRoles.GOVERNANCE_ADMIN;
+
+/** Narrow previously mapped OIDC ADMIN sessions immediately, before their next refresh. */
+export function scopeGovernanceAdministrator(user: IUser): IUser {
+  if (isGovernancePilotEnabled() && user.provider === 'openid' && user.role === SystemRoles.ADMIN) {
+    user.role = GOVERNANCE_ADMIN_ROLE;
+  }
+  return user;
+}
+
 export function assertOidcAdministratorConfigured(): void {
   if (!isGovernancePilotEnabled()) return;
   if (!process.env.OPENID_ADMIN_ROLE?.trim()) {
@@ -24,42 +34,12 @@ export function requiresOidcEntitlementRefresh(user: Pick<IUser, 'provider'>): b
   return isGovernancePilotEnabled() && user.provider === 'openid';
 }
 
-export function hasOidcAdministratorClaim(claims: object, resolvedGroups?: string[]): boolean {
+export function hasOidcAdministratorClaim(claims: object): boolean {
   const role = process.env.OPENID_ADMIN_ROLE ?? 'governance-admin';
-  const value =
-    resolvedGroups ??
-    get(claims, process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH ?? 'realm_access.roles');
+  const value = get(claims, process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH ?? 'realm_access.roles');
   if (value === true) return true;
   const values = typeof value === 'string' ? value.split(/[\s,]+/).filter(Boolean) : value;
   return Array.isArray(values) && values.includes(role);
-}
-
-type ResolveAdministratorGroups = (
-  accessToken: string,
-  subject: string,
-) => Promise<string[] | null>;
-
-export async function resolveOidcAdministratorGroups(
-  claims: object,
-  accessToken: string | undefined,
-  subject: string | undefined,
-  resolveGroups?: ResolveAdministratorGroups,
-): Promise<string[] | undefined> {
-  if (
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND !== 'id' ||
-    process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH !== 'groups'
-  )
-    return;
-  const groupSource: string | undefined = get(claims, '_claim_names.groups');
-  const hasOverage =
-    get(claims, 'hasgroups') || (groupSource && get(claims, ['_claim_sources', groupSource]));
-  if (!hasOverage) return;
-  if (!accessToken || !subject || !resolveGroups) {
-    throw new Error('OIDC administrator group resolution unavailable');
-  }
-  const groups = await resolveGroups(accessToken, subject);
-  if (!groups) throw new Error('OIDC administrator group resolution unavailable');
-  return groups;
 }
 
 /** Tokensets must come from the validated OIDC login or refresh grant. */
@@ -68,7 +48,6 @@ export async function syncOidcAdministrator(
   tokenset: RefreshTokenset,
   updateUser: (id: string, data: Partial<IUser>) => Promise<IUser | null>,
   getUserInfo?: (accessToken: string, subject: string) => Promise<{ sub?: string } | null>,
-  resolveGroups?: ResolveAdministratorGroups,
 ): Promise<void> {
   assertOidcAdministratorConfigured();
   if (!process.env.OPENID_ADMIN_ROLE) return;
@@ -87,15 +66,10 @@ export async function syncOidcAdministrator(
     claims = info;
   } else throw new Error('Unsupported OIDC administrator source');
   if (!claims) throw new Error('Missing OIDC administrator claims');
-  const groups = await resolveOidcAdministratorGroups(
-    claims,
-    tokenset.access_token,
-    tokenset.claims().sub,
-    resolveGroups,
-  );
   let role = user.role;
-  if (hasOidcAdministratorClaim(claims, groups)) role = SystemRoles.ADMIN;
-  else if (role === SystemRoles.ADMIN) role = SystemRoles.USER;
+  if (hasOidcAdministratorClaim(claims)) {
+    role = isGovernancePilotEnabled() ? GOVERNANCE_ADMIN_ROLE : SystemRoles.ADMIN;
+  } else if (role === SystemRoles.ADMIN || role === GOVERNANCE_ADMIN_ROLE) role = SystemRoles.USER;
   if (role === user.role) return;
   const updated = await updateUser(user._id.toString(), { role });
   if (!updated) throw new Error('Unable to synchronize OIDC administrator');

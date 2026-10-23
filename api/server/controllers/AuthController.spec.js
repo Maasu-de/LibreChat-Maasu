@@ -1,4 +1,5 @@
 jest.mock('@librechat/data-schemas', () => ({
+  DEFAULT_REFRESH_TOKEN_EXPIRY: 604800000,
   logger: { error: jest.fn(), debug: jest.fn(), warn: jest.fn(), info: jest.fn() },
 }));
 jest.mock('~/server/services/GraphTokenService', () => ({
@@ -16,7 +17,6 @@ jest.mock('~/strategies', () => ({
   getOpenIdConfig: jest.fn(),
   getOpenIdEmail: jest.fn(),
   getUserInfo: jest.fn(),
-  resolveGroupsFromOverage: jest.fn(),
 }));
 jest.mock('openid-client', () => ({ refreshTokenGrant: jest.fn() }));
 jest.mock('~/models', () => ({
@@ -34,6 +34,9 @@ jest.mock('@librechat/api', () => ({
     jest.requireActual('@librechat/api').requiresOidcEntitlementRefresh,
   findOpenIDUser: jest.fn(),
   syncOidcAdministrator: jest.fn(),
+  shouldUseSecureCookie: jest.fn(() => false),
+  preserveRotatedOpenIdRefreshToken:
+    jest.requireActual('@librechat/api').preserveRotatedOpenIdRefreshToken,
   getOpenIdIssuer: jest.fn(() => 'https://issuer.example.com'),
   buildOpenIDRefreshParams: jest.fn(() => {
     const params = {};
@@ -63,12 +66,7 @@ const {
   setCloudFrontAuthCookies,
   setAuthTokens,
 } = require('~/server/services/AuthService');
-const {
-  getOpenIdConfig,
-  getOpenIdEmail,
-  getUserInfo,
-  resolveGroupsFromOverage,
-} = require('~/strategies');
+const { getOpenIdConfig, getOpenIdEmail, getUserInfo } = require('~/strategies');
 const { getUserById, findSession, updateUser } = require('~/models');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
@@ -270,6 +268,8 @@ describe('refreshController – OpenID path', () => {
     res = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+      cookie: jest.fn().mockReturnThis(),
       redirect: jest.fn(),
     };
   });
@@ -329,7 +329,6 @@ describe('refreshController – OpenID path', () => {
       mockTokenset,
       updateUser,
       expect.any(Function),
-      resolveGroupsFromOverage,
     );
     const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
     await fetchUserInfo('refreshed-access-token', baseClaims.sub);
@@ -346,8 +345,14 @@ describe('refreshController – OpenID path', () => {
   it('does not issue refreshed credentials when entitlement synchronization fails', async () => {
     syncOidcAdministrator.mockRejectedValueOnce(new Error('OIDC unavailable'));
     await refreshController(req, res);
-    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.status).toHaveBeenCalledWith(503);
     expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
+    expect(res.cookie).toHaveBeenCalledWith(
+      'refreshToken',
+      'new-refresh',
+      expect.objectContaining({ httpOnly: true }),
+    );
+    expect(req.session.openidTokens.refreshToken).toBe('new-refresh');
   });
 
   it('removes a revoked administrator entitlement during a pilot IdP refresh', async () => {
@@ -407,7 +412,7 @@ describe('refreshController – OpenID path', () => {
       try {
         await refreshController(req, res);
 
-        expect(res.status).toHaveBeenCalledWith(403);
+        expect(res.status).toHaveBeenCalledWith(503);
         expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
         expect(updateUser).not.toHaveBeenCalled();
       } finally {
@@ -906,6 +911,8 @@ describe('refreshController – LibreChat path', () => {
     res = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+      cookie: jest.fn().mockReturnThis(),
       redirect: jest.fn(),
     };
   });

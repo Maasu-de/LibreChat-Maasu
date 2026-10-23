@@ -6,6 +6,7 @@ import type { IGroup } from '@librechat/data-schemas';
 import type { JwtPayload } from 'jsonwebtoken';
 import { hasOidcAdministratorClaim } from '../auth/administrator';
 import { normalizeOpenIdIssuer } from '../auth/openid';
+import { governanceOidcMetadata, clearGovernanceDiscoveryCache } from './discovery';
 import { hasGovernanceTokenSource } from './token';
 
 const PAGE_SIZE = 200;
@@ -32,27 +33,23 @@ export interface UserGroupIdsDeps {
 }
 
 /** Keyed by the configured issuer (never a token value), so it holds one entry per realm */
-type OidcSigningKeys = { client: jwksRsa.JwksClient; issuer: string };
+type OidcSigningKeys = { client: jwksRsa.JwksClient; issuer: string; expiresAt: number };
 const jwksClients = new Map<string, OidcSigningKeys>();
 
 export function clearGovernanceJwksCache(): void {
   jwksClients.clear();
+  clearGovernanceDiscoveryCache();
 }
 
 async function getJwksClient(issuer: string): Promise<OidcSigningKeys> {
   const cached = jwksClients.get(issuer);
-  if (cached) {
+  if (cached && cached.expiresAt > Date.now()) {
     return cached;
   }
   let jwksUri = process.env.OIDC_JWKS_URI || `${issuer}/protocol/openid-connect/certs`;
   let tokenIssuer = issuer;
   if (!issuer.includes('/realms/')) {
-    const response = await fetch(`${issuer}/.well-known/openid-configuration`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) throw new Error('OIDC discovery unavailable');
-    const metadata = (await response.json()) as { issuer: string; jwks_uri: string };
-    if (metadata.issuer.replace(/\/$/, '') !== issuer) throw new Error('OIDC issuer mismatch');
+    const metadata = await governanceOidcMetadata(issuer);
     jwksUri = process.env.OIDC_JWKS_URI || metadata.jwks_uri;
     tokenIssuer = metadata.issuer;
   }
@@ -63,7 +60,7 @@ async function getJwksClient(issuer: string): Promise<OidcSigningKeys> {
     cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
     rateLimit: true,
   });
-  const keys = { client, issuer: tokenIssuer };
+  const keys = { client, issuer: tokenIssuer, expiresAt: Date.now() + JWKS_CACHE_MAX_AGE_MS };
   jwksClients.set(issuer, keys);
   return keys;
 }
@@ -141,16 +138,7 @@ export function createRequireGovernanceAdminToken({
         let endpoint =
           process.env.OIDC_USERINFO_URI || `${issuer}/protocol/openid-connect/userinfo`;
         if (!issuer.includes('/realms/') && !process.env.OIDC_USERINFO_URI) {
-          const discovery = await fetch(`${issuer}/.well-known/openid-configuration`, {
-            signal: AbortSignal.timeout(5000),
-          });
-          if (!discovery.ok) throw new Error('OIDC discovery unavailable');
-          const metadata = (await discovery.json()) as {
-            issuer: string;
-            userinfo_endpoint: string;
-          };
-          if (metadata.issuer.replace(/\/$/, '') !== issuer)
-            throw new Error('OIDC issuer mismatch');
+          const metadata = await governanceOidcMetadata(issuer);
           endpoint = metadata.userinfo_endpoint;
         }
         const userinfoToken = await exchangeAccessToken(token, claims.sub);
@@ -158,10 +146,15 @@ export function createRequireGovernanceAdminToken({
           headers: { authorization: `Bearer ${userinfoToken}` },
           signal: AbortSignal.timeout(5000),
         });
+        if (!response.ok && response.status !== 401) {
+          res.status(503).json({ message: 'OIDC userinfo unavailable' });
+          return;
+        }
         const info = response.ok ? ((await response.json()) as { sub?: string }) : null;
         roleClaims = info?.sub === claims.sub ? info : null;
       } catch {
-        roleClaims = null;
+        res.status(503).json({ message: 'OIDC userinfo unavailable' });
+        return;
       }
     }
 

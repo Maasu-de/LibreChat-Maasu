@@ -91,7 +91,6 @@ jest.mock('~/cache/getLogStores', () =>
 jest.mock('~/strategies', () => ({
   getOpenIdConfig: jest.fn(),
   getUserInfo: jest.fn(),
-  resolveGroupsFromOverage: jest.fn(),
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -111,7 +110,7 @@ const {
   syncOidcAdministrator,
   buildOpenIDRefreshParams,
 } = require('@librechat/api');
-const { getOpenIdConfig, getUserInfo, resolveGroupsFromOverage } = require('~/strategies');
+const { getOpenIdConfig, getUserInfo } = require('~/strategies');
 const { updateUser } = require('~/models');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const adminAuthRouter = require('./auth');
@@ -226,7 +225,6 @@ describe('admin auth OpenID refresh route', () => {
       tokenset,
       updateUser,
       expect.any(Function),
-      resolveGroupsFromOverage,
     );
     const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
     await fetchUserInfo(tokenset.access_token, 'admin-openid-id');
@@ -257,7 +255,7 @@ describe('admin auth OpenID refresh route', () => {
         ).resolves.toBe(false);
         expect(hasCapability).not.toHaveBeenCalled();
         await expect(
-          canAccessAdmin({ id: 'user-id', provider: 'openid', role: 'ADMIN' }),
+          canAccessAdmin({ id: 'user-id', provider: 'openid', role: 'GOVERNANCE_ADMIN' }),
         ).resolves.toBe(true);
         expect(hasCapability).toHaveBeenCalledTimes(1);
       } finally {
@@ -309,5 +307,15 @@ describe('admin auth OpenID refresh route', () => {
     expect(debugOutput).not.toContain('new-admin-id');
     expect(debugOutput).not.toContain('new-admin-refresh');
     expect(debugOutput).not.toContain('https://api.example.com');
+  });
+  it('retains rotated refresh credentials when subsequent administrator validation fails', async () => {
+    const { applyAdminRefresh } = require('@librechat/api');
+    applyAdminRefresh.mockRejectedValueOnce(new Error('Provider userinfo unavailable'));
+    const response = await request(app)
+      .post('/api/admin/oauth/refresh')
+      .send({ refresh_token: 'incoming-refresh-token' });
+    expect(response.status).toBe(503);
+    expect(response.body.refreshToken).toBe(tokenset.refresh_token);
+    expect(response.body).not.toHaveProperty('token');
   });
 });
