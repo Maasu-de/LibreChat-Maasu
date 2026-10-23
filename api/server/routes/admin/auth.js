@@ -619,9 +619,18 @@ router.post(
         return res.json(result);
       } catch (err) {
         if (err instanceof AdminRefreshError) {
-          return res.status(err.status).json({ error: err.message, error_code: err.code });
+          return res.status(err.status).json({
+            error: err.message,
+            error_code: err.code,
+            ...(tokenset.refresh_token ? { refreshToken: tokenset.refresh_token } : {}),
+          });
         }
-        throw err;
+        logger.error('[admin/oauth/refresh] Post-refresh validation failed:', err);
+        return res.status(500).json({
+          error: 'Internal server error',
+          error_code: 'INTERNAL_ERROR',
+          ...(tokenset.refresh_token ? { refreshToken: tokenset.refresh_token } : {}),
+        });
       }
     } catch (error) {
       logger.error('[admin/oauth/refresh] Error:', error);

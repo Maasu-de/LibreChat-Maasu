@@ -109,7 +109,12 @@ jest.mock('~/server/middleware', () => ({
 
 const openIdClient = require('openid-client');
 const { logger } = require('@librechat/data-schemas');
-const { isEnabled, applyAdminRefresh, buildOpenIDRefreshParams } = require('@librechat/api');
+const {
+  isEnabled,
+  applyAdminRefresh,
+  AdminRefreshError,
+  buildOpenIDRefreshParams,
+} = require('@librechat/api');
 const { getOpenIdConfig } = require('~/strategies');
 const adminAuthRouter = require('./auth');
 
@@ -225,6 +230,42 @@ describe('admin auth OpenID refresh route', () => {
       error_code: 'REFRESH_FAILED',
     });
     expect(applyAdminRefresh).not.toHaveBeenCalled();
+  });
+
+  it('returns a rotated refresh token when post-refresh authorization fails', async () => {
+    applyAdminRefresh.mockRejectedValue(
+      new AdminRefreshError('FORBIDDEN', 403, 'User does not have admin access'),
+    );
+
+    const response = await request(app)
+      .post('/api/admin/oauth/refresh')
+      .send({ refresh_token: 'incoming-refresh-token' });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      error: 'User does not have admin access',
+      error_code: 'FORBIDDEN',
+      refreshToken: 'new-admin-refresh',
+    });
+  });
+
+  it('returns a rotated refresh token when post-refresh validation is unavailable', async () => {
+    applyAdminRefresh.mockRejectedValue(new Error('database unavailable'));
+
+    const response = await request(app)
+      .post('/api/admin/oauth/refresh')
+      .send({ refresh_token: 'incoming-refresh-token' });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Internal server error',
+      error_code: 'INTERNAL_ERROR',
+      refreshToken: 'new-admin-refresh',
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      '[admin/oauth/refresh] Post-refresh validation failed:',
+      expect.any(Error),
+    );
   });
 
   it('keeps admin refresh diagnostics free of token and audience values', async () => {
