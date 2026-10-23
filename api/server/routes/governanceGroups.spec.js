@@ -86,10 +86,10 @@ it('exchanges the verified governance token using the configured OIDC client', a
   expect(listGroups).toHaveBeenCalled();
 });
 
-it('denies access when the configured OBO exchange fails', async () => {
+it('reports authentication unavailable when the configured OBO exchange fails', async () => {
   exchangeAccessTokenIfNeeded.mockRejectedValueOnce(new Error('Token exchange rejected'));
 
-  expect((await getGroups().response).status).toBe(401);
+  expect((await getGroups().response).status).toBe(503);
   expect(userinfo).not.toHaveBeenCalled();
   expect(listGroups).not.toHaveBeenCalled();
 });
