@@ -285,6 +285,9 @@ export function findingsInFiles(
     if (fileId !== undefined) {
       counter.fileId = fileId;
     }
+    if (finding.label !== undefined) {
+      counter.label = finding.label;
+    }
     counted.set(key, counter);
   }
   return Array.from(counted.values());
