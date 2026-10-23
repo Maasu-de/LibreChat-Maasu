@@ -13,8 +13,16 @@ import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
 type TextSegment = { text: string; finding?: GovernanceFinding; replacement?: boolean };
+type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
 
 const label = (category: string) => category.replaceAll('_', ' ');
+
+/**
+ * Opaque keys of custom categories, which are never shown to the user. The gateway labels them
+ * (`src/governance/category_labels.py` in ai-governance-gateway); this only covers reviews
+ * without a label.
+ */
+const CUSTOM_CATEGORY_PREFIX = 'CUSTOM_';
 
 const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
   CLIENT_NAME: 'com_ui_dlp_category_client_name',
@@ -127,9 +135,17 @@ export default function DlpInterventionDialog({
 }) {
   const localize = useLocalize();
   const { decision } = result;
-  const categoryLabel = (category: string) => {
+  const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
+    if (displayName) {
+      return displayName;
+    }
     const key = CATEGORY_COPY[category];
-    return key ? localize(key) : label(category);
+    if (key) {
+      return localize(key);
+    }
+    return category.startsWith(CUSTOM_CATEGORY_PREFIX)
+      ? localize('com_ui_dlp_category_custom_term')
+      : label(category);
   };
   const originalSegments = useMemo(
     () => buildFindingSegments(originalText, result.findings),
@@ -188,11 +204,11 @@ export default function DlpInterventionDialog({
               (segment, index) => (
                 <mark
                   key={index}
-                  title={categoryLabel(segment.finding!.category)}
+                  title={categoryLabel(segment.finding!)}
                   className="rounded bg-amber-200 px-0.5 text-gray-950 outline outline-1 outline-amber-500 dark:bg-amber-700 dark:text-white"
                 >
                   {segment.text}
-                  <span className="sr-only"> ({categoryLabel(segment.finding!.category)})</span>
+                  <span className="sr-only"> ({categoryLabel(segment.finding!)})</span>
                 </mark>
               ),
             )}
@@ -211,7 +227,7 @@ export default function DlpInterventionDialog({
                         ACTION_CLASS[finding.action],
                       )}
                     >
-                      {categoryLabel(finding.category)} · {localize(DECISION_COPY[finding.action])}
+                      {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
                       {finding.replacement ? ` → ${finding.replacement}` : ''}
                     </li>
                   ))}
@@ -237,8 +253,7 @@ export default function DlpInterventionDialog({
                               ACTION_CLASS[finding.action],
                             )}
                           >
-                            {categoryLabel(finding.category)} ·{' '}
-                            {localize(DECISION_COPY[finding.action])}
+                            {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
                             {finding.count > 1 ? ` × ${finding.count}` : ''}
                           </li>
                         ))}

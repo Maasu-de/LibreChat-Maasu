@@ -329,6 +329,30 @@ describe('submitted text helpers', () => {
     expect(findingsInFiles(messages, findings, submitted)).toEqual([]);
   });
 
+  it('carries the display name of a custom category to its file counter', () => {
+    const category = 'CUSTOM_8F14E45FCEEA167A5A36DEDD4BEA2543';
+    const messages = [{ role: 'user', content: WITH_FILES }];
+    const findings = [
+      {
+        ...ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+        category,
+        label: 'Project Names',
+      },
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, [attachedContext(true)])).toEqual([
+      {
+        filename: 'report.pdf',
+        fileId: 'file-report',
+        category,
+        label: 'Project Names',
+        action: 'MASK',
+        count: 1,
+      },
+    ]);
+  });
+
   it('masks by code point like the gateway', () => {
     const text = '🙂 max@example.com and max@example.com';
     const findings = [
