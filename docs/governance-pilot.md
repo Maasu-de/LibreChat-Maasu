@@ -43,6 +43,22 @@ startup, OpenID login, and authentication refresh. A stored LibreChat `ADMIN` ro
 cannot substitute for this mapping. Outside pilot mode, administrator mapping
 remains optional.
 
+Set `GOVERNANCE_ADMIN_CLIENT_ID` to the **Gateway web OIDC client ID** used by the
+administrator whose token is forwarded to LibreChat. For bundled Keycloak use
+`GOVERNANCE_ADMIN_CLIENT_ID=governance-web`. For a customer IdP, use the Gateway's
+`OIDC_WEB_CLIENT_ID` (or `AUTH_KEYCLOAK_ID` when running its web process outside
+Compose). This audience is required for `/api/governance/groups` and
+`/api/governance/usage-labels`; it must match the forwarded token's audience.
+LibreChat's own `OPENID_CLIENT_ID` identifies a separate client and is not a
+fallback for this setting. Missing or blank `GOVERNANCE_ADMIN_CLIENT_ID` rejects
+pilot startup with an explicit configuration error. Outside pilot mode it is
+required only when using these governance lookup endpoints, which return 503
+when it is absent.
+
+The Gateway repository's Compose deployment supplies this variable automatically
+from `OIDC_WEB_CLIENT_ID`, or defaults to `governance-web` for bundled Keycloak.
+Standalone LibreChat deployments must set it explicitly in their environment.
+
 Group and membership auditing uses the same service credential. The audit endpoint
 defaults to the Gateway base URL with `/api/v1/dlp` replaced by
 `/api/v1/internal/group-audit`, preserving any reverse-proxy prefix. To use a

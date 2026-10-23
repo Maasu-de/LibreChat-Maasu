@@ -1,11 +1,11 @@
 import type { TCustomConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
-import { assertOidcAdministratorConfigured } from '../auth/administrator';
 import {
   GOVERNANCE_ENDPOINT,
   isGovernancePilotEnabled,
   isGovernanceAttachmentsEnabled,
 } from './mode';
+import { assertOidcAdministratorConfigured } from '../auth/administrator';
 import { isEnabled } from '~/utils/common';
 
 /** The only attachment types the pilot accepts: txt, md, csv, pdf and docx, all parsed to text. */
@@ -105,6 +105,11 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
     );
   }
   assertOidcAdministratorConfigured();
+  if (!process.env.GOVERNANCE_ADMIN_CLIENT_ID?.trim()) {
+    throw new Error(
+      'Governed pilot requires GOVERNANCE_ADMIN_CLIENT_ID for the Gateway web OIDC client',
+    );
+  }
   const baseURL = process.env.GOVERNANCE_API_BASE_URL;
   const apiKey = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!baseURL || !apiKey || apiKey === 'user_provided') {

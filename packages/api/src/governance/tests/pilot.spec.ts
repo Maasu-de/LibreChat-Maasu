@@ -27,6 +27,7 @@ beforeEach(() => {
   process.env.OPENID_ADMIN_ROLE = 'governance-admin';
   process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'realm_access.roles';
   process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'access';
+  process.env.GOVERNANCE_ADMIN_CLIENT_ID = 'governance-web';
   process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.OPENAI_MODERATION = 'false';
@@ -459,10 +460,27 @@ describe('pilot configuration', () => {
     'OPENID_ADMIN_ROLE',
     'OPENID_ADMIN_ROLE_PARAMETER_PATH',
     'OPENID_ADMIN_ROLE_TOKEN_KIND',
+    'GOVERNANCE_ADMIN_CLIENT_ID',
   ])('rejects pilot startup without %s', (key) => {
     delete process.env[key];
 
     expect(() => restrictGovernanceConfig({})).toThrow(key);
+  });
+  it.each(['', '   ', '\t'])('rejects blank governance token audience %j at startup', (value) => {
+    process.env.GOVERNANCE_ADMIN_CLIENT_ID = value;
+
+    expect(() => restrictGovernanceConfig({})).toThrow('GOVERNANCE_ADMIN_CLIENT_ID');
+  });
+  it('requires the Gateway audience even when the LibreChat OIDC client is configured', () => {
+    process.env.OPENID_CLIENT_ID = 'librechat';
+    delete process.env.GOVERNANCE_ADMIN_CLIENT_ID;
+
+    expect(() => restrictGovernanceConfig({})).toThrow('GOVERNANCE_ADMIN_CLIENT_ID');
+  });
+  it('accepts a customer Gateway web client audience', () => {
+    process.env.GOVERNANCE_ADMIN_CLIENT_ID = 'customer-governance-web';
+
+    expect(() => restrictGovernanceConfig({})).not.toThrow();
   });
   it.each(['', '   '])('rejects blank administrator role %j at startup', (value) => {
     process.env.OPENID_ADMIN_ROLE = value;
@@ -476,6 +494,7 @@ describe('pilot configuration', () => {
   });
   it('does not change non-pilot configuration', () => {
     delete process.env.GOVERNANCE_PILOT_ENABLED;
+    delete process.env.GOVERNANCE_ADMIN_CLIENT_ID;
     process.env.OPENID_REUSE_TOKENS = 'false';
     const config = { interface: { agents: true } };
     expect(restrictGovernanceConfig(config)).toBe(config);
