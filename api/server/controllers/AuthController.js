@@ -1,15 +1,13 @@
 const cookies = require('cookie');
 const jwt = require('jsonwebtoken');
 const openIdClient = require('openid-client');
-const { logger, DEFAULT_REFRESH_TOKEN_EXPIRY } = require('@librechat/data-schemas');
+const { logger } = require('@librechat/data-schemas');
 const {
   math,
   isEnabled,
   isGovernancePilotEnabled,
   findOpenIDUser,
   syncOidcAdministrator,
-  preserveRotatedOpenIdRefreshToken,
-  shouldUseSecureCookie,
   requiresOidcEntitlementRefresh,
   getOpenIdIssuer,
   buildOpenIDRefreshParams,
@@ -30,7 +28,7 @@ const {
   findUser,
 } = require('~/models');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
-const { getOpenIdConfig, getOpenIdEmail, getUserInfo } = require('~/strategies');
+const { getOpenIdConfig, getOpenIdEmail } = require('~/strategies');
 
 const AUTH_REFRESH_USER_PROJECTION = '-password -__v -totpSecret -backupCodes -federatedTokens';
 const OPENID_REUSE_EXPIRY_BUFFER_SECONDS = 30;
@@ -213,14 +211,6 @@ const refreshController = async (req, res) => {
         has_refresh_token: Boolean(tokenset.refresh_token),
         expires_in: tokenset.expires_in,
       });
-      preserveRotatedOpenIdRefreshToken(tokenset.refresh_token, req.session, res, {
-        secure: shouldUseSecureCookie(),
-        expires: new Date(
-          Date.now() + math(process.env.REFRESH_TOKEN_EXPIRY, DEFAULT_REFRESH_TOKEN_EXPIRY),
-        ),
-        sameSite: 'strict',
-        path: '/',
-      });
       const claims = tokenset.claims();
       const openidIssuer = getOpenIdIssuer(claims, openIdConfig);
       const { user, error, migration } = await findOpenIDUser({
@@ -257,13 +247,8 @@ const refreshController = async (req, res) => {
         );
       }
 
-      try {
-        await syncOidcAdministrator(user, tokenset, updateUser, (accessToken, subject) =>
-          getUserInfo(openIdConfig, accessToken, subject),
-        );
-      } catch {
-        return res.status(503).json({ message: 'OIDC administrator validation is unavailable' });
-      }
+      await syncOidcAdministrator(user, tokenset, updateUser);
+
       const token = setOpenIDAuthTokens(tokenset, req, res, {
         userId: user._id.toString(),
         existingRefreshToken: refreshToken,

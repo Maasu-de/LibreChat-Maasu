@@ -2,7 +2,7 @@ const express = require('express');
 const passport = require('passport');
 const crypto = require('node:crypto');
 const openIdClient = require('openid-client');
-const { CacheKeys } = require('librechat-data-provider');
+const { CacheKeys, SystemRoles } = require('librechat-data-provider');
 const {
   logger,
   DEFAULT_SESSION_EXPIRY,
@@ -37,7 +37,7 @@ const {
 } = require('~/models');
 const { getAppConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
-const { getOpenIdConfig, getUserInfo } = require('~/strategies');
+const { getOpenIdConfig } = require('~/strategies');
 const middleware = require('~/server/middleware');
 
 const requireAdminAccess = requireCapability(SystemCapabilities.ACCESS_ADMIN);
@@ -93,13 +93,10 @@ router.get('/verify', middleware.requireJwtAuth, requireAdminAccess, (req, res) 
 router.get('/oauth/openid/check', (req, res) => {
   try {
     assertOidcAdministratorConfigured();
-    const config = getOpenIdConfig();
-    if (!config || (isGovernancePilotEnabled() && !isEnabled(process.env.OPENID_REUSE_TOKENS))) {
-      throw new Error('OpenID unavailable');
-    }
+    getOpenIdConfig();
     return res.status(200).json({ message: 'OpenID check successful' });
   } catch {
-    return res.status(503).json({
+    return res.status(isGovernancePilotEnabled() ? 503 : 404).json({
       error: 'OpenID is unavailable or misconfigured',
       error_code: 'OPENID_NOT_CONFIGURED',
     });
@@ -583,16 +580,15 @@ router.post(
             findUsers,
             getUserById,
             synchronizeAdministrator: (user, refreshed) =>
-              syncOidcAdministrator(user, refreshed, updateUser, (accessToken, subject) =>
-                getUserInfo(openIdConfig, accessToken, subject),
-              ),
+              syncOidcAdministrator(user, refreshed, updateUser),
             canAccessAdmin: async (user) => {
               try {
                 if (
                   isGovernancePilotEnabled() &&
-                  (user.provider !== 'openid' || user.role !== 'GOVERNANCE_ADMIN')
-                )
+                  (user.provider !== 'openid' || user.role !== SystemRoles.GOVERNANCE_ADMIN)
+                ) {
                   return false;
+                }
                 return await hasCapability(
                   {
                     id: user.id ?? user._id?.toString(),
@@ -623,17 +619,9 @@ router.post(
         return res.json(result);
       } catch (err) {
         if (err instanceof AdminRefreshError) {
-          return res.status(err.status).json({
-            error: err.message,
-            error_code: err.code,
-            ...(err.status >= 500 ? { refreshToken: tokenset.refresh_token ?? refreshToken } : {}),
-          });
+          return res.status(err.status).json({ error: err.message, error_code: err.code });
         }
-        return res.status(503).json({
-          error: 'OIDC administrator validation is unavailable',
-          error_code: 'AUTHENTICATION_UNAVAILABLE',
-          refreshToken: tokenset.refresh_token ?? refreshToken,
-        });
+        throw err;
       }
     } catch (error) {
       logger.error('[admin/oauth/refresh] Error:', error);

@@ -1,10 +1,4 @@
-const {
-  setupOpenId,
-  getOpenIdConfig,
-  getOpenIdEmail,
-  getUserInfo,
-  exchangeAccessTokenIfNeeded,
-} = require('./openidStrategy');
+const { setupOpenId, getOpenIdConfig, getOpenIdEmail } = require('./openidStrategy');
 const openIdJwtLogin = require('./openIdJwtStrategy');
 const facebookLogin = require('./facebookStrategy');
 const { facebookAdminLogin } = facebookLogin;
@@ -37,8 +31,6 @@ module.exports = {
   setupOpenId,
   getOpenIdConfig,
   getOpenIdEmail,
-  getUserInfo,
-  exchangeAccessTokenIfNeeded,
   ldapLogin,
   setupSaml,
   openIdJwtLogin,

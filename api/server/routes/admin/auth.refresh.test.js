@@ -9,6 +9,11 @@ jest.mock('openid-client', () => ({
   refreshTokenGrant: jest.fn(),
 }));
 
+jest.mock('librechat-data-provider', () => ({
+  CacheKeys: { ADMIN_OAUTH_EXCHANGE: 'admin-oauth-exchange' },
+  SystemRoles: { GOVERNANCE_ADMIN: 'GOVERNANCE_ADMIN' },
+}));
+
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
     debug: jest.fn(),
@@ -32,7 +37,7 @@ jest.mock('@librechat/api', () => {
 
   return {
     isEnabled: jest.fn(),
-    isGovernancePilotEnabled: jest.requireActual('@librechat/api').isGovernancePilotEnabled,
+    isGovernancePilotEnabled: jest.fn(() => false),
     getAdminPanelUrl: jest.fn(() => 'http://admin.example.com'),
     exchangeAdminCode: jest.fn(),
     createSetBalanceConfig: jest.fn(() => (req, res, next) => next()),
@@ -41,6 +46,7 @@ jest.mock('@librechat/api', () => {
     preAuthTenantMiddleware: jest.fn((req, res, next) => next()),
     applyAdminRefresh: jest.fn(),
     syncOidcAdministrator: jest.fn(),
+    assertOidcAdministratorConfigured: jest.fn(),
     AdminRefreshError,
     buildOpenIDRefreshParams: jest.fn(() => {
       const params = {};
@@ -71,9 +77,9 @@ jest.mock('~/server/controllers/auth/oauth', () => ({
 jest.mock('~/models', () => ({
   findBalanceByUser: jest.fn(),
   findUsers: jest.fn(),
+  updateUser: jest.fn(),
   generateToken: jest.fn(() => Promise.resolve('minted-token')),
   getUserById: jest.fn(),
-  updateUser: jest.fn(),
   upsertBalanceFields: jest.fn(),
 }));
 
@@ -90,7 +96,6 @@ jest.mock('~/cache/getLogStores', () =>
 
 jest.mock('~/strategies', () => ({
   getOpenIdConfig: jest.fn(),
-  getUserInfo: jest.fn(),
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -104,15 +109,8 @@ jest.mock('~/server/middleware', () => ({
 
 const openIdClient = require('openid-client');
 const { logger } = require('@librechat/data-schemas');
-const {
-  isEnabled,
-  applyAdminRefresh,
-  syncOidcAdministrator,
-  buildOpenIDRefreshParams,
-} = require('@librechat/api');
-const { getOpenIdConfig, getUserInfo } = require('~/strategies');
-const { updateUser } = require('~/models');
-const { hasCapability } = require('~/server/middleware/roles/capabilities');
+const { isEnabled, applyAdminRefresh, buildOpenIDRefreshParams } = require('@librechat/api');
+const { getOpenIdConfig } = require('~/strategies');
 const adminAuthRouter = require('./auth');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
@@ -206,64 +204,10 @@ describe('admin auth OpenID refresh route', () => {
     );
     expect(applyAdminRefresh).toHaveBeenCalledWith(
       tokenset,
-      expect.any(Object),
+      expect.objectContaining({ synchronizeAdministrator: expect.any(Function) }),
       expect.objectContaining({ previousRefreshToken: 'incoming-refresh-token' }),
     );
   });
-
-  it('uses the configured userinfo helper during administrator synchronization', async () => {
-    const response = await request(app)
-      .post('/api/admin/oauth/refresh')
-      .send({ refresh_token: 'incoming-refresh-token' });
-
-    expect(response.status).toBe(200);
-    const actor = { _id: 'user-id' };
-    const { synchronizeAdministrator } = applyAdminRefresh.mock.calls[0][1];
-    await synchronizeAdministrator(actor, tokenset);
-    expect(syncOidcAdministrator).toHaveBeenCalledWith(
-      actor,
-      tokenset,
-      updateUser,
-      expect.any(Function),
-    );
-    const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
-    await fetchUserInfo(tokenset.access_token, 'admin-openid-id');
-    expect(getUserInfo).toHaveBeenCalledWith(
-      openIdConfig,
-      tokenset.access_token,
-      'admin-openid-id',
-    );
-  });
-
-  it.each(['true', 'TRUE', 'True', ' true '])(
-    'requires OIDC administrator entitlement on admin refresh with pilot mode %j',
-    async (enabled) => {
-      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
-      process.env.GOVERNANCE_PILOT_ENABLED = enabled;
-      try {
-        const response = await request(app)
-          .post('/api/admin/oauth/refresh')
-          .send({ refresh_token: 'incoming-refresh-token' });
-
-        expect(response.status).toBe(200);
-        const { canAccessAdmin } = applyAdminRefresh.mock.calls[0][1];
-        await expect(
-          canAccessAdmin({ id: 'user-id', provider: 'local', role: 'ADMIN' }),
-        ).resolves.toBe(false);
-        await expect(
-          canAccessAdmin({ id: 'user-id', provider: 'openid', role: 'USER' }),
-        ).resolves.toBe(false);
-        expect(hasCapability).not.toHaveBeenCalled();
-        await expect(
-          canAccessAdmin({ id: 'user-id', provider: 'openid', role: 'GOVERNANCE_ADMIN' }),
-        ).resolves.toBe(true);
-        expect(hasCapability).toHaveBeenCalledTimes(1);
-      } finally {
-        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
-        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
-      }
-    },
-  );
 
   it('returns the existing refresh failure response when the IdP rejects the grant', async () => {
     openIdClient.refreshTokenGrant.mockRejectedValue({
@@ -307,15 +251,5 @@ describe('admin auth OpenID refresh route', () => {
     expect(debugOutput).not.toContain('new-admin-id');
     expect(debugOutput).not.toContain('new-admin-refresh');
     expect(debugOutput).not.toContain('https://api.example.com');
-  });
-  it('retains rotated refresh credentials when subsequent administrator validation fails', async () => {
-    const { applyAdminRefresh } = require('@librechat/api');
-    applyAdminRefresh.mockRejectedValueOnce(new Error('Provider userinfo unavailable'));
-    const response = await request(app)
-      .post('/api/admin/oauth/refresh')
-      .send({ refresh_token: 'incoming-refresh-token' });
-    expect(response.status).toBe(503);
-    expect(response.body.refreshToken).toBe(tokenset.refresh_token);
-    expect(response.body).not.toHaveProperty('token');
   });
 });

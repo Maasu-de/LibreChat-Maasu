@@ -9,5 +9,3 @@ export * from './invite';
 export * from './codeapi';
 export * from './openidRoleSync';
 export * from './administrator';
-
-export * from './rotation';

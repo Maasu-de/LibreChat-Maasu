@@ -89,6 +89,24 @@ describe('getOpenIdRoleSyncOptions', () => {
       }),
     ).toThrow('OPENID_ROLE_SYNC_FALLBACK_ROLE cannot be ADMIN');
   });
+
+  it('also rejects GOVERNANCE_ADMIN in role priority and fallback role', () => {
+    expect(() =>
+      getOpenIdRoleSyncOptions({
+        OPENID_ROLE_SYNC_ENABLED: 'true',
+        OPENID_ROLE_SYNC_CLAIM: 'roles',
+        OPENID_ROLE_SYNC_ROLE_PRIORITY: SystemRoles.GOVERNANCE_ADMIN,
+      }),
+    ).toThrow('OPENID_ROLE_SYNC_ROLE_PRIORITY cannot include ADMIN');
+
+    expect(() =>
+      getOpenIdRoleSyncOptions({
+        OPENID_ROLE_SYNC_ENABLED: 'true',
+        OPENID_ROLE_SYNC_CLAIM: 'roles',
+        OPENID_ROLE_SYNC_FALLBACK_ROLE: SystemRoles.GOVERNANCE_ADMIN,
+      }),
+    ).toThrow('OPENID_ROLE_SYNC_FALLBACK_ROLE cannot be ADMIN');
+  });
 });
 
 describe('getOpenIdRolesForOpenIdSync', () => {
@@ -129,14 +147,15 @@ describe('getOpenIdRolesForOpenIdSync', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('treats missing direct ID-token groups as empty', async () => {
+  it('uses overage resolution for id token groups', async () => {
     await expect(
       getOpenIdRolesForOpenIdSync({
         options: { ...options, claim: 'groups' },
         idToken: 'id-token',
         decodeToken: () => ({ hasgroups: true }),
+        resolveGroupOverage: async () => ['group-a'],
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual(['group-a']);
   });
 
   it('decodes only the configured access token source', async () => {
@@ -153,7 +172,7 @@ describe('getOpenIdRolesForOpenIdSync', () => {
     expect(decodeToken).toHaveBeenCalledTimes(1);
   });
 
-  it('treats missing direct access-token groups as empty', async () => {
+  it('resolves group overage from an access token source (not just id)', async () => {
     await expect(
       getOpenIdRolesForOpenIdSync({
         options: { ...options, claimSource: 'access', claim: 'groups' },
@@ -162,8 +181,9 @@ describe('getOpenIdRolesForOpenIdSync', () => {
           _claim_sources: { src1: { endpoint: 'https://graph' } },
         },
         decodeToken: () => ({}),
+        resolveGroupOverage: async () => ['group-a'],
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual(['group-a']);
   });
 
   it('uses claims for the id source when no id token is available', async () => {

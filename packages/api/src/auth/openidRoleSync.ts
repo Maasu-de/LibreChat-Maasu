@@ -38,6 +38,7 @@ type OpenIdRolesForOpenIdSyncInput = {
   claims?: unknown;
   userinfo?: unknown;
   decodeToken: (token: string) => unknown;
+  resolveGroupOverage?: () => Promise<string[] | null>;
 };
 
 type OpenIdRoleSyncRolesLookup = (
@@ -114,7 +115,7 @@ export function getOpenIdRoleSyncOptions(
 
 /**
  * Extracts the configured role claim from the configured OpenID source.
- * Callers provide token decoding. Only directly available configured claims are supported.
+ * Callers provide token decoding and optional group-overage resolution.
  */
 export async function getOpenIdRolesForOpenIdSync({
   options,
@@ -124,6 +125,7 @@ export async function getOpenIdRolesForOpenIdSync({
   claims,
   userinfo,
   decodeToken,
+  resolveGroupOverage,
 }: OpenIdRolesForOpenIdSyncInput): Promise<string | unknown[] | undefined> {
   let source: unknown;
 
@@ -141,6 +143,30 @@ export async function getOpenIdRolesForOpenIdSync({
 
   if (!source || !options.claim) {
     return;
+  }
+
+  /**
+   * Azure AD/Entra moves an oversized `groups` claim into `_claim_names`/`_claim_sources`
+   * for both ID and access tokens, so overage resolution must cover both sources — not
+   * just the ID token — or `access`-sourced syncs silently see no groups for those users.
+   */
+  const supportsGroupOverage =
+    options.claim === 'groups' &&
+    (options.claimSource === 'id' || options.claimSource === 'access');
+  if (supportsGroupOverage) {
+    const claimsData = source as {
+      hasgroups?: unknown;
+      _claim_names?: { groups?: string };
+      _claim_sources?: Record<string, unknown>;
+    };
+    const groupSource = claimsData._claim_names?.groups;
+    const hasGroupOverage = Boolean(
+      claimsData.hasgroups || (groupSource && claimsData._claim_sources?.[groupSource]),
+    );
+
+    if (hasGroupOverage) {
+      return (await resolveGroupOverage?.()) ?? undefined;
+    }
   }
 
   const openIdRoleValues = get(source, options.claim);
@@ -263,7 +289,11 @@ export function selectOpenIdRole(
   for (const role of input.rolePriority) {
     const trimmed = role.trim();
 
-    if (trimmed && !isAdministratorRole(trimmed) && openIdRoleKeys.has(trimmed.toLowerCase())) {
+    if (
+      trimmed &&
+      !isAdministratorRole(trimmed) &&
+      openIdRoleKeys.has(trimmed.toLowerCase())
+    ) {
       return { selectedRole: trimmed, reason: 'matched_priority' };
     }
   }

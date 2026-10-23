@@ -26,7 +26,6 @@ beforeEach(() => {
   process.env.OPENID_REUSE_TOKENS = 'true';
   process.env.OPENID_ADMIN_ROLE = 'governance-admin';
   process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'realm_access.roles';
-  process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'access';
   process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.OPENAI_MODERATION = 'false';
@@ -458,7 +457,6 @@ describe('pilot configuration', () => {
   it.each([
     'OPENID_ADMIN_ROLE',
     'OPENID_ADMIN_ROLE_PARAMETER_PATH',
-    'OPENID_ADMIN_ROLE_TOKEN_KIND',
   ])('rejects pilot startup without %s', (key) => {
     delete process.env[key];
 
@@ -468,11 +466,6 @@ describe('pilot configuration', () => {
     process.env.OPENID_ADMIN_ROLE = value;
 
     expect(() => restrictGovernanceConfig({})).toThrow('OPENID_ADMIN_ROLE');
-  });
-  it('rejects unsupported administrator claim sources at startup', () => {
-    process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'refresh';
-
-    expect(() => restrictGovernanceConfig({})).toThrow('OPENID_ADMIN_ROLE_TOKEN_KIND');
   });
   it('does not change non-pilot configuration', () => {
     delete process.env.GOVERNANCE_PILOT_ENABLED;

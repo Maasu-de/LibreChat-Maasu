@@ -1,5 +1,4 @@
 jest.mock('@librechat/data-schemas', () => ({
-  DEFAULT_REFRESH_TOKEN_EXPIRY: 604800000,
   logger: { error: jest.fn(), debug: jest.fn(), warn: jest.fn(), info: jest.fn() },
 }));
 jest.mock('~/server/services/GraphTokenService', () => ({
@@ -13,11 +12,7 @@ jest.mock('~/server/services/AuthService', () => ({
   setAuthTokens: jest.fn(),
   registerUser: jest.fn(),
 }));
-jest.mock('~/strategies', () => ({
-  getOpenIdConfig: jest.fn(),
-  getOpenIdEmail: jest.fn(),
-  getUserInfo: jest.fn(),
-}));
+jest.mock('~/strategies', () => ({ getOpenIdConfig: jest.fn(), getOpenIdEmail: jest.fn() }));
 jest.mock('openid-client', () => ({ refreshTokenGrant: jest.fn() }));
 jest.mock('~/models', () => ({
   deleteAllUserSessions: jest.fn(),
@@ -29,14 +24,10 @@ jest.mock('~/models', () => ({
 jest.mock('@librechat/api', () => ({
   math: jest.fn((value, fallback) => fallback),
   isEnabled: jest.fn(),
-  isGovernancePilotEnabled: jest.requireActual('@librechat/api').isGovernancePilotEnabled,
-  requiresOidcEntitlementRefresh:
-    jest.requireActual('@librechat/api').requiresOidcEntitlementRefresh,
+  isGovernancePilotEnabled: jest.fn(() => false),
   findOpenIDUser: jest.fn(),
   syncOidcAdministrator: jest.fn(),
-  shouldUseSecureCookie: jest.fn(() => false),
-  preserveRotatedOpenIdRefreshToken:
-    jest.requireActual('@librechat/api').preserveRotatedOpenIdRefreshToken,
+  requiresOidcEntitlementRefresh: jest.fn(() => false),
   getOpenIdIssuer: jest.fn(() => 'https://issuer.example.com'),
   buildOpenIDRefreshParams: jest.fn(() => {
     const params = {};
@@ -66,12 +57,13 @@ const {
   setCloudFrontAuthCookies,
   setAuthTokens,
 } = require('~/server/services/AuthService');
-const { getOpenIdConfig, getOpenIdEmail, getUserInfo } = require('~/strategies');
+const { getOpenIdConfig, getOpenIdEmail } = require('~/strategies');
 const { getUserById, findSession, updateUser } = require('~/models');
 
 const ORIGINAL_OPENID_SCOPE = process.env.OPENID_SCOPE;
 const ORIGINAL_OPENID_REFRESH_AUDIENCE = process.env.OPENID_REFRESH_AUDIENCE;
 const ORIGINAL_JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
 describe('graphTokenController', () => {
   let req, res;
@@ -268,8 +260,6 @@ describe('refreshController – OpenID path', () => {
     res = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
-      json: jest.fn().mockReturnThis(),
-      cookie: jest.fn().mockReturnThis(),
       redirect: jest.fn(),
     };
   });
@@ -321,131 +311,6 @@ describe('refreshController – OpenID path', () => {
     );
     expect(res.status).toHaveBeenCalledWith(200);
   });
-
-  it('synchronizes the IdP entitlement before issuing refreshed chat credentials', async () => {
-    await refreshController(req, res);
-    expect(syncOidcAdministrator).toHaveBeenCalledWith(
-      expect.objectContaining({ openidId: baseClaims.sub }),
-      mockTokenset,
-      updateUser,
-      expect.any(Function),
-    );
-    const fetchUserInfo = syncOidcAdministrator.mock.calls[0][3];
-    await fetchUserInfo('refreshed-access-token', baseClaims.sub);
-    expect(getUserInfo).toHaveBeenCalledWith(
-      getOpenIdConfig(),
-      'refreshed-access-token',
-      baseClaims.sub,
-    );
-    expect(syncOidcAdministrator.mock.invocationCallOrder[0]).toBeLessThan(
-      setOpenIDAuthTokens.mock.invocationCallOrder[0],
-    );
-  });
-
-  it('does not issue refreshed credentials when entitlement synchronization fails', async () => {
-    syncOidcAdministrator.mockRejectedValueOnce(new Error('OIDC unavailable'));
-    await refreshController(req, res);
-    expect(res.status).toHaveBeenCalledWith(503);
-    expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
-    expect(res.cookie).toHaveBeenCalledWith(
-      'refreshToken',
-      'new-refresh',
-      expect.objectContaining({ httpOnly: true }),
-    );
-    expect(req.session.openidTokens.refreshToken).toBe('new-refresh');
-  });
-
-  it('removes a revoked administrator entitlement during a pilot IdP refresh', async () => {
-    const environment = process.env;
-    process.env = {
-      ...environment,
-      GOVERNANCE_PILOT_ENABLED: 'true',
-      OPENID_REUSE_TOKENS: 'true',
-      OPENID_ADMIN_ROLE: 'company-admin',
-      OPENID_ADMIN_ROLE_PARAMETER_PATH: 'company.permissions',
-      OPENID_ADMIN_ROLE_TOKEN_KIND: 'access',
-    };
-    const actor = { ...defaultUser, provider: 'openid', role: 'ADMIN' };
-    const refreshed = {
-      ...mockTokenset,
-      access_token: jwt.sign({ company: { permissions: [] } }, idpSigningSecret),
-    };
-    openIdClient.refreshTokenGrant.mockResolvedValueOnce(refreshed);
-    findOpenIDUser.mockResolvedValueOnce({ user: actor, error: null, migration: false });
-    syncOidcAdministrator.mockImplementationOnce(
-      jest.requireActual('@librechat/api').syncOidcAdministrator,
-    );
-    try {
-      await refreshController(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(updateUser).toHaveBeenCalledWith(actor._id, { role: 'USER' });
-      expect(res.send).toHaveBeenCalledWith({
-        token: 'new-app-token',
-        user: expect.objectContaining({ role: 'USER' }),
-      });
-    } finally {
-      process.env = environment;
-    }
-  });
-
-  it.each([undefined, '', '   '])(
-    'does not issue pilot chat credentials without administrator role configuration %j',
-    async (value) => {
-      const environment = process.env;
-      process.env = {
-        ...environment,
-        GOVERNANCE_PILOT_ENABLED: 'true',
-        OPENID_ADMIN_ROLE_PARAMETER_PATH: 'realm_access.roles',
-        OPENID_ADMIN_ROLE_TOKEN_KIND: 'access',
-      };
-      if (value === undefined) delete process.env.OPENID_ADMIN_ROLE;
-      else process.env.OPENID_ADMIN_ROLE = value;
-      findOpenIDUser.mockResolvedValueOnce({
-        user: { ...defaultUser, provider: 'openid', role: 'ADMIN' },
-        error: null,
-        migration: false,
-      });
-      syncOidcAdministrator.mockImplementationOnce(
-        jest.requireActual('@librechat/api').syncOidcAdministrator,
-      );
-      try {
-        await refreshController(req, res);
-
-        expect(res.status).toHaveBeenCalledWith(503);
-        expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
-        expect(updateUser).not.toHaveBeenCalled();
-      } finally {
-        process.env = environment;
-      }
-    },
-  );
-
-  it.each(['true', 'TRUE', 'True', ' true '])(
-    'rechecks entitlement through the IdP with pilot mode %j',
-    async (enabled) => {
-      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
-      process.env.GOVERNANCE_PILOT_ENABLED = enabled;
-      req.session = {
-        openidTokens: {
-          accessToken: makeSessionToken(),
-          idToken: makeSessionToken(),
-          refreshToken: 'stored-refresh',
-          lastRefreshedAt: Date.now(),
-        },
-      };
-      setOpenIDReuseCookies();
-      try {
-        await refreshController(req, res);
-        expect(openIdClient.refreshTokenGrant).toHaveBeenCalled();
-        expect(syncOidcAdministrator).toHaveBeenCalled();
-        expect(res.status).toHaveBeenCalledWith(200);
-      } finally {
-        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
-        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
-      }
-    },
-  );
 
   it('reuses valid OpenID session tokens and refreshes CloudFront cookies', async () => {
     const reusableIdToken = makeSessionToken();
@@ -771,6 +636,7 @@ describe('refreshController – OpenID path', () => {
 
     await refreshController(req, res);
 
+    expect(syncOidcAdministrator).toHaveBeenCalledWith(user, mockTokenset, updateUser);
     expect(getOpenIdEmail).toHaveBeenCalledWith(claimsWithUpn);
     expect(findOpenIDUser).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -887,16 +753,11 @@ describe('refreshController – OpenID path', () => {
 describe('refreshController – LibreChat path', () => {
   let req, res;
   const refreshSecret = 'test-refresh-secret';
-  const environment = { ...process.env };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...environment };
     process.env.JWT_REFRESH_SECRET = refreshSecret;
     process.env.NODE_ENV = 'test';
-    delete process.env.GOVERNANCE_PILOT_ENABLED;
-    delete process.env.OPENID_REUSE_TOKENS;
-    isEnabled.mockImplementation(jest.requireActual('@librechat/api').isEnabled);
     setAuthTokens.mockResolvedValue('local-app-token');
     findSession.mockResolvedValue({ expiration: new Date(Date.now() + 60_000) });
 
@@ -911,58 +772,22 @@ describe('refreshController – LibreChat path', () => {
     res = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
-      json: jest.fn().mockReturnThis(),
-      cookie: jest.fn().mockReturnThis(),
       redirect: jest.fn(),
     };
   });
 
-  afterEach(() => {
-    process.env = { ...environment };
-  });
+  afterAll(() => {
+    if (ORIGINAL_JWT_REFRESH_SECRET === undefined) {
+      delete process.env.JWT_REFRESH_SECRET;
+    } else {
+      process.env.JWT_REFRESH_SECRET = ORIGINAL_JWT_REFRESH_SECRET;
+    }
 
-  it.each([
-    [undefined, 'librechat', 'test'],
-    ['false', 'librechat', 'test'],
-    ['true', 'librechat', 'test'],
-    ['true', undefined, 'test'],
-    ['false', 'openid', 'test'],
-    ['true', 'librechat', 'CI'],
-  ])(
-    'rejects pilot OpenID local-session refresh with reuse %j, cookie %j and environment %s',
-    async (reuse, providerCookie, nodeEnv) => {
-      process.env.GOVERNANCE_PILOT_ENABLED = ' TRUE ';
-      if (reuse !== undefined) process.env.OPENID_REUSE_TOKENS = reuse;
-      process.env.NODE_ENV = nodeEnv;
-      if (providerCookie) req.headers.cookie += `; token_provider=${providerCookie}`;
-      getUserById.mockResolvedValue({
-        _id: 'local-user-id',
-        provider: 'openid',
-        role: 'ADMIN',
-        openidId: 'revoked-admin-subject',
-      });
-
-      await refreshController(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(setAuthTokens).not.toHaveBeenCalled();
-      expect(setOpenIDAuthTokens).not.toHaveBeenCalled();
-      expect(findSession).not.toHaveBeenCalled();
-      expect(openIdClient.refreshTokenGrant).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ['false', 'openid'],
-    ['true', 'local'],
-  ])('preserves local refresh with pilot mode %s and provider %s', async (pilot, provider) => {
-    process.env.GOVERNANCE_PILOT_ENABLED = pilot;
-    getUserById.mockResolvedValue({ _id: 'local-user-id', provider, role: 'ADMIN' });
-
-    await refreshController(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(setAuthTokens).toHaveBeenCalled();
+    if (ORIGINAL_NODE_ENV === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+    }
   });
 
   it('sanitizes user documents before returning local refresh responses', async () => {

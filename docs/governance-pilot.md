@@ -5,11 +5,10 @@ with `GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL`. This credential is server-only and
 separate from `LIBRECHAT_SERVICE_CREDENTIAL`, which LibreChat sends in the reverse
 direction. End-user OIDC tokens are never forwarded between the services.
 
-Only directly available configured claims are supported for login, administrator
-mapping, and generic role synchronization. Microsoft Graph resolution of Entra
-group-overage signals (`hasgroups`, `_claim_names`, `_claim_sources`) is outside
-the current scope. Configure the IdP to emit the required claim directly; an
-absent claim grants no entitlement.
+Governance administrator mapping reads only a directly available claim from the
+validated ID token. Entra group-overage resolution is not used for this mapping;
+configure the IdP to emit the claim directly or access is denied. Existing generic
+OIDC login and role-sync behavior remains unchanged.
 
 Pilot OIDC administrators use the separate `GOVERNANCE_ADMIN` role. It inherits
 USER chat permissions, and the API grants only group/membership operations plus
@@ -31,14 +30,12 @@ authentication refresh contacts the IdP and synchronizes administrator entitleme
 OpenID users with older LibreChat refresh sessions must sign in again; those local
 sessions cannot renew credentials in pilot mode, even after token reuse is enabled.
 
-Administrator mapping must be explicit in pilot mode. Set `OPENID_ADMIN_ROLE`,
-`OPENID_ADMIN_ROLE_PARAMETER_PATH`, and `OPENID_ADMIN_ROLE_TOKEN_KIND` to the IdP's
-administrator value, claim path, and token source (`access`, `id`, or `userinfo`).
-For bundled Keycloak use `governance-admin`, `realm_access.roles`, and `access`.
-Missing or blank mapping settings, or an unsupported token source, reject pilot
-startup, OpenID login, and authentication refresh. A stored LibreChat `ADMIN` role
-cannot substitute for this mapping. Outside pilot mode, administrator mapping
-remains optional.
+Administrator mapping must be explicit in pilot mode. Set `OPENID_ADMIN_ROLE`
+and `OPENID_ADMIN_ROLE_PARAMETER_PATH` to the IdP's administrator value and
+ID-token claim path. For bundled Keycloak use `governance-admin` and
+`realm_access.roles`. Missing or blank settings reject startup, login, and
+refresh. A stored LibreChat `ADMIN` role cannot substitute for the claim.
+Outside pilot mode, the existing administrator mapping remains unchanged.
 
 Set `GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL` in LibreChat and the Gateway web
 process to the same dedicated secret. The two read endpoints return 503 when it

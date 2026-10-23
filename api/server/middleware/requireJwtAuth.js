@@ -4,7 +4,7 @@ const passport = require('passport');
 const { logger } = require('@librechat/data-schemas');
 const {
   isEnabled,
-  scopeGovernanceAdministrator,
+  hasStaleGovernanceAdministratorRole,
   tenantContextMiddleware,
   getAuthFailureReason,
   getAuthFailureErrorName,
@@ -181,7 +181,11 @@ const requireJwtAuth = (req, res, next) => {
         logAuthenticationFailure({ strategy, info, status: 401, err });
         return res.status(401).json({ message: 'Unauthorized' });
       }
-      req.user = scopeGovernanceAdministrator(user);
+      if (hasStaleGovernanceAdministratorRole(user)) {
+        logAuthenticationFailure({ strategy, info, status: 401, err });
+        return res.status(401).json({ message: 'OpenID sign-in required' });
+      }
+      req.user = user;
       req.authStrategy = strategy;
       logFallbackSuccess(strategy);
       tenantContextMiddleware(req, res, (tenantErr) => {
