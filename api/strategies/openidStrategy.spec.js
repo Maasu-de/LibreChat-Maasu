@@ -1,7 +1,7 @@
 const undici = require('undici');
 const fetch = require('node-fetch');
 const jwtDecode = require('jsonwebtoken/decode');
-const { ErrorTypes, FileSources } = require('librechat-data-provider');
+const { ErrorTypes, FileSources, SystemRoles } = require('librechat-data-provider');
 const { findUser, createUser, updateUser, findRolesByNames } = require('~/models');
 const {
   getOpenIdProxyDispatcher,
@@ -296,10 +296,17 @@ describe('setupOpenId', () => {
       process.env.GOVERNANCE_PILOT_ENABLED = 'true';
       await setupOpenId();
 
-      const user = await validateAdmin(tokenset);
+      const adminTokenset = {
+        ...tokenset,
+        claims: () => ({ ...tokenset.claims(), permissions: ['admin'] }),
+      };
+      const user = await validateAdmin(adminTokenset);
 
       expect(createUser).toHaveBeenCalledTimes(1);
-      expect(user).toMatchObject({ email: 'test@example.com', role: 'ADMIN' });
+      expect(user).toMatchObject({
+        email: 'test@example.com',
+        role: SystemRoles.GOVERNANCE_ADMIN,
+      });
     });
 
     it('still requires an existing user outside the governed pilot', async () => {
