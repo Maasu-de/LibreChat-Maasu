@@ -1,10 +1,10 @@
-import jwt from 'jsonwebtoken';
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import jwksRsa from 'jwks-rsa';
 import request from 'supertest';
 import { Types } from 'mongoose';
-import { generateKeyPairSync } from 'crypto';
 import { createHmac } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'crypto';
 import { getTenantId, SYSTEM_TENANT_ID } from '@librechat/data-schemas';
 import type { GovernanceGroupsDeps } from '../groups';
 import {
@@ -13,6 +13,7 @@ import {
   clearGovernanceJwksCache,
   createGetUserGroupIds,
 } from '../groups';
+import { getOpenIdProxyDispatcher } from '../../auth/proxy';
 
 const mockGetSigningKey = jest.fn();
 
@@ -93,6 +94,67 @@ afterAll(() => {
 });
 
 describe('GET /api/governance/groups', () => {
+  it.each(['PROXY', 'HTTPS_PROXY', undefined])(
+    'fetches discovery, signing keys, and UserInfo with proxy setting %s',
+    async (proxySetting) => {
+      for (const name of [
+        'PROXY',
+        'proxy',
+        'HTTP_PROXY',
+        'http_proxy',
+        'HTTPS_PROXY',
+        'https_proxy',
+      ]) {
+        delete process.env[name];
+      }
+      if (proxySetting) process.env[proxySetting] = 'http://corporate-proxy.example:8080';
+      const issuer = 'https://identity.company.test';
+      process.env.OPENID_ISSUER = issuer;
+      process.env.OPENID_ADMIN_ROLE_TOKEN_KIND = 'userinfo';
+      delete process.env.OIDC_USERINFO_URI;
+      delete process.env.OIDC_JWKS_URI;
+      listGroups.mockResolvedValue([]);
+      const actualJwksRsa = jest.requireActual<typeof jwksRsa>('jwks-rsa');
+      jest.mocked(jwksRsa).mockImplementationOnce((options) => actualJwksRsa(options));
+      const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
+      const jwksUrl = `${issuer}/jwks`;
+      const userinfoUrl = `${issuer}/userinfo`;
+      const publicKey = createPublicKey(realmKeys.publicKey).export({ format: 'jwk' });
+      const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+        if (url === discoveryUrl) {
+          return Response.json({ issuer, jwks_uri: jwksUrl, userinfo_endpoint: userinfoUrl });
+        }
+        if (url === jwksUrl) {
+          return Response.json({ keys: [{ ...publicKey, kid: KID, alg: 'RS256', use: 'sig' }] });
+        }
+        if (url === userinfoUrl) {
+          return Response.json({ sub: 'admin-subject', realm_access: { roles: [ADMIN_ROLE] } });
+        }
+        throw new Error('Unexpected OIDC endpoint');
+      });
+      const token = signToken({ issuer, roles: [] });
+      try {
+        expect((await getGroups(token)).status).toBe(200);
+        const dispatcher = getOpenIdProxyDispatcher();
+        if (proxySetting) expect(dispatcher).toBeDefined();
+        else expect(dispatcher).toBeUndefined();
+        for (const endpoint of [discoveryUrl, jwksUrl, userinfoUrl]) {
+          expect(fetchSpy).toHaveBeenCalledWith(
+            endpoint,
+            expect.objectContaining({ dispatcher, signal: expect.any(AbortSignal) }),
+          );
+        }
+        expect(fetchSpy).toHaveBeenCalledTimes(3);
+        expect(fetchSpy).toHaveBeenLastCalledWith(
+          userinfoUrl,
+          expect.objectContaining({ headers: { authorization: `Bearer ${token}` } }),
+        );
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    },
+  );
+
   it('lists group ids and names for a valid governance-admin token', async () => {
     listGroups.mockResolvedValueOnce([group(objectId(1), 'Engineering'), group(objectId(2), 'HR')]);
 

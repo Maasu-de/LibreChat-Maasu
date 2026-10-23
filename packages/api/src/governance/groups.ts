@@ -4,10 +4,12 @@ import { logger, runAsSystem } from '@librechat/data-schemas';
 import type { RequestHandler, Request, Response } from 'express';
 import type { IGroup } from '@librechat/data-schemas';
 import type { JwtPayload } from 'jsonwebtoken';
+import type { JSONWebKey } from 'jwks-rsa';
+import { governanceOidcMetadata, clearGovernanceDiscoveryCache } from './discovery';
 import { hasOidcAdministratorClaim } from '../auth/administrator';
 import { normalizeOpenIdIssuer } from '../auth/openid';
-import { governanceOidcMetadata, clearGovernanceDiscoveryCache } from './discovery';
 import { hasGovernanceTokenSource } from './token';
+import { fetchOpenId } from '../auth/proxy';
 
 const PAGE_SIZE = 200;
 const JWKS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -59,6 +61,11 @@ async function getJwksClient(issuer: string): Promise<OidcSigningKeys> {
     cache: true,
     cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
     rateLimit: true,
+    fetcher: async (uri) => {
+      const response = await fetchOpenId(uri, { signal: AbortSignal.timeout(5000) });
+      if (!response.ok) throw new Error('OIDC JWKS unavailable');
+      return (await response.json()) as { keys: JSONWebKey[] };
+    },
   });
   const keys = { client, issuer: tokenIssuer, expiresAt: Date.now() + JWKS_CACHE_MAX_AGE_MS };
   jwksClients.set(issuer, keys);
@@ -142,7 +149,7 @@ export function createRequireGovernanceAdminToken({
           endpoint = metadata.userinfo_endpoint;
         }
         const userinfoToken = await exchangeAccessToken(token, claims.sub);
-        const response = await fetch(endpoint, {
+        const response = await fetchOpenId(endpoint, {
           headers: { authorization: `Bearer ${userinfoToken}` },
           signal: AbortSignal.timeout(5000),
         });

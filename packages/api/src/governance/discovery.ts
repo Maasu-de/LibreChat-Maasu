@@ -1,3 +1,5 @@
+import { fetchOpenId } from '../auth/proxy';
+
 interface Metadata {
   issuer: string;
   jwks_uri: string;
@@ -17,7 +19,7 @@ export async function governanceOidcMetadata(issuer: string): Promise<Metadata> 
   const pending = requests.get(issuer);
   if (pending) return pending;
   const request = (async () => {
-    const response = await fetch(`${issuer}/.well-known/openid-configuration`, {
+    const response = await fetchOpenId(`${issuer}/.well-known/openid-configuration`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error('OIDC discovery unavailable');

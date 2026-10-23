@@ -1,5 +1,5 @@
-import { logger, SystemCapabilities } from '@librechat/data-schemas';
 import { SystemRoles } from 'librechat-data-provider';
+import { logger, SystemCapabilities } from '@librechat/data-schemas';
 import type { TStartupConfig } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { HasCapabilityFn } from '~/middleware/capabilities';
@@ -65,7 +65,7 @@ export async function resolveConfigNavigation({
     if (!canAccessAdmin) {
       return navigation;
     }
-    if (user.role === SystemRoles.ADMIN) {
+    if (user.role === SystemRoles.ADMIN || user.role === SystemRoles.GOVERNANCE_ADMIN) {
       if (gatewayUrl) {
         navigation.governanceAdminUrl = `${gatewayUrl}/admin`;
       }
