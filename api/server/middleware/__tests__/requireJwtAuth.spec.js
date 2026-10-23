@@ -212,6 +212,7 @@ jest.mock('@librechat/api', () => {
     normalizeContextValue(req.headers?.['x-request-id']) ??
     normalizeContextValue(req.headers?.['x-correlation-id']);
   return {
+    hasStaleGovernanceAdministratorRole: jest.fn(() => false),
     isEnabled: jest.fn(() => false),
     recordRumProxyRequest: jest.fn(),
     getAuthFailureReason,

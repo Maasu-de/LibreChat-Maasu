@@ -1,7 +1,7 @@
 const undici = require('undici');
 const fetch = require('node-fetch');
 const jwtDecode = require('jsonwebtoken/decode');
-const { ErrorTypes, FileSources } = require('librechat-data-provider');
+const { ErrorTypes, FileSources, SystemRoles } = require('librechat-data-provider');
 const { findUser, createUser, updateUser, findRolesByNames } = require('~/models');
 const {
   getOpenIdProxyDispatcher,
@@ -296,10 +296,17 @@ describe('setupOpenId', () => {
       process.env.GOVERNANCE_PILOT_ENABLED = 'true';
       await setupOpenId();
 
-      const user = await validateAdmin(tokenset);
+      const adminTokenset = {
+        ...tokenset,
+        claims: () => ({ ...tokenset.claims(), permissions: ['admin'] }),
+      };
+      const user = await validateAdmin(adminTokenset);
 
       expect(createUser).toHaveBeenCalledTimes(1);
-      expect(user).toMatchObject({ email: 'test@example.com', role: 'ADMIN' });
+      expect(user).toMatchObject({
+        email: 'test@example.com',
+        role: SystemRoles.GOVERNANCE_ADMIN,
+      });
     });
 
     it('still requires an existing user outside the governed pilot', async () => {
@@ -1650,6 +1657,37 @@ describe('setupOpenId', () => {
     const { user } = await validate(tokenset);
 
     // Assert – verify that the user role is not defined
+    expect(user.role).toBeUndefined();
+  });
+
+  it('maps governed administrators from validated ID-token claims only', async () => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    const governedTokenset = {
+      ...tokenset,
+      claims: () => ({
+        ...tokenset.claims(),
+        permissions: ['admin'],
+      }),
+    };
+    jwtDecode.mockReturnValue({
+      roles: ['requiredRole'],
+      permissions: ['not-admin'],
+    });
+
+    const { user } = await validate(governedTokenset);
+
+    expect(user.role).toBe('GOVERNANCE_ADMIN');
+  });
+
+  it('does not grant governed access from an access-token-only claim', async () => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    jwtDecode.mockReturnValue({
+      roles: ['requiredRole'],
+      permissions: ['admin'],
+    });
+
+    const { user } = await validate(tokenset);
+
     expect(user.role).toBeUndefined();
   });
 

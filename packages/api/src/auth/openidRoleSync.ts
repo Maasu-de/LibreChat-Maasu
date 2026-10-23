@@ -2,6 +2,11 @@ import { get } from 'lodash';
 import { SystemRoles } from 'librechat-data-provider';
 import { isEnabled } from '~/utils';
 
+const isAdministratorRole = (role: string) =>
+  [SystemRoles.ADMIN.toLowerCase(), SystemRoles.GOVERNANCE_ADMIN.toLowerCase()].includes(
+    role.toLowerCase(),
+  );
+
 export type OpenIdRoleSyncClaimSource = 'access' | 'id' | 'userinfo';
 
 export type OpenIdRoleSyncOptions = {
@@ -97,11 +102,11 @@ export function getOpenIdRoleSyncOptions(
     );
   }
 
-  if (rolePriority.some((role) => role.toLowerCase() === SystemRoles.ADMIN.toLowerCase())) {
+  if (rolePriority.some((role) => isAdministratorRole(role))) {
     throw new Error('[openidRoleSync] OPENID_ROLE_SYNC_ROLE_PRIORITY cannot include ADMIN');
   }
 
-  if (fallbackRole?.toLowerCase() === SystemRoles.ADMIN.toLowerCase()) {
+  if (fallbackRole && isAdministratorRole(fallbackRole)) {
     throw new Error('[openidRoleSync] OPENID_ROLE_SYNC_FALLBACK_ROLE cannot be ADMIN');
   }
 
@@ -257,7 +262,7 @@ export function selectOpenIdRole(
   const assignableRoleKeys = new Set(
     assignableRoles
       .map((role) => role.trim().toLowerCase())
-      .filter((role) => role && role !== SystemRoles.ADMIN.toLowerCase()),
+      .filter((role) => role && !isAdministratorRole(role)),
   );
   const openIdRoleKeys = new Set<string>();
 
@@ -272,7 +277,7 @@ export function selectOpenIdRole(
 
     if (
       !trimmed ||
-      key === SystemRoles.ADMIN.toLowerCase() ||
+      isAdministratorRole(key) ||
       (assignableRoleKeys.size > 0 && !assignableRoleKeys.has(key))
     ) {
       continue;
@@ -286,7 +291,7 @@ export function selectOpenIdRole(
 
     if (
       trimmed &&
-      trimmed.toLowerCase() !== SystemRoles.ADMIN.toLowerCase() &&
+      !isAdministratorRole(trimmed) &&
       openIdRoleKeys.has(trimmed.toLowerCase())
     ) {
       return { selectedRole: trimmed, reason: 'matched_priority' };
@@ -305,7 +310,7 @@ export function selectOpenIdRole(
   if (input.fallbackRole) {
     const trimmed = input.fallbackRole.trim();
 
-    if (trimmed && trimmed.toLowerCase() !== SystemRoles.ADMIN.toLowerCase()) {
+    if (trimmed && !isAdministratorRole(trimmed)) {
       return { selectedRole: trimmed, reason: 'fallback' };
     }
   }
