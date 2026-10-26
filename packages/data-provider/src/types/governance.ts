@@ -45,3 +45,18 @@ export interface GovernanceDlpReview extends GovernanceDlpResult {
   reviewId: string;
   expiresAt?: number;
 }
+
+export interface GovernanceTier {
+  code: string;
+  name: string;
+  description: string;
+}
+
+export interface GovernanceModel {
+  id: string;
+  governance_tier?: GovernanceTier | null;
+}
+
+export type GovernanceModelsConfig = Record<string, GovernanceModel[]>;
+
+export const GOVERNANCE_ENDPOINT: string = 'AI Governance Gateway';

@@ -8,6 +8,7 @@ import {
   EModelEndpoint,
   defaultModels,
 } from 'librechat-data-provider';
+import type { GovernanceModel } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { AxiosRequestConfig } from 'axios';
 import {
@@ -27,6 +28,7 @@ import { standardCache, tokenConfigCache } from '~/cache';
 type SSRFSafeAgents = ReturnType<typeof createSSRFSafeAgents>;
 
 export interface FetchModelsParams {
+  onModels?: (models: GovernanceModel[]) => void;
   /** User ID for API requests */
   user?: string;
   /** API key for authentication */
@@ -165,6 +167,7 @@ export async function fetchModels({
   headers,
   userObject,
   skipCache = false,
+  onModels,
 }: FetchModelsParams): Promise<string[]> {
   let models: string[] = [];
   const baseURL = direct ? extractBaseURL(_baseURL ?? '') : _baseURL;
@@ -191,7 +194,7 @@ export async function fetchModels({
   // and `userObject` are supplied, since that's the signal the caller is
   // resolving headers against a specific user's identity.
   const hasUserScopedHeaders = !!headers && Object.keys(headers).length > 0 && !!userObject;
-  const shouldCache = !skipCache && !(userIdQuery && user) && !hasUserScopedHeaders;
+  const shouldCache = !onModels && !skipCache && !(userIdQuery && user) && !hasUserScopedHeaders;
   const cacheKey = shouldCache ? modelsCacheKey(baseURL ?? '', apiKey) : '';
   const modelsCache = shouldCache ? standardCache(CacheKeys.MODEL_QUERIES) : null;
   if (modelsCache && cacheKey) {
@@ -286,6 +289,7 @@ export async function fetchModels({
     const res = await axios.get(url.toString(), options);
 
     const input = res.data;
+    onModels?.(input.data);
 
     const validationResult = inputSchema.safeParse(input);
     if (validationResult.success && createTokenConfig) {

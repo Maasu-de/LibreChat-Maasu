@@ -4,6 +4,7 @@ import type {
   UseMutationResult,
   QueryObserverResult,
 } from '@tanstack/react-query';
+import type { GovernanceModelsConfig } from '../types/governance';
 import { MCPServerConnectionStatusResponse } from '../types/queries';
 import { Constants, initialModelsConfig } from '../config';
 import { defaultOrderQuery } from '../types/assistants';
@@ -184,6 +185,12 @@ export const useRevokeAllUserKeysMutation = (): UseMutationResult<unknown> => {
     },
   });
 };
+
+export const useGetGovernanceModelsQuery = () =>
+  useQuery<GovernanceModelsConfig>([QueryKeys.governanceModels], dataService.getGovernanceModels, {
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+  });
 
 export const useGetModelsQuery = (
   config?: UseQueryOptions<t.TModelsConfig>,

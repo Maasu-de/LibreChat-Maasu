@@ -1,6 +1,6 @@
 import { isEnabled } from '~/utils/common';
 
-export const GOVERNANCE_ENDPOINT = 'AI Governance Gateway';
+export { GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
 
 export function isGovernancePilotEnabled(): boolean {
   return isEnabled(process.env.GOVERNANCE_PILOT_ENABLED);

@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { TooltipAnchor } from '@librechat/client';
-import { getConfigDefaults } from 'librechat-data-provider';
+import { getConfigDefaults, GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
 import type { ModelSelectorProps } from '~/common';
 import {
   renderModelSpecs,
@@ -11,6 +11,7 @@ import {
 import { ModelSelectorProvider, useModelSelectorContext } from './ModelSelectorContext';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import { ModelSelectorChatProvider } from './ModelSelectorChatContext';
+import GovernanceModelSelector from './GovernanceModelSelector';
 import { getSelectedIcon, getDisplayValue } from './utils';
 import { CustomMenu as Menu } from './CustomMenu';
 import DialogManager from './DialogManager';
@@ -18,7 +19,7 @@ import { useLocalize } from '~/hooks';
 
 const defaultInterface = getConfigDefaults().interface;
 
-function ModelSelectorContent() {
+function ModelSelectorContent({ governancePilot }: { governancePilot: boolean }) {
   const localize = useLocalize();
   const modelSelectorHint = useShortcutHint('openModelSelector', localize('com_ui_select_model'));
   const modelSelectorAriaKey = useShortcutAriaKey('openModelSelector');
@@ -36,6 +37,7 @@ function ModelSelectorContent() {
     // Functions
     setSearchValue,
     setSelectedValues,
+    handleSelectModel,
     // Dialog
     keyDialogOpen,
     onOpenChange,
@@ -85,6 +87,27 @@ function ModelSelectorContent() {
       }
     />
   );
+
+  if (governancePilot) {
+    return (
+      <GovernanceModelSelector
+        endpoint={GOVERNANCE_ENDPOINT}
+        value={selectedValues.model}
+        trigger={trigger}
+        onSelect={(model) =>
+          handleSelectModel(
+            {
+              value: GOVERNANCE_ENDPOINT,
+              label: GOVERNANCE_ENDPOINT,
+              hasModels: true,
+              icon: null,
+            },
+            model,
+          )
+        }
+      />
+    );
+  }
 
   return (
     <div className="relative flex w-full max-w-md flex-col items-center gap-2">
@@ -140,7 +163,7 @@ export default function ModelSelector({ startupConfig }: ModelSelectorProps) {
   return (
     <ModelSelectorChatProvider>
       <ModelSelectorProvider startupConfig={startupConfig}>
-        <ModelSelectorContent />
+        <ModelSelectorContent governancePilot={startupConfig?.governancePilotEnabled === true} />
       </ModelSelectorProvider>
     </ModelSelectorChatProvider>
   );

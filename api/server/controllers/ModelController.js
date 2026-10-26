@@ -12,6 +12,11 @@ async function loadModels(req) {
 
 async function modelController(req, res) {
   try {
+    if (isGovernancePilotEnabled() && req.query.include === 'governance') {
+      const metadata = {};
+      await loadConfigModels(req, metadata);
+      return res.send(metadata);
+    }
     const modelConfig = await loadModels(req);
     res.send(modelConfig);
   } catch (error) {

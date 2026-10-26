@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { Time, EModelEndpoint, defaultModels, AuthType } from 'librechat-data-provider';
+import type { GovernanceModelsConfig } from 'librechat-data-provider';
+import type { ServerRequest } from '~/types';
 import {
   fetchModels,
   splitAndTrim,
@@ -8,6 +10,7 @@ import {
   getBedrockModels,
   getAnthropicModels,
 } from './models';
+import { createLoadConfigModels } from './config/models';
 import { SCOPED_TOKEN_CONFIG_KEY_PREFIX } from './keys';
 
 jest.mock('axios');
@@ -80,6 +83,81 @@ beforeEach(() => {
 });
 
 describe('fetchModels', () => {
+  it.each(['models', 'empty', 'failure'])(
+    'forwards the gateway catalog without configured defaults: %s',
+    async (result) => {
+      jest.replaceProperty(process, 'env', { ...process.env, GOVERNANCE_PILOT_ENABLED: 'true' });
+      const data =
+        result === 'models'
+          ? [
+              {
+                id: 'sovereign-model',
+                governance_tier: {
+                  code: 'S1',
+                  name: 'EU Sovereign',
+                  description: 'S1 description',
+                },
+              },
+              {
+                id: 'hosted-model',
+                governance_tier: { code: 'S2', name: 'EU Hosted', description: 'S2 description' },
+              },
+            ]
+          : [];
+      if (result === 'failure') {
+        mockedAxios.get.mockRejectedValueOnce(new Error('unavailable'));
+      } else {
+        mockedAxios.get.mockResolvedValueOnce({ data: { data } });
+      }
+      const loadConfigModels = createLoadConfigModels({
+        getAppConfig: jest.fn().mockResolvedValue({
+          endpoints: {
+            custom: [
+              {
+                name: 'AI Governance Gateway',
+                apiKey: 'service-key',
+                baseURL: 'https://gateway.test/api/v1/dlp',
+                models: { fetch: true, default: ['not-in-gateway-catalog'] },
+              },
+            ],
+          },
+        }),
+        getUserKeyValues: jest.fn(),
+      });
+      const metadata: GovernanceModelsConfig = {};
+      const config = await loadConfigModels({ user: { id: 'user-1' } } as ServerRequest, metadata);
+
+      expect(config['AI Governance Gateway']).toEqual(data.map((model) => model.id));
+      expect(metadata['AI Governance Gateway']).toEqual(data);
+    },
+  );
+
+  it('preserves governance metadata while returning the existing model identifiers', async () => {
+    const data = [
+      {
+        id: 's1-model',
+        governance_tier: { code: 'S1', name: 'EU Sovereign', description: 'S1 description' },
+      },
+      {
+        id: 's2-model',
+        governance_tier: { code: 'S2', name: 'EU Hosted', description: 'S2 description' },
+      },
+      { id: 'missing-tier' },
+    ];
+    mockedAxios.get.mockResolvedValueOnce({ data: { data } });
+    mockCacheGet.mockResolvedValueOnce(['stale-model']);
+    const onModels = jest.fn();
+    const models = await fetchModels({
+      apiKey: 'service-key',
+      baseURL: 'https://gateway.test/api/v1/dlp',
+      onModels,
+    });
+
+    expect(models).toEqual(['s1-model', 's2-model', 'missing-tier']);
+    expect(onModels).toHaveBeenCalledWith(data);
+    expect(mockCacheGet).not.toHaveBeenCalled();
+  });
+
   it('fetches models successfully from the API', async () => {
     const models = await fetchModels({
       user: 'user123',
