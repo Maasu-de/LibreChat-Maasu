@@ -1,6 +1,6 @@
 import { memo, useCallback, lazy, Suspense } from 'react';
 import { useRecoilValue } from 'recoil';
-import { Home, Shield, SquarePen } from 'lucide-react';
+import { Home, Plus, Shield } from 'lucide-react';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { Skeleton, Button, TooltipAnchor } from '@librechat/client';
@@ -52,10 +52,10 @@ const NewChatButton = memo(function NewChatButton({
           data-testid="new-chat-button"
           aria-label={localize('com_ui_new_chat')}
           aria-keyshortcuts={ariaKey}
-          className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-surface-hover"
+          className="aimo-press flex h-9 w-9 items-center justify-center rounded-full bg-[#0066cc] text-white hover:bg-[#0071e3]"
           onClick={handleClick}
         >
-          <SquarePen className="h-[17.5px] w-[17.5px] text-text-primary" />
+          <Plus className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />
         </a>
       }
     />
@@ -111,7 +111,7 @@ const NavIconButton = memo(function NavIconButton({
           aria-pressed={isActive}
           data-testid={`nav-panel-${link.id}`}
           className={cn(
-            'h-9 w-9 rounded-lg',
+            'h-9 w-9 rounded-lg hover:bg-surface-hover hover:text-white',
             isActive ? 'bg-surface-active-alt text-text-primary' : 'text-text-secondary',
           )}
           onClick={handleClick}
@@ -140,7 +140,7 @@ function ExpandedPanel({
   const effectiveActive = resolveActivePanel(active, links);
 
   return (
-    <div className="flex h-full w-16 flex-shrink-0 flex-col gap-2 border-r border-border-light bg-surface-primary-alt px-[13.5px] pt-2">
+    <div className="flex h-full w-16 flex-shrink-0 flex-col gap-2 border-r border-border-light bg-surface-primary-alt px-[13.5px] pt-3">
       <NewChatButton setActive={setActive} />
       <div className="-mx-[5.5px] border-b border-border-light" />
       <div className="flex flex-col gap-1 overflow-y-auto">

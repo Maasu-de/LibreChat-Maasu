@@ -141,7 +141,7 @@ ChatsHeader.displayName = 'ChatsHeader';
 const PinnedHeader: FC = memo(() => {
   const localize = useLocalize();
   return (
-    <h2 className="pl-1 pt-1 text-text-secondary" style={{ fontSize: '0.7rem' }}>
+    <h2 className="px-2.5 pb-1 pt-1 text-xs font-semibold tracking-[-0.01em] text-[#7a7a7a]">
       {localize('com_ui_pinned')}
     </h2>
   );
@@ -156,8 +156,10 @@ const DateLabel: FC<{ groupName: string; isFirst?: boolean }> = memo(({ groupNam
       aria-label={localize('com_a11y_chats_date_section', {
         date: localize(groupName as TranslationKeys) || groupName,
       })}
-      className={cn('pl-1 pt-1 text-text-secondary', isFirst === true ? 'mt-0' : 'mt-2')}
-      style={{ fontSize: '0.7rem' }}
+      className={cn(
+        'px-2.5 pb-1 pt-1 text-xs font-semibold tracking-[-0.01em] text-[#7a7a7a]',
+        isFirst === true ? 'mt-0' : 'mt-2',
+      )}
     >
       {localize(groupName as TranslationKeys) || groupName}
     </h2>

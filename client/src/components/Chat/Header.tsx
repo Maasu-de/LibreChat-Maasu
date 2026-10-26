@@ -42,7 +42,7 @@ function Header() {
   const isSmallScreen = useMediaQuery('(max-width: 768px)');
 
   return (
-    <div className="via-presentation/70 md:from-presentation/80 md:via-presentation/50 2xl:from-presentation/0 absolute top-0 z-10 flex h-[52px] w-full items-center justify-between bg-gradient-to-b from-presentation to-transparent p-2 font-semibold text-text-primary 2xl:via-transparent">
+    <div className="aimo-header absolute top-0 z-10 flex min-h-[56px] w-full items-center justify-between px-2 py-2.5 text-sm font-semibold text-text-primary">
       <div className="hide-scrollbar flex w-full items-center justify-between gap-2 overflow-x-auto">
         <div className="mx-1 flex items-center">
           {isSmallScreen ? <OpenSidebar /> : null}

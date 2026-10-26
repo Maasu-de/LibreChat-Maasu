@@ -1,12 +1,11 @@
 import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Pin } from 'lucide-react';
+import { MessageCircle, Pin } from 'lucide-react';
 import { useRecoilValue } from 'recoil';
 import { useParams } from 'react-router-dom';
 import { Constants } from 'librechat-data-provider';
 import { useToastContext, useMediaQuery } from '@librechat/client';
 import type { TConversation } from 'librechat-data-provider';
 import { useNavigateToConvo, useLocalize, useShiftKey } from '~/hooks';
-import ConversationEndpointIcon from './ConversationEndpointIcon';
 import { useUpdateConversationMutation } from '~/data-provider';
 import { areConversationRenderPropsEqual } from './utils';
 import { NotificationSeverity } from '~/common';
@@ -219,10 +218,10 @@ function Conversation({
     <div
       ref={containerRef}
       className={cn(
-        'group relative flex h-12 w-full items-center rounded-lg outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black dark:focus-visible:ring-white md:h-9',
+        'group relative flex h-12 w-full items-center rounded-lg text-sm outline-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0071e3] md:h-[38px]',
         isActiveConvo || isPopoverActive
-          ? 'bg-surface-active-alt before:absolute before:bottom-1 before:left-0 before:top-1 before:w-0.5 before:rounded-full before:bg-black dark:before:bg-white'
-          : 'hover:bg-surface-active-alt',
+          ? 'bg-surface-active-alt text-white'
+          : 'text-text-secondary hover:bg-surface-hover hover:text-white',
       )}
       role="button"
       tabIndex={renaming ? -1 : 0}
@@ -273,7 +272,7 @@ function Conversation({
           isSmallScreen={isSmallScreen}
           localize={localize}
         >
-          <ConversationEndpointIcon conversation={conversation} size={20} context="menu-item" />
+          <MessageCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
         </ConvoLink>
       )}
       {conversation.pinned === true && (

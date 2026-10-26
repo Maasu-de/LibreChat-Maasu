@@ -289,9 +289,9 @@ const ChatForm = memo(function ChatForm({
   const baseClasses = useMemo(
     () =>
       cn(
-        'md:py-3.5 m-0 w-full resize-none py-[13px] placeholder-black/60 bg-transparent dark:placeholder-white/60 [&:has(textarea:focus)]:shadow-[0_2px_6px_rgba(0,0,0,.05)]',
-        isCollapsed ? 'max-h-[52px]' : 'max-h-[45vh] md:max-h-[55vh]',
-        isMoreThanThreeRows ? 'pl-5' : 'px-5',
+        'm-0 w-full resize-none bg-transparent pb-1.5 pt-4 text-[17px] leading-[1.47] placeholder-[#6e6e73] dark:placeholder-[#a1a1a6]',
+        isCollapsed ? 'max-h-[52px]' : 'max-h-[40vh]',
+        isMoreThanThreeRows ? 'pl-[22px]' : 'px-[22px]',
       ),
     [isCollapsed, isMoreThanThreeRows],
   );
@@ -350,11 +350,10 @@ const ChatForm = memo(function ChatForm({
           <div
             onClick={handleContainerClick}
             className={cn(
-              'relative flex w-full flex-grow flex-col overflow-hidden rounded-t-3xl border pb-4 text-text-primary transition-all duration-200 sm:rounded-3xl sm:pb-0',
-              isTextAreaFocused ? 'shadow-lg' : 'shadow-md',
-              isTemporary
-                ? 'border-blue-800/60 bg-blue-950/10'
-                : 'border-border-light bg-surface-chat',
+              'relative flex w-full flex-grow flex-col overflow-hidden rounded-t-[28px] border pb-4 text-text-primary shadow-[0_1px_3px_rgba(0,0,0,.04)] transition-all duration-200 sm:rounded-[28px] sm:pb-0',
+              isTemporary && 'border-blue-800/60 bg-blue-950/10',
+              !isTemporary && 'bg-surface-chat',
+              !isTemporary && (isTextAreaFocused ? 'border-[#0071e3]' : 'border-aimo-line'),
             )}
           >
             <TextareaHeader addedConvo={addedConvo} setAddedConvo={setAddedConvo} />
@@ -428,11 +427,11 @@ const ChatForm = memo(function ChatForm({
             )}
             <div
               className={cn(
-                '@container items-between flex gap-2 pb-2',
+                '@container items-between flex gap-2 pb-2.5 pt-1.5',
                 isRTL ? 'flex-row-reverse' : 'flex-row',
               )}
             >
-              <div className={`${isRTL ? 'mr-2' : 'ml-2'}`}>
+              <div className={`${isRTL ? 'mr-2.5' : 'ml-2.5'}`}>
                 <AttachFileChat
                   conversation={conversation}
                   disableInputs={disableInputs}
@@ -468,7 +467,7 @@ const ChatForm = memo(function ChatForm({
                   isSubmitting={isSubmitting}
                 />
               )}
-              <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
+              <div className={`${isRTL ? 'ml-2.5' : 'mr-2.5'}`}>
                 {isSubmitting && showStopButton ? (
                   <StopButton stop={handleStopGenerating} setShowStopButton={setShowStopButton} />
                 ) : (
