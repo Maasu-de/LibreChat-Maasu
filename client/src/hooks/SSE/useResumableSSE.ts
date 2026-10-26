@@ -585,6 +585,7 @@ export default function useResumableSSE(
                   conversationId: currentSubmission.conversation?.conversationId ?? null,
                   manualSkills: data.requestMessage?.manualSkills ?? currentSubmission.manualSkills,
                   files: userMessage.files,
+                  addedConvo: currentSubmission.addedConvo,
                 });
               } else {
                 const unsent = data.earlyAbort === true;

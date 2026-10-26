@@ -38,8 +38,6 @@ const DLP_UNSUPPORTED_MESSAGE =
   'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
 const COMPARISON_BLOCKED_MESSAGE =
   "This model was not called: your organization's AI governance policy blocks this message.";
-const COMPARISON_REVIEW_MESSAGE =
-  'This model was not called: the message needs your review first. Send it to this model alone to review it.';
 const COMPARISON_FAILURE_MESSAGE = 'This model could not respond. Please try again later.';
 
 export type {
@@ -629,13 +627,6 @@ export function onDlpSent(req: ServerRequest | undefined, callback: () => void):
 /** The approval-off fetch of each turn's governed fetch, for side calls made with its options. */
 const sideCallFetches = new WeakMap<GovernanceFetch, GovernanceFetch>();
 
-/** Comparison reviews are never approved, so they are not stored. */
-const unstoredReviews: ReviewStore = {
-  get: async () => undefined,
-  set: async () => undefined,
-  delete: async () => false,
-};
-
 /** A streamed completion whose only text is `message`, for a comparison model that was not called. */
 function comparisonNotice(message: string): Response {
   const chunk = {
@@ -647,34 +638,62 @@ function comparisonNotice(message: string): Response {
 }
 
 /**
+ * Claims the review the user approved for this turn, once for both comparison models. It holds
+ * for the approved text whichever model it was reviewed for, as both models get the same text.
+ */
+function claimComparisonApproval(req: ServerRequest): Promise<boolean> {
+  req.governanceComparisonApproval ??= (async () => {
+    const { text, dlpReviewId } = req.body ?? {};
+    if (typeof dlpReviewId !== 'string' || dlpReviewId === '') {
+      return false;
+    }
+    const reviews = getReviewStore();
+    const stored = await reviews.get(dlpReviewId);
+    return stored?.userId === req.user?.id && stored?.text === text && reviews.delete(dlpReviewId);
+  })();
+  return req.governanceComparisonApproval;
+}
+
+/**
  * The governed fetch for one model of a two-model comparison. The gateway reviews each model's
- * call on its own. A review, block or failure becomes that model's response text instead of an
- * error, because an error would also end the other model's response.
+ * call on its own. A review the user has to decide on ends the turn as for a single model; once
+ * approved, each model's own review is approved with it. A block or failure becomes that model's
+ * response text instead of an error, because an error would also end the other model's response.
  */
 function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
-  let decision: GovernanceDecision | undefined;
-  const governedFetch = createGovernanceDlpFetch({
-    userId: req.user?.id ?? '',
-    groupIds: req.governanceGroupIds,
-    fetch,
-    text: typeof req.body?.text === 'string' ? req.body.text : '',
-    onReview: (review) => {
-      decision = review.decision;
-    },
-    reviews: unstoredReviews,
-  });
+  req.governanceDlpSent ??= false;
   return async (input, init) => {
-    decision = undefined;
+    let review: GovernanceDlpReview | undefined;
+    const send = (reviewId?: string) =>
+      createGovernanceDlpFetch({
+        userId: req.user?.id ?? '',
+        groupIds: req.governanceGroupIds,
+        fetch,
+        text: typeof req.body?.text === 'string' ? req.body.text : '',
+        reviewId,
+        fileContexts: () => req.governanceDlpFileContexts ?? [],
+        onReview: (result) => {
+          review = result;
+        },
+        onSent: () => markDlpSent(req),
+      })(input, init);
     try {
-      const response = await governedFetch(input, init);
+      const response = await send();
       if (response.ok) {
         return response;
       }
-      await response.body?.cancel();
-      if (decision === 'BLOCK') {
-        return comparisonNotice(COMPARISON_BLOCKED_MESSAGE);
+      if (!review) {
+        return comparisonNotice(COMPARISON_FAILURE_MESSAGE);
       }
-      return comparisonNotice(decision ? COMPARISON_REVIEW_MESSAGE : COMPARISON_FAILURE_MESSAGE);
+      if (review.decision !== 'BLOCK' && (await claimComparisonApproval(req))) {
+        const approved = await send(review.reviewId);
+        return approved.ok ? approved : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+      }
+      /** A review the user can approve is shown before a block, which leaves nothing to approve. */
+      if (review.decision !== 'BLOCK' || !req.governanceDlpReview) {
+        req.governanceDlpReview = review;
+      }
+      return review.decision === 'BLOCK' ? comparisonNotice(COMPARISON_BLOCKED_MESSAGE) : response;
     } catch (error) {
       if (init?.signal?.aborted) {
         throw error;

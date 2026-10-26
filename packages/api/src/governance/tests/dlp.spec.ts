@@ -375,10 +375,11 @@ describe('governed turn sent state', () => {
 
 describe('two-model comparison', () => {
   const text = 'Please email max@example.com today';
+  let reviewCount = 0;
 
-  const comparisonRequest = (): ServerRequest =>
+  const comparisonRequest = (body: Record<string, string> = {}): ServerRequest =>
     ({
-      body: { text, addedConvo: { model: 'second-model' } },
+      body: { text, addedConvo: { model: 'second-model' }, ...body },
       user: { id: 'user-123' } as ServerRequest['user'],
     }) as ServerRequest;
 
@@ -389,11 +390,11 @@ describe('two-model comparison', () => {
 
   const completion = (): Response => sse({ choices: [{ delta: { content: 'Hi' } }] });
 
-  const review = (action: 'MASK' | 'BLOCK'): Response =>
+  const review = (action: 'WARN' | 'MASK' | 'BLOCK'): Response =>
     sse({
       choices: [],
       dlp: {
-        review_id: 'comparison-review',
+        review_id: `comparison-review-${++reviewCount}`,
         action,
         findings: [
           {
@@ -405,12 +406,17 @@ describe('two-model comparison', () => {
             ...(action === 'MASK' ? { replacement: '[EMAIL]' } : {}),
           },
         ],
-        ...(action === 'MASK'
-          ? {
-              messages: [{ role: 'user', content: 'Please email [EMAIL] today' }],
+        ...(action === 'BLOCK'
+          ? {}
+          : {
+              messages: [
+                {
+                  role: 'user',
+                  content: action === 'MASK' ? 'Please email [EMAIL] today' : text,
+                },
+              ],
               dlp_token: 'approval-token',
-            }
-          : {}),
+            }),
       },
     });
 
@@ -430,7 +436,7 @@ describe('two-model comparison', () => {
     JSON.parse((await response.text()).split('\n\n')[0].replace('data: ', '')).choices[0].delta
       .content;
 
-  it('streams an allowed call and keeps the turn out of the single-message review flow', async () => {
+  it('streams an allowed call and marks the turn sent', async () => {
     const req = comparisonRequest();
     const upstreamFetch = jest.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => completion(),
@@ -448,7 +454,6 @@ describe('two-model comparison', () => {
 
   it.each<[string, () => Promise<Response>, string]>([
     ['blocked', async () => review('BLOCK'), 'AI governance policy blocks this message'],
-    ['held for review', async () => review('MASK'), 'needs your review first'],
     [
       'failed at the gateway',
       async () => new Response('{"error":{}}', { status: 503 }),
@@ -470,10 +475,67 @@ describe('two-model comparison', () => {
 
       expect(response.ok).toBe(true);
       expect(await responseText(response)).toContain(expected);
-      expect(req.governanceDlpReview).toBeUndefined();
-      expect(await getReviewStore().get('comparison-review')).toBeUndefined();
     },
   );
+
+  it('asks the user to review a masked message, ahead of the other model being blocked', async () => {
+    const req = comparisonRequest();
+
+    const masked = await send(createRequestDlpFetch(req, async () => review('MASK')));
+    const blocked = await send(createRequestDlpFetch(req, async () => review('BLOCK')));
+
+    expect(masked.status).toBe(400);
+    expect(await responseText(blocked)).toContain('blocks this message');
+    expect(req.governanceDlpReview?.decision).toBe('MASK');
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(await getReviewStore().get(req.governanceDlpReview?.reviewId ?? '')).toMatchObject({
+      userId: 'user-123',
+      text: 'Please email [EMAIL] today',
+    });
+  });
+
+  it('sends the approved text to both models with one approval', async () => {
+    await getReviewStore().set(
+      'approved-review',
+      {
+        userId: 'user-123',
+        model: 'first-model',
+        text,
+        messages: [{ role: 'user', content: text }],
+        dlpToken: 'earlier-token',
+      },
+      60_000,
+    );
+    const req = comparisonRequest({ dlpReviewId: 'approved-review' });
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        String(init?.body).includes('dlp_token') ? completion() : review('WARN'),
+    );
+
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, upstreamFetch)),
+      send(createRequestDlpFetch(req, upstreamFetch)),
+    ]);
+
+    expect(await Promise.all(responses.map(responseText))).toEqual(['Hi', 'Hi']);
+    const approvals = upstreamFetch.mock.calls
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.dlp_token != null);
+    expect(approvals).toHaveLength(2);
+    expect(approvals.every((body) => body.dlp_token === 'approval-token')).toBe(true);
+    expect(await getReviewStore().get('approved-review')).toBeUndefined();
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(req.governanceDlpReview).toBeUndefined();
+  });
+
+  it('asks again when the approval is no longer valid', async () => {
+    const req = comparisonRequest({ dlpReviewId: 'expired-review' });
+
+    const response = await send(createRequestDlpFetch(req, async () => review('WARN')));
+
+    expect(response.status).toBe(400);
+    expect(req.governanceDlpReview?.decision).toBe('WARN');
+  });
 
   it('still ends the call when the user stops the turn', async () => {
     const controller = new AbortController();

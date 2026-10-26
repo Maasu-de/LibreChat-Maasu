@@ -47,6 +47,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpReview?: GovernanceDlpReview;
   /** Set when the approved review's last send failed and put it back, so it can be sent again. */
   governanceDlpApprovalKept?: boolean;
+  /** Whether this comparison turn claimed the review the user approved, shared by both models. */
+  governanceComparisonApproval?: Promise<boolean>;
   /**
    * `false` until the gateway starts this turn's governed completion, `true` from then on, and
    * unset for a turn that is not governed. An unsent turn stores nothing.
