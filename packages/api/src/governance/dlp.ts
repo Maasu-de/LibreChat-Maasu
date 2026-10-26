@@ -26,6 +26,8 @@ const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
 const GATEWAY_BASE_PATH = /\/api\/v1\/dlp$/;
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
 const LIBRECHAT_GROUPS_HEADER = 'X-LibreChat-Group-IDs';
+const LIBRECHAT_CONVERSATION_HEADER = 'X-LibreChat-Conversation-ID';
+const LIBRECHAT_MESSAGE_HEADER = 'X-LibreChat-Message-ID';
 
 const DLP_FAILURE_MESSAGE =
   'The message could not be checked against the data loss prevention policy. Please try again later.';
@@ -34,6 +36,11 @@ const DLP_APPROVAL_INVALID_MESSAGE =
   'The approval for this message is no longer valid. Please send the message again.';
 const DLP_UNSUPPORTED_MESSAGE =
   'This message could not be checked against your organization\'s data loss prevention policy because the "Use Responses API" option is enabled. Turn it off for this conversation to continue. No content was sent to the model.';
+const COMPARISON_BLOCKED_MESSAGE =
+  "This model was not called: your organization's AI governance policy blocks this message.";
+const COMPARISON_REVIEW_MESSAGE =
+  'This model was not called: the message needs your review first. Send it to this model alone to review it.';
+const COMPARISON_FAILURE_MESSAGE = 'This model could not respond. Please try again later.';
 
 export type {
   GovernanceDecision,
@@ -548,11 +555,23 @@ export function createGovernanceAttributionFetch(
   req: ServerRequest,
   fetch: GovernanceFetch = globalThis.fetch,
 ): GovernanceFetch {
-  return async (input, init) =>
-    fetch(
+  return async (input, init) => {
+    const attributed = withGovernanceHeaders(
       input,
-      withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
+      init,
+      req.user?.id ?? '',
+      req.governanceGroupIds ?? [],
     );
+    const headers = new Headers(attributed.headers);
+    const conversationId = req.body?.conversationId;
+    if (typeof conversationId === 'string' && conversationId !== '') {
+      headers.set(LIBRECHAT_CONVERSATION_HEADER, conversationId);
+    }
+    if (req.governanceMessageId) {
+      headers.set(LIBRECHAT_MESSAGE_HEADER, req.governanceMessageId);
+    }
+    return fetch(input, { ...attributed, headers });
+  };
 }
 
 function markDlpSent(req: ServerRequest): void {
@@ -610,6 +629,61 @@ export function onDlpSent(req: ServerRequest | undefined, callback: () => void):
 /** The approval-off fetch of each turn's governed fetch, for side calls made with its options. */
 const sideCallFetches = new WeakMap<GovernanceFetch, GovernanceFetch>();
 
+/** Comparison reviews are never approved, so they are not stored. */
+const unstoredReviews: ReviewStore = {
+  get: async () => undefined,
+  set: async () => undefined,
+  delete: async () => false,
+};
+
+/** A streamed completion whose only text is `message`, for a comparison model that was not called. */
+function comparisonNotice(message: string): Response {
+  const chunk = {
+    choices: [{ index: 0, delta: { role: 'assistant', content: message }, finish_reason: 'stop' }],
+  };
+  return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+/**
+ * The governed fetch for one model of a two-model comparison. The gateway reviews each model's
+ * call on its own. A review, block or failure becomes that model's response text instead of an
+ * error, because an error would also end the other model's response.
+ */
+function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
+  let decision: GovernanceDecision | undefined;
+  const governedFetch = createGovernanceDlpFetch({
+    userId: req.user?.id ?? '',
+    groupIds: req.governanceGroupIds,
+    fetch,
+    text: typeof req.body?.text === 'string' ? req.body.text : '',
+    onReview: (review) => {
+      decision = review.decision;
+    },
+    reviews: unstoredReviews,
+  });
+  return async (input, init) => {
+    decision = undefined;
+    try {
+      const response = await governedFetch(input, init);
+      if (response.ok) {
+        return response;
+      }
+      await response.body?.cancel();
+      if (decision === 'BLOCK') {
+        return comparisonNotice(COMPARISON_BLOCKED_MESSAGE);
+      }
+      return comparisonNotice(decision ? COMPARISON_REVIEW_MESSAGE : COMPARISON_FAILURE_MESSAGE);
+    } catch (error) {
+      if (init?.signal?.aborted) {
+        throw error;
+      }
+      return comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+    }
+  };
+}
+
 /**
  * The governed fetch for one chat request. The turn counts as unsent until the gateway starts its
  * completion, and a review the user has to decide on is set on `req`. Without `approval`, as for a
@@ -626,6 +700,11 @@ export function createRequestDlpFetch(
       groupIds: req.governanceGroupIds,
       fetch,
     });
+  }
+  if (req.body?.addedConvo != null) {
+    const comparisonFetch = createComparisonDlpFetch(req, fetch);
+    sideCallFetches.set(comparisonFetch, createRequestDlpFetch(req, fetch, false));
+    return comparisonFetch;
   }
   const { text, dlpReviewId } = req.body ?? {};
   req.governanceDlpSent ??= false;

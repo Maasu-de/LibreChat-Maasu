@@ -49,7 +49,6 @@ function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']
     modelSelect: true,
     parameters: false,
     presets: false,
-    multiConvo: false,
     agents: false,
     remoteAgents: disabled,
     mcpServers: disabled,

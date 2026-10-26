@@ -22,6 +22,8 @@ export type RequestBody = {
   text?: string;
   /** Governance DLP review the user approved for this message. */
   dlpReviewId?: string;
+  /** The second conversation of a two-model comparison. */
+  addedConvo?: Partial<TConversation>;
 };
 
 export type ServerRequest = Request<unknown, unknown, RequestBody> & {
@@ -37,6 +39,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpEligible?: boolean;
   /** Server-resolved LibreChat group IDs used by the governed completion. */
   governanceGroupIds?: string[];
+  /** The user message this turn's gateway calls are correlated with. */
+  governanceMessageId?: string;
   /** The attached-document blocks this turn added to messages, for naming files in DLP findings. */
   governanceDlpFileContexts?: DlpFileContext[];
   /** A DLP review of this request that the user has to decide on before the model is called. */
