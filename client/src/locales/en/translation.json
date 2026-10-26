@@ -1226,7 +1226,6 @@
   "com_ui_governance_connection_error": "Could not connect to the AI Governance backend",
   "com_ui_governance_connection_label": "AI Governance backend",
   "com_ui_governance_connection_success": "AI Governance backend connected successfully",
-  "com_ui_governed_chat": "Governed Chat",
   "com_ui_good_afternoon": "Good afternoon",
   "com_ui_good_evening": "Good evening",
   "com_ui_good_morning": "Good morning",
