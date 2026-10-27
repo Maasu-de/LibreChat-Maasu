@@ -203,8 +203,15 @@ export interface DlpFileContext extends FileContext {
 interface LocatedFile {
   fileId?: string;
   filename: string;
+  type?: string;
   start: number;
   end: number;
+}
+
+/** A user message's code points and the attached files located in it. */
+interface MessageFiles {
+  chars: string[];
+  files: LocatedFile[];
 }
 
 /**
@@ -224,10 +231,11 @@ function locateFiles(
       continue;
     }
     const base = Array.from(content.slice(0, index)).length;
-    for (const { fileId, filename, start, end } of fileContext.files) {
+    for (const { fileId, filename, type, start, end } of fileContext.files) {
       located.push({
         ...(current ? { fileId } : {}),
         filename,
+        type,
         start: base + start,
         end: base + end,
       });
@@ -237,9 +245,10 @@ function locateFiles(
 }
 
 /**
- * Findings inside files attached to user messages, counted per file, category and action.
- * Findings in the submitted text are left to `findingsInSubmittedText`. A finding in a file
- * attached to the submitted message names that file's ID, since only those can be withdrawn.
+ * Findings inside files attached to user messages, counted per file, category and action, with
+ * the distinct values they matched. Findings in the submitted text are left to
+ * `findingsInSubmittedText`. A finding in a file attached to the submitted message names that
+ * file's ID, since only those can be withdrawn.
  */
 export function findingsInFiles(
   messages: GovernanceChatMessage[],
@@ -247,8 +256,8 @@ export function findingsInFiles(
   submitted: SubmittedText,
   fileContexts: DlpFileContext[] = [],
 ): GovernanceFileFinding[] {
-  const filesByMessage = new Map<number, LocatedFile[]>();
-  const counted = new Map<string, GovernanceFileFinding>();
+  const filesByMessage = new Map<number, MessageFiles>();
+  const counted = new Map<string, { counter: GovernanceFileFinding; terms: Set<string> }>();
   for (const finding of findings) {
     const match = MESSAGE_CONTENT_LOCATION.exec(finding.location);
     const messageIndex = match ? Number(match[1]) : -1;
@@ -257,23 +266,26 @@ export function findingsInFiles(
     if (message?.role !== 'user' || (isSubmitted && finding.end > submitted.offset)) {
       continue;
     }
-    let files = filesByMessage.get(messageIndex);
-    if (!files) {
-      const content = isSubmitted
-        ? Array.from(message.content).slice(0, submitted.offset).join('')
-        : message.content;
-      files = locateFiles(content, fileContexts, isSubmitted);
-      filesByMessage.set(messageIndex, files);
+    let located = filesByMessage.get(messageIndex);
+    if (!located) {
+      const chars = Array.from(message.content);
+      const content = isSubmitted ? chars.slice(0, submitted.offset).join('') : message.content;
+      located = { chars, files: locateFiles(content, fileContexts, isSubmitted) };
+      filesByMessage.set(messageIndex, located);
     }
-    const file = files.find(({ start, end }) => finding.start >= start && finding.start < end);
+    const file = located.files.find(
+      ({ start, end }) => finding.start >= start && finding.start < end,
+    );
     if (!file) {
       continue;
     }
-    const { fileId, filename } = file;
+    const term = located.chars.slice(finding.start, finding.end).join('');
+    const { fileId, filename, type } = file;
     const key = JSON.stringify([fileId ?? null, filename, finding.category, finding.action]);
     const entry = counted.get(key);
     if (entry) {
-      entry.count += 1;
+      entry.counter.count += 1;
+      entry.terms.add(term);
       continue;
     }
     const counter: GovernanceFileFinding = {
@@ -288,9 +300,15 @@ export function findingsInFiles(
     if (finding.label !== undefined) {
       counter.label = finding.label;
     }
-    counted.set(key, counter);
+    if (type !== undefined) {
+      counter.type = type;
+    }
+    counted.set(key, { counter, terms: new Set([term]) });
   }
-  return Array.from(counted.values());
+  return Array.from(counted.values(), ({ counter, terms }) => ({
+    ...counter,
+    terms: [...terms].filter(Boolean),
+  }));
 }
 
 type ReviewedUserMessage = FinalMessageFields & { quotes?: string[]; manualSkills?: string[] };

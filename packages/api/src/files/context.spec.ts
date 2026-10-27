@@ -2,26 +2,31 @@ import { FileSources } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import { buildFileContext, extractFileContext } from './context';
 
-const textFile = (filename: string, text: string, file_id = filename) =>
-  ({ file_id, filename, text, source: FileSources.text }) as IMongoFile;
+const textFile = (filename: string, text: string, file_id = filename, type = 'text/plain') =>
+  ({ file_id, filename, text, type, source: FileSources.text }) as IMongoFile;
 
 const sliceCodePoints = (text: string, start: number, end: number) =>
   Array.from(text).slice(start, end).join('');
 
 describe('buildFileContext', () => {
-  it('records the span of each attached file in code points', async () => {
+  it('records the span and type of each attached file, in code points', async () => {
     const fileContext = await buildFileContext({
       attachments: [
-        textFile('🙂 report.pdf', 'IBAN DE89370400440532013000\n\n```js\ncode\n```', 'file-1'),
+        textFile(
+          '🙂 report.pdf',
+          'IBAN DE89370400440532013000\n\n```js\ncode\n```',
+          'file-1',
+          'application/pdf',
+        ),
         textFile('notes.txt', 'mail max@example.com', 'file-2'),
       ],
       tokenCountFn: (text) => text.length,
     });
     const { text, files } = fileContext!;
 
-    expect(files.map(({ fileId, filename }) => [fileId, filename])).toEqual([
-      ['file-1', '🙂 report.pdf'],
-      ['file-2', 'notes.txt'],
+    expect(files.map(({ fileId, filename, type }) => [fileId, filename, type])).toEqual([
+      ['file-1', '🙂 report.pdf', 'application/pdf'],
+      ['file-2', 'notes.txt', 'text/plain'],
     ]);
     expect(sliceCodePoints(text, files[0].start, files[0].end)).toBe(
       '# "🙂 report.pdf"\nIBAN DE89370400440532013000\n\n```js\ncode\n```\n',
