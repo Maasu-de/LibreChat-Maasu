@@ -339,6 +339,23 @@ export default function useStepHandler({
       updatedContent = updatedContent.filter((part) => !isOAuthToolCallContent(part));
     }
 
+    /**
+     * The server numbers parallel agents' parts in one sequence, so a part of the agent that
+     * streams first can land on the placeholder of one that has not started yet. That placeholder
+     * moves to the end, so the waiting agent keeps its column.
+     */
+    const slot = updatedContent[index];
+    const pending = slot as (ContentMetadata & { type?: string }) | undefined;
+    if (
+      pending &&
+      !pending.type &&
+      pending.agentId != null &&
+      pending.agentId !== metadata?.agentId
+    ) {
+      updatedContent[index] = undefined;
+      updatedContent.push(slot);
+    }
+
     if (!updatedContent[index] && contentType !== ContentTypes.TOOL_CALL) {
       updatedContent[index] = { type: contentPart.type as AllContentTypes };
     }
