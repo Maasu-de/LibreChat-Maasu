@@ -394,6 +394,17 @@ it("sends the reviewed turn's files with the approved text, so the sent message 
   expect(lastSubmission().userMessage.files).toEqual(files);
 });
 
+it('sends the approved text of a reviewed comparison to both models', () => {
+  const addedConvo = { ...savedConversation, model: 'second-model' };
+  renderChat(savedConversation, { ...maskReview(savedConversation.conversationId), addedConvo });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+  expect(lastSubmission().dlpReviewId).toBe('review-1');
+  expect(lastSubmission().addedConvo).toEqual(addedConvo);
+});
+
 it("sends the reviewed turn's $ skills with the approved text, and keeps newer ones queued", () => {
   renderChat(savedConversation, {
     ...maskReview(savedConversation.conversationId),

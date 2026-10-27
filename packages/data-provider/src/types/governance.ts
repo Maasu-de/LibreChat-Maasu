@@ -24,12 +24,20 @@ export interface GovernanceFileFinding {
   count: number;
 }
 
+/** Compared models that findings of these categories may not be sent to. */
+export interface GovernanceModelRestriction {
+  models: string[];
+  categories: string[];
+}
+
 export interface GovernanceDlpResult {
   decision: GovernanceDecision;
   policyVersion?: number;
   findings: GovernanceFinding[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
+  /** Set on a blocked comparison when the findings do not allow some of the compared models. */
+  modelRestriction?: GovernanceModelRestriction;
 }
 
 /** Location that the findings and masked preview of a DLP review give for the submitted text. */

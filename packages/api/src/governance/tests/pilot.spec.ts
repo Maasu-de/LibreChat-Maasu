@@ -49,6 +49,8 @@ describe('pilot HTTP boundary', () => {
     { endpointOption: { modelOptions: { disableStreaming: false } } },
     { files: [], tools: [], ephemeralAgent: { web_search: false, mcp: [] } },
     { conversationId: 'existing', parentMessageId: 'reply', isRegenerate: false },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, endpointType: 'custom', model: 'other-model' } },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, model: 'other-model', messages: ['saved-id'] } },
   ])('allows ordinary text chat and follow-ups: %j', async (extra) => {
     await expect(
       request(app())
@@ -105,7 +107,9 @@ describe('pilot HTTP boundary', () => {
     { assistant_id: 'asst_external' },
     { isRegenerate: true },
     { isContinued: true },
-    { addedConvo: { model: 'other' } },
+    { addedConvo: { endpoint: 'external', model: 'other' } },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, agent_id: 'agent_saved' } },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, tools: ['web_search'] } },
     { editedContent: { text: 'edited' } },
     { useResponsesApi: true },
     { disableStreaming: true },
@@ -167,9 +171,9 @@ describe('pilot HTTP boundary', () => {
     await expect(request(app()).get('/api/convos/gen_title/id')).resolves.toMatchObject({
       status: 204,
     });
-    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject(
-      { status: 403 },
-    );
+    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject({
+      status: 403,
+    });
     await expect(request(app()).post('/api/convos/import').send({})).resolves.toMatchObject({
       status: 403,
     });

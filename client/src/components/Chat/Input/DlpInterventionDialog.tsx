@@ -1,4 +1,5 @@
 import { Fragment, useMemo } from 'react';
+import { Trans } from 'react-i18next';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
 import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
@@ -159,11 +160,16 @@ export default function DlpInterventionDialog({
   onConfirm: () => void;
 }) {
   const localize = useLocalize();
-  const { decision } = result;
+  const { decision, modelRestriction } = result;
   const categoryLabel = (category: string) => {
     const key = CATEGORY_COPY[category];
     return key ? localize(key) : label(category);
   };
+  const title = modelRestriction
+    ? localize('com_ui_dlp_model_restricted_title')
+    : localize(COPY[decision].title);
+  /** The restriction names the models in the text, which the dialog's plain description cannot. */
+  const description = modelRestriction ? undefined : localize(COPY[decision].description);
   const findingLabel = ({ category, replacement }: GovernanceFinding) =>
     `${categoryLabel(category)}${replacement ? ` → ${replacement}` : ''}`;
   const originalSegments = useMemo(
@@ -213,8 +219,8 @@ export default function DlpInterventionDialog({
   return (
     <OGDialog open onOpenChange={(open) => !open && onCancel()}>
       <OGDialogTemplate
-        title={localize(COPY[decision].title)}
-        description={localize(COPY[decision].description)}
+        title={title}
+        description={description}
         className="max-w-[640px]"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
@@ -223,6 +229,27 @@ export default function DlpInterventionDialog({
             className="flex max-h-[65vh] flex-col gap-[18px] overflow-y-auto px-1"
             role="document"
           >
+            {modelRestriction && (
+              <p className="text-sm tracking-[-0.016em] text-text-secondary">
+                <Trans
+                  i18nKey="com_ui_dlp_model_restricted_description"
+                  values={{
+                    models: modelRestriction.models.join(', '),
+                    categories: modelRestriction.categories.map(categoryLabel).join(', '),
+                  }}
+                  components={{
+                    model: (
+                      <span
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 text-xs font-semibold tracking-[-0.01em]',
+                          ACTION_CLASS.BLOCK,
+                        )}
+                      />
+                    ),
+                  }}
+                />
+              </p>
+            )}
             {sendFailed && (
               <p
                 role="alert"

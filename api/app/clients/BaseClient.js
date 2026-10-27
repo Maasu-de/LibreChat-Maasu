@@ -392,6 +392,10 @@ class BaseClient {
           text: message,
         });
 
+    if (this.options.req) {
+      this.options.req.governanceMessageId = userMessage.messageId;
+    }
+
     /**
      * Attach quoted excerpts (the "Add to chat" selections from `req.body.quotes`)
      * before `getReqData`/`onStart` fire, so the optimistic bubble, resumable job

@@ -1094,6 +1094,8 @@
   "com_ui_dlp_mask_description": "Review the complete masked prompt before it is sent.",
   "com_ui_dlp_mask_title": "Sensitive information will be masked",
   "com_ui_dlp_masked_prompt": "Masked prompt",
+  "com_ui_dlp_model_restricted_description": "<model>{{models}}</model> can't receive prompts that contain: {{categories}}. Choose a different model or remove it from the comparison to continue with this prompt.",
+  "com_ui_dlp_model_restricted_title": "Model not allowed for this prompt",
   "com_ui_dlp_original_prompt": "Original prompt",
   "com_ui_dlp_replacement_explanation": "Highlighted replacement tokens will be sent instead of the sensitive values above.",
   "com_ui_dlp_review_expired": "The review expired. Your prompt is back in the message box to send again.",
