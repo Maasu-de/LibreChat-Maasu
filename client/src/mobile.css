@@ -124,7 +124,7 @@
 
 .gemini-gradient {
   /* Adjust the colors and positioning as necessary to match the image */
-  background-image: radial-gradient(circle at center, #0115e9, #89cff0, #fefeff);
+  background-image: radial-gradient(circle at center, #0066cc, #89cff0, #ffffff);
   /* More styling for demonstration purposes */
   border-radius: 50%;
   height: 100px;
@@ -233,7 +233,7 @@
 }
 
 .azure-bg-color {
-  background: linear-gradient(0.375turn, #89cff0, #0115e9);
+  background: #000000;
 }
 
 @keyframes slowPulse {
@@ -314,7 +314,7 @@
 }
 
 p.whitespace-pre-wrap a, li a {
-  color: #0115e9;
+  color: #0066cc;
   text-decoration: underline;
   font-weight: bold;
 }

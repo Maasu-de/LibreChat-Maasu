@@ -293,20 +293,33 @@ export function findingsInFiles(
   return Array.from(counted.values());
 }
 
-/** Applies each finding's replacement to the text, using code-point offsets like the gateway. */
+/** The characters Python's `str.isspace()` matches, which the gateway skips when trimming. */
+const GATEWAY_WHITESPACE =
+  // eslint-disable-next-line no-control-regex
+  /^[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/;
+
+/**
+ * Applies each finding's replacement to the text like the gateway, using code-point offsets. A
+ * finding inside an earlier one is dropped; a finding crossing an earlier one masks only the
+ * rest, without its leading whitespace, so both keep their replacements.
+ */
 export function maskText(text: string, findings: GovernanceFinding[]): string {
   const chars = Array.from(text);
   const masks = findings
     .filter((finding) => finding.replacement !== undefined)
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => a.start - b.start || b.end - a.end);
 
   let masked = '';
   let cursor = 0;
   for (const { start, end, replacement } of masks) {
-    if (start < cursor) {
+    if (end <= cursor) {
       continue;
     }
-    masked += chars.slice(cursor, start).join('') + replacement;
+    let from = Math.max(start, cursor);
+    while (start < cursor && from < end && GATEWAY_WHITESPACE.test(chars[from])) {
+      from++;
+    }
+    masked += chars.slice(cursor, from).join('') + (from < end ? replacement : '');
     cursor = end;
   }
   return masked + chars.slice(cursor).join('');

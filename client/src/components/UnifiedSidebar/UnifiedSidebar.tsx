@@ -59,7 +59,7 @@ function SidebarToggle({ expanded, onClick }: { expanded: boolean; onClick: () =
           aria-label={label}
           aria-expanded={expanded}
           aria-keyshortcuts={ariaKey}
-          className="flex h-12 w-full shrink-0 items-center justify-center border-t border-border-light bg-surface-primary-alt text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+          className="flex h-12 w-full shrink-0 items-center justify-center border-t border-border-light bg-surface-primary-alt text-text-secondary transition-colors hover:bg-surface-hover hover:text-white"
           onClick={onClick}
         >
           <svg
@@ -194,7 +194,7 @@ function UnifiedSidebar() {
     >
       <span className="aimo-sidebar-brand-logo aimo-sidebar-brand-logo-long" aria-hidden="true" />
       <span className="aimo-sidebar-brand-logo aimo-sidebar-brand-logo-small" aria-hidden="true" />
-      <span className="aimo-sidebar-brand-title">{localize('com_ui_governed_chat')}</span>
+      <span className="aimo-sidebar-brand-title">{localize('com_ui_chat')}</span>
     </div>
   );
 
