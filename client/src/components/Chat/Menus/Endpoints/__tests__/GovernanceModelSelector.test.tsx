@@ -92,14 +92,37 @@ describe('GovernanceModelSelector', () => {
 
     for (const model of models) {
       const tier = model.governance_tier!;
-      const group = await screen.findByRole('group', { name: `${tier.code} — ${tier.name}` });
-      expect(within(group).getByRole('heading')).toHaveTextContent(`${tier.code} — ${tier.name}`);
-      expect(within(group).getByText(tier.description)).toBeInTheDocument();
+      const group = await screen.findByRole('group', { name: tier.name });
+      expect(within(group).getByRole('heading', { name: tier.name })).toBeInTheDocument();
+      expect(within(group).queryByRole('option', { name: tier.name })).not.toBeInTheDocument();
       expect(within(group).getByRole('option', { name: model.id })).toBeInTheDocument();
     }
+    expect(screen.queryByText(/S[12] —/)).not.toBeInTheDocument();
     expect(screen.queryByText('gemini-3.6-flash')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('option', { name: id }));
     expect(onSelect).toHaveBeenCalledWith(id);
+  });
+
+  it('shows tier descriptions on heading hover without selecting a model', async () => {
+    const onSelect = jest.fn();
+    renderSelector(
+      <GovernanceModelSelector endpoint={GOVERNANCE_ENDPOINT} value={null} onSelect={onSelect} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    for (const model of models) {
+      const tier = model.governance_tier!;
+      const heading = screen.getByRole('heading', { name: tier.name });
+      await userEvent.hover(heading);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(tier.description);
+      await userEvent.unhover(heading);
+      await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+    }
+
+    await userEvent.click(screen.getByRole('heading', { name: 'EU Sovereign' }));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole('option', { name: 'sovereign-model' })).toBeInTheDocument();
   });
 
   it('shows unavailable metadata explicitly and filters models without dropping tier headings', async () => {
@@ -111,7 +134,7 @@ describe('GovernanceModelSelector', () => {
     const unknown = await screen.findByRole('group', { name: 'Tier unavailable' });
     expect(within(unknown).getByRole('option', { name: 'unclassified' })).toBeInTheDocument();
     await userEvent.type(screen.getByRole('combobox'), 'hosted');
-    expect(screen.getByRole('heading', { name: 'S2 — EU Hosted' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'EU Hosted' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'sovereign-model' })).not.toBeInTheDocument();
   });
 
@@ -137,7 +160,7 @@ describe('GovernanceModelSelector', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
 
-    expect(await screen.findByRole('heading', { name: 'S1 — EU Sovereign' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'EU Sovereign' })).toBeInTheDocument();
     expect(getGovernanceModels).toHaveBeenCalledTimes(2);
     await waitFor(() =>
       expect(client.getQueryData([QueryKeys.models])).toEqual({
@@ -189,8 +212,8 @@ describe('GovernanceModelSelector', () => {
     };
     renderSelector(<AddedConvo addedConvo={conversation} setAddedConvo={setAddedConvo} />);
     await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
-    expect(await screen.findByRole('heading', { name: 'S1 — EU Sovereign' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'S2 — EU Hosted' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'EU Sovereign' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'EU Hosted' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('option', { name: 'hosted-model' }));
     expect(setAddedConvo).toHaveBeenCalledTimes(1);
     const update = setAddedConvo.mock.calls[0][0] as (
