@@ -1,22 +1,51 @@
-import { Fragment, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
-import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
-import type { ReactNode } from 'react';
+import {
+  FileSources,
+  getGovernanceMaskRanges,
+  GOVERNANCE_DLP_TEXT_LOCATION,
+} from 'librechat-data-provider';
 import type {
   GovernanceDlpResult,
   GovernanceFinding,
   GovernanceDecision,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
+import type { ReactNode } from 'react';
 import type { TranslationKeys } from '~/hooks';
+import FilePreview from './Files/FilePreview';
+import { cn, getFileType } from '~/utils';
 import { useLocalize } from '~/hooks';
-import { cn } from '~/utils';
 
+/** A finding with the key that highlights its value, set when it lies in the text. */
+export type KeyedFinding = GovernanceFinding & { key?: string };
 /** A finding covering a text segment, underlined on row `lane`; `ends` marks its last segment. */
-type SegmentFinding = { finding: GovernanceFinding; lane: number; ends: boolean };
-type TextSegment = { text: string; findings?: SegmentFinding[]; replacement?: boolean };
-type FindingTerm = { finding: GovernanceFinding; term?: string };
+type SegmentFinding<F extends GovernanceFinding> = { finding: F; lane: number; ends: boolean };
+type TextSegment<F extends GovernanceFinding> = { text: string; findings?: SegmentFinding<F>[] };
+type TextInterval<F extends GovernanceFinding> = {
+  start: number;
+  end: number;
+  findings: SegmentFinding<F>[];
+};
+/** Masked text: kept text or the replacement of `replaced`, with the findings it stands for. */
+type MaskedSegment<F extends GovernanceFinding> = {
+  text: string;
+  findings: F[];
+  replaced?: GovernanceFinding;
+};
+/** The findings of one category and action in a file, with the distinct values they matched. */
+type FindingGroup = Pick<
+  GovernanceFileFinding,
+  'category' | 'label' | 'action' | 'count' | 'terms'
+>;
+/** The findings in one attached file, whose MIME type picks its icon like in the composer. */
+type FileFindings = { id: string; filename: string; type?: string; groups: FindingGroup[] };
 type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
+type ActionStyle = { chip: string; underline: string; ink: string; highlight: string };
+
+/** How many matched values a finding group lists; the rest are only counted. */
+const VISIBLE_TERMS = 5;
+const SEVERITY: GovernanceDecision[] = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
 
 const label = (category: string) => category.replaceAll('_', ' ');
 
@@ -51,11 +80,35 @@ const COPY = {
   BLOCK: { title: 'com_ui_dlp_block_title', description: 'com_ui_dlp_block_description' },
 } as const satisfies Record<GovernanceDecision, { title: string; description: string }>;
 
-const ACTION_CLASS: Record<GovernanceDecision, string> = {
-  ALLOW: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
-  MASK: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
-  WARN: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
-  BLOCK: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
+/** The box that holds both the original and the masked prompt. */
+const PROMPT_BOX =
+  'whitespace-pre-wrap break-words rounded-xl bg-aimo-fill px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
+
+const ACTION_STYLE: Record<GovernanceDecision, ActionStyle> = {
+  ALLOW: {
+    chip: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
+    underline: 'border-aimo-green',
+    ink: 'text-aimo-green-ink',
+    highlight: 'bg-aimo-green/25',
+  },
+  MASK: {
+    chip: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
+    underline: 'border-aimo-mask',
+    ink: 'text-aimo-mask-ink',
+    highlight: 'bg-aimo-mask/35',
+  },
+  WARN: {
+    chip: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
+    underline: 'border-aimo-warn',
+    ink: 'text-aimo-warn-ink',
+    highlight: 'bg-aimo-warn/25',
+  },
+  BLOCK: {
+    chip: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
+    underline: 'border-aimo-block',
+    ink: 'text-aimo-block-ink',
+    highlight: 'bg-aimo-block/20',
+  },
 };
 
 const byPosition = (a: GovernanceFinding, b: GovernanceFinding) =>
@@ -67,12 +120,51 @@ const isInText = (chars: string[], f: GovernanceFinding) =>
   f.end > f.start &&
   f.start < chars.length;
 
-/**
- * Splits the text at every finding boundary. Each finding keeps its whole span on the first
- * underline row that is free there, so overlapping findings are each underlined in full.
- */
-export function buildFindingSegments(text: string, findings: GovernanceFinding[]): TextSegment[] {
+const mostSevere = (findings: GovernanceFinding[]) =>
+  findings.reduce<GovernanceDecision>(
+    (action, finding) =>
+      SEVERITY.indexOf(finding.action) > SEVERITY.indexOf(action) ? finding.action : action,
+    'ALLOW',
+  );
+
+/** Names a value of a category wherever it occurs, so all its occurrences highlight together. */
+export const termKey = (category: string, term: string): string =>
+  `${category}\n${term.replace(/\s+/g, ' ').trim().toLowerCase()}`;
+
+const uniqueTerms = (category: string, terms: string[]) => {
+  const seen = new Set<string>();
+  return terms.filter((term) => {
+    const key = termKey(category, term);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+};
+
+/** Clips each finding in the text to it, adding the key of the value it matched. */
+export function keyFindings(text: string, findings: GovernanceFinding[]): KeyedFinding[] {
   const chars = Array.from(text);
+  return findings.map((finding) => {
+    if (!isInText(chars, finding)) {
+      return finding;
+    }
+    const end = Math.min(finding.end, chars.length);
+    const key = termKey(finding.category, chars.slice(finding.start, end).join(''));
+    return { ...finding, end, key };
+  });
+}
+
+/**
+ * Splits the text at every finding boundary and at `cuts`. Each finding keeps its whole span on
+ * the first underline row that is free there, so overlapping findings are each underlined in full.
+ */
+function splitAtFindings<F extends GovernanceFinding>(
+  chars: string[],
+  findings: F[],
+  cuts: number[] = [],
+): TextInterval<F>[] {
   const laneEnds: number[] = [];
   const laned = findings
     .filter((f) => isInText(chars, f))
@@ -84,16 +176,18 @@ export function buildFindingSegments(text: string, findings: GovernanceFinding[]
       laneEnds[lane] = finding.end;
       return { finding, lane };
     });
-  if (laned.length === 0) {
-    return [{ text }];
-  }
 
   const boundaries = [
-    ...new Set([0, chars.length, ...laned.flatMap(({ finding }) => [finding.start, finding.end])]),
+    ...new Set([
+      0,
+      chars.length,
+      ...cuts.filter((cut) => cut > 0 && cut < chars.length),
+      ...laned.flatMap(({ finding }) => [finding.start, finding.end]),
+    ]),
   ].sort((a, b) => a - b);
 
-  const segments: TextSegment[] = [];
-  let active: Omit<SegmentFinding, 'ends'>[] = [];
+  const intervals: TextInterval<F>[] = [];
+  let active: Omit<SegmentFinding<F>, 'ends'>[] = [];
   let next = 0;
   for (let i = 1; i < boundaries.length; i++) {
     const from = boundaries[i - 1];
@@ -102,54 +196,94 @@ export function buildFindingSegments(text: string, findings: GovernanceFinding[]
     while (next < laned.length && laned[next].finding.start === from) {
       active.push(laned[next++]);
     }
-    const segment: TextSegment = { text: chars.slice(from, to).join('') };
-    if (active.length) {
-      segment.findings = active
+    intervals.push({
+      start: from,
+      end: to,
+      findings: active
         .map((f) => ({ ...f, ends: f.finding.end === to }))
-        .sort((a, b) => a.lane - b.lane);
+        .sort((a, b) => a.lane - b.lane),
+    });
+  }
+  return intervals;
+}
+
+/** Splits the text into segments that each lie inside the same findings, in text order. */
+export function buildFindingSegments<F extends GovernanceFinding>(
+  text: string,
+  findings: F[],
+): TextSegment<F>[] {
+  const chars = Array.from(text);
+  return splitAtFindings(chars, findings).map(({ start, end, findings: covering }) => {
+    const segment = chars.slice(start, end).join('');
+    return covering.length > 0 ? { text: segment, findings: covering } : { text: segment };
+  });
+}
+
+/**
+ * Splits the masked text into the text it keeps and the replacements the gateway puts in, each
+ * with the findings of the original text it stands for.
+ */
+export function buildMaskedSegments<F extends GovernanceFinding>(
+  text: string,
+  findings: F[],
+): MaskedSegment<F>[] {
+  const chars = Array.from(text);
+  const ranges = getGovernanceMaskRanges(chars, findings);
+  const intervals = splitAtFindings(
+    chars,
+    findings,
+    ranges.flatMap(({ start, end }) => [start, end]),
+  );
+
+  const segments: MaskedSegment<F>[] = [];
+  let r = 0;
+  for (const { start, end, findings: covering } of intervals) {
+    while (r < ranges.length && ranges[r].end <= start) {
+      r++;
     }
-    segments.push(segment);
+    const range = ranges[r];
+    const covered = covering.map(({ finding }) => finding);
+    if (range === undefined || range.start > start) {
+      segments.push({ text: chars.slice(start, end).join(''), findings: covered });
+      continue;
+    }
+    const last = segments[segments.length - 1];
+    if (start > range.start && last?.replaced === range.finding) {
+      last.findings = [...new Set([...last.findings, ...covered])];
+      continue;
+    }
+    segments.push({
+      text: range.finding.replacement ?? '',
+      findings: covered,
+      replaced: range.finding,
+    });
   }
   return segments;
 }
 
-/** Every finding in text order, with the submitted text it covers when it lies in that text. */
-export function buildFindingTerms(text: string, findings: GovernanceFinding[]): FindingTerm[] {
-  const chars = Array.from(text);
-  return [...findings].sort(byPosition).map((finding) => ({
-    finding,
-    term: isInText(chars, finding) ? chars.slice(finding.start, finding.end).join('') : undefined,
-  }));
-}
-
-/** Groups file findings by file, keeping the order in which the files first appear. */
-export function groupFileFindings(
-  fileFindings: GovernanceFileFinding[] = [],
-): [string, GovernanceFileFinding[]][] {
-  const byFile = new Map<string, GovernanceFileFinding[]>();
+/**
+ * The findings in each attached file, grouped by category and action, each group with its
+ * distinct values. Files keep the order in which they first appear.
+ */
+export function groupFileFindings(fileFindings: GovernanceFileFinding[] = []): FileFindings[] {
+  const files = new Map<string, FileFindings>();
   for (const finding of fileFindings) {
-    byFile.set(finding.filename, [...(byFile.get(finding.filename) ?? []), finding]);
+    const { filename, fileId, type, category, label: displayName, action, count, terms } = finding;
+    const id = JSON.stringify([fileId ?? null, filename]);
+    let file = files.get(id);
+    if (!file) {
+      file = { id, filename, type, groups: [] };
+      files.set(id, file);
+    }
+    file.groups.push({
+      category,
+      label: displayName,
+      action,
+      count,
+      terms: terms && uniqueTerms(category, terms),
+    });
   }
-  return Array.from(byFile.entries());
-}
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-export function buildReplacementSegments(
-  text: string,
-  findings: GovernanceFinding[],
-): TextSegment[] {
-  const tokens = [
-    ...new Set(findings.map((f) => f.replacement).filter((r): r is string => Boolean(r))),
-  ].sort((a, b) => b.length - a.length);
-  if (!tokens.length) {
-    return [{ text }];
-  }
-  const pattern = new RegExp(`(${tokens.map(escapeRegExp).join('|')})`, 'g');
-  return text
-    .split(pattern)
-    .filter(Boolean)
-    .map((segment) => ({ text: segment, replacement: tokens.includes(segment) }));
+  return Array.from(files.values());
 }
 
 export default function DlpInterventionDialog({
@@ -168,6 +302,9 @@ export default function DlpInterventionDialog({
 }) {
   const localize = useLocalize();
   const { decision } = result;
+  /** Keys of the values under the pointer, highlighted wherever they occur. */
+  const [active, setActive] = useState<string[]>([]);
+  const activeKeys = useMemo(() => new Set(active), [active]);
   const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
     if (displayName) {
       return displayName;
@@ -180,65 +317,183 @@ export default function DlpInterventionDialog({
       ? localize('com_ui_dlp_category_custom_term')
       : label(category);
   };
-  const findingLabel = (finding: GovernanceFinding) =>
-    `${categoryLabel(finding)}${finding.replacement ? ` → ${finding.replacement}` : ''}`;
+  const findingLabel = (finding: CategorizedFinding & Pick<GovernanceFinding, 'action'>) =>
+    `${categoryLabel(finding)} · ${localize(DECISION_COPY[finding.action])}`;
+  const findingTitle = (finding: GovernanceFinding) =>
+    `${findingLabel(finding)}${finding.replacement ? ` → ${finding.replacement}` : ''}`;
+
+  const findings = useMemo(
+    () => keyFindings(originalText, result.findings),
+    [originalText, result.findings],
+  );
   const originalSegments = useMemo(
-    () => buildFindingSegments(originalText, result.findings),
-    [originalText, result.findings],
+    () => buildFindingSegments(originalText, findings),
+    [originalText, findings],
   );
-  const findingTerms = useMemo(
-    () => buildFindingTerms(originalText, result.findings),
-    [originalText, result.findings],
-  );
+  const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
   const maskedText = result.maskedPreview?.find(
     (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
   )?.text;
-  const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
-  const maskedSegments = useMemo(
-    () => buildReplacementSegments(maskedText ?? '', result.findings),
-    [maskedText, result.findings],
-  );
+  const showMasked = decision === 'MASK' && Boolean(maskedText) && result.findings.length > 0;
+  const maskedSegments = useMemo((): MaskedSegment<KeyedFinding>[] => {
+    if (!showMasked || maskedText === undefined) {
+      return [];
+    }
+    const segments = buildMaskedSegments(originalText, findings);
+    const matches = segments.map(({ text }) => text).join('') === maskedText;
+    return matches ? segments : [{ text: maskedText, findings: [] }];
+  }, [showMasked, maskedText, originalText, findings]);
 
-  const textBlock = (
-    heading: string,
-    className: string,
-    segments: TextSegment[],
-    highlight: (segment: TextSegment, index: number) => ReactNode,
-  ) => (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold tracking-[-0.01em] text-text-secondary">
-        {heading}
-      </h3>
-      <div
+  const keysOf = (keyed: KeyedFinding[]) =>
+    keyed.flatMap(({ key }) => (key === undefined ? [] : [key]));
+  const litOf = (keyed: KeyedFinding[]) =>
+    keyed.filter(({ key }) => key !== undefined && activeKeys.has(key));
+  const hoverProps = (keys: string[]) =>
+    keys.length === 0
+      ? {}
+      : { onMouseEnter: () => setActive(keys), onMouseLeave: () => setActive([]) };
+
+  const renderOriginal = (segment: TextSegment<KeyedFinding>, index: number) => {
+    if (!segment.findings) {
+      return <span key={index}>{segment.text}</span>;
+    }
+    const covering = segment.findings.map(({ finding }) => finding);
+    const lit = litOf(covering);
+    return (
+      <span key={index} {...hoverProps(keysOf(covering))}>
+        {segment.findings.reduce<ReactNode>(
+          (content, { finding, lane }) => (
+            <span
+              className={cn('border-b-2', ACTION_STYLE[finding.action].underline)}
+              style={{ paddingBottom: 1 + lane * 4 }}
+            >
+              {content}
+            </span>
+          ),
+          <mark
+            title={covering.map(findingTitle).join('\n')}
+            className={cn(
+              'rounded-sm box-decoration-clone text-inherit transition-colors',
+              lit.length > 0 ? ACTION_STYLE[mostSevere(lit)].highlight : 'bg-transparent',
+            )}
+          >
+            {segment.text}
+            {segment.findings.map(({ finding, ends }, i) =>
+              ends ? (
+                <span key={i} className="sr-only">
+                  {` (${findingLabel(finding)})`}
+                </span>
+              ) : null,
+            )}
+          </mark>,
+        )}
+      </span>
+    );
+  };
+
+  const renderMasked = (
+    { text, findings: covering, replaced }: MaskedSegment<KeyedFinding>,
+    index: number,
+  ) => {
+    if (!replaced && covering.length === 0) {
+      return <span key={index}>{text}</span>;
+    }
+    const lit = litOf(covering);
+    return (
+      <span
+        key={index}
+        {...hoverProps(keysOf(covering))}
         className={cn(
-          'whitespace-pre-wrap rounded-xl border px-4 py-3 text-[17px] leading-[1.47]',
-          className,
+          'rounded-sm box-decoration-clone transition-colors',
+          replaced && ['font-semibold', ACTION_STYLE[replaced.action].ink],
+          lit.length > 0 && ACTION_STYLE[mostSevere(lit)].highlight,
         )}
       >
-        {segments.map((segment, index) =>
-          segment.findings || segment.replacement ? (
-            highlight(segment, index)
-          ) : (
-            <span key={index}>{segment.text}</span>
-          ),
+        {text}
+      </span>
+    );
+  };
+
+  const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
+    const listed = terms ?? [];
+    const hidden = listed.length - VISIBLE_TERMS;
+    return (
+      <div key={`${category}\n${action}`}>
+        <span
+          className={cn(
+            'inline-block rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em]',
+            ACTION_STYLE[action].chip,
+          )}
+        >
+          {findingLabel({ category, label: displayName, action })}
+          {terms === undefined && count > 1 ? ` × ${count}` : ''}
+        </span>
+        {listed.length > 0 && (
+          <ul className="mt-1.5 flex list-disc flex-col gap-0.5 pl-5 text-sm marker:text-text-tertiary">
+            {listed.slice(0, VISIBLE_TERMS).map((term) => {
+              const key = termKey(category, term);
+              return (
+                <li key={key} {...hoverProps([key])} className="break-words text-text-primary">
+                  <span
+                    className={cn(
+                      'rounded-sm box-decoration-clone px-1 transition-colors',
+                      activeKeys.has(key) && ACTION_STYLE[action].highlight,
+                    )}
+                  >
+                    {term}
+                  </span>
+                </li>
+              );
+            })}
+            {hidden > 0 && (
+              <li className="list-none px-1 text-xs text-text-secondary">
+                {localize('com_ui_dlp_more_terms', { 0: String(hidden) })}
+              </li>
+            )}
+          </ul>
         )}
       </div>
-    </section>
-  );
+    );
+  };
+
+  /** Every file in a review was sent as extracted text, which its source badge shows. */
+  const renderFile = ({ id, filename, type, groups }: FileFindings) => {
+    const fileType = getFileType(type);
+    return (
+      <li
+        key={id}
+        className="w-full min-w-0 overflow-hidden rounded-2xl border border-border-light bg-surface-hover-alt text-sm text-text-primary sm:w-56"
+      >
+        <div className="flex flex-row items-center gap-2 p-1.5">
+          <FilePreview
+            file={{ filename, type, source: FileSources.text }}
+            fileType={fileType}
+            className="relative"
+          />
+          <div className="overflow-hidden text-center">
+            <h3 className="truncate font-medium" title={filename}>
+              {filename}
+            </h3>
+            <div className="truncate text-text-secondary" title={fileType.title}>
+              {fileType.title}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3 px-2.5 pb-3 pt-1">{groups.map(renderGroup)}</div>
+      </li>
+    );
+  };
 
   return (
     <OGDialog open onOpenChange={(open) => !open && onCancel()}>
       <OGDialogTemplate
         title={localize(COPY[decision].title)}
         description={localize(COPY[decision].description)}
-        className="max-w-[640px]"
+        className="max-w-[760px]"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
         main={
-          <div
-            className="flex max-h-[65vh] flex-col gap-[18px] overflow-y-auto px-1"
-            role="document"
-          >
+          <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto px-1" role="document">
             {sendFailed && (
               <p
                 role="alert"
@@ -247,117 +502,21 @@ export default function DlpInterventionDialog({
                 {localize('com_ui_dlp_send_failed')}
               </p>
             )}
-            {textBlock(
-              localize('com_ui_dlp_original_prompt'),
-              'border-transparent bg-aimo-fill leading-7 text-text-primary',
-              originalSegments,
-              (segment, index) => (
-                <Fragment key={index}>
-                  {segment.findings!.reduce<ReactNode>(
-                    (content, { lane }) => (
-                      <span
-                        className="border-b-2 border-aimo-warn"
-                        style={{ paddingBottom: 1 + lane * 4 }}
-                      >
-                        {content}
-                      </span>
-                    ),
-                    <mark
-                      title={segment
-                        .findings!.map(({ finding }) => findingLabel(finding))
-                        .join('\n')}
-                      className="bg-aimo-warn-soft text-aimo-warn-ink"
-                    >
-                      {segment.text}
-                      {segment.findings!.map(({ finding, ends }, i) =>
-                        ends ? (
-                          <span key={i} className="sr-only">
-                            {` (${categoryLabel(finding)})`}
-                          </span>
-                        ) : null,
-                      )}
-                    </mark>,
-                  )}
-                </Fragment>
-              ),
-            )}
-
-            {result.findings.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-xs font-semibold tracking-[-0.01em] text-text-secondary">
-                  {localize('com_ui_dlp_findings')}
-                </h3>
-                <ul className="flex flex-col gap-2">
-                  {findingTerms.map(({ finding, term }, index) => (
-                    <li key={index} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                      <span
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em]',
-                          ACTION_CLASS[finding.action],
-                        )}
-                      >
-                        {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
-                      </span>
-                      {term && <span className="break-all text-text-primary">{term}</span>}
-                      {finding.replacement && (
-                        <span className="font-mono text-text-secondary">
-                          → {finding.replacement}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
 
             {files.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-sm font-semibold text-text-primary">
-                  {localize('com_ui_dlp_file_findings')}
-                </h3>
-                <ul className="flex flex-col gap-3">
-                  {files.map(([filename, findings]) => (
-                    <li key={filename}>
-                      <p className="mb-1 break-all text-sm text-text-primary">{filename}</p>
-                      <ul className="flex flex-wrap gap-2">
-                        {findings.map((finding) => (
-                          <li
-                            key={`${finding.category}-${finding.action}`}
-                            className={cn(
-                              'rounded-full border px-2.5 py-1 text-xs font-medium',
-                              ACTION_CLASS[finding.action],
-                            )}
-                          >
-                            {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
-                            {finding.count > 1 ? ` × ${finding.count}` : ''}
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
+              <section aria-label={localize('com_ui_dlp_file_findings')}>
+                <ul className="flex flex-wrap gap-2">{files.map(renderFile)}</ul>
               </section>
             )}
 
-            {decision === 'MASK' && maskedText && result.findings.length > 0 && (
-              <>
-                {textBlock(
-                  localize('com_ui_dlp_masked_prompt'),
-                  'border-aimo-line-solid bg-surface-dialog text-text-primary',
-                  maskedSegments,
-                  (segment, index) => (
-                    <span
-                      key={index}
-                      className="rounded-md bg-aimo-mask-soft px-1 font-mono text-[15px] font-semibold text-aimo-mask-ink"
-                    >
-                      {segment.text}
-                    </span>
-                  ),
-                )}
-                <p className="text-xs text-text-secondary">
-                  {localize('com_ui_dlp_replacement_explanation')}
-                </p>
-              </>
+            <section aria-label={localize('com_ui_dlp_original_prompt')}>
+              <p className={PROMPT_BOX}>{originalSegments.map(renderOriginal)}</p>
+            </section>
+
+            {maskedSegments.length > 0 && (
+              <section aria-label={localize('com_ui_dlp_masked_prompt')}>
+                <p className={PROMPT_BOX}>{maskedSegments.map(renderMasked)}</p>
+              </section>
             )}
           </div>
         }

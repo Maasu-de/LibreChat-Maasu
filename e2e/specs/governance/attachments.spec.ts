@@ -93,9 +93,9 @@ test.describe('governed text attachments', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Sensitive information detected')).toBeVisible();
-    await expect(dialog.getByText('Findings in attached files')).toBeVisible();
-    await expect(dialog.getByText('contacts.csv')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'contacts.csv' })).toBeVisible();
     await expect(dialog.getByText('Email address · Warn')).toBeVisible();
+    await expect(dialog.getByText('max@example.com')).toBeVisible();
     await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
 
     await dialog.getByRole('button', { name: 'Continue anyway' }).click();
@@ -114,8 +114,9 @@ test.describe('governed text attachments', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Sensitive information will be masked')).toBeVisible();
-    await expect(dialog.getByText('invoice.md')).toBeVisible();
-    await expect(dialog.getByText('IBAN · Mask × 2')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'invoice.md' })).toBeVisible();
+    await expect(dialog.getByText('IBAN · Mask', { exact: true })).toBeVisible();
+    await expect(dialog.getByText(IBAN)).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Send masked' }).click();
 
