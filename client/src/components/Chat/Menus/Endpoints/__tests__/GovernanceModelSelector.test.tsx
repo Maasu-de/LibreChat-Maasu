@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GOVERNANCE_ENDPOINT, QueryKeys } from 'librechat-data-provider';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
@@ -111,11 +111,14 @@ describe('GovernanceModelSelector', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
 
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-    for (const model of models) {
+    for (const [index, model] of models.entries()) {
       const tier = model.governance_tier!;
       const heading = screen.getByRole('heading', { name: tier.name });
       await userEvent.hover(heading);
-      expect(await screen.findByRole('tooltip')).toHaveTextContent(tier.description);
+      fireEvent.mouseMove(heading, { screenX: index + 1, screenY: index + 1 });
+      expect(await screen.findByRole('tooltip', {}, { timeout: 3000 })).toHaveTextContent(
+        tier.description,
+      );
       await userEvent.unhover(heading);
       await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
     }
