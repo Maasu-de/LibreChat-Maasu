@@ -19,6 +19,8 @@ import { ephemeralAgentByConvoId } from '~/store/agents';
 import store from '~/store';
 
 const mockShowToast = jest.fn();
+/** Stable, like the real `useLocalize`. */
+const mockLocalize = (key: string) => key;
 /** Succeeds at once, like a delete the server accepts. */
 const mockDeleteFiles = jest.fn((_vars: unknown, options?: { onSuccess?: () => void }) =>
   options?.onSuccess?.(),
@@ -26,12 +28,15 @@ const mockDeleteFiles = jest.fn((_vars: unknown, options?: { onSuccess?: () => v
 
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: { id: 'user-1' } }),
-  useLocalize: () => (key: string) => key,
+  useLocalize: () => mockLocalize,
 }));
+
+/** The real ToastProvider makes a new `showToast` whenever a toast shows or hides. */
+let mockToastContext: { showToast: (...args: unknown[]) => void } = { showToast: mockShowToast };
 
 jest.mock('@librechat/client', () => ({
   ...jest.requireActual('@librechat/client'),
-  useToastContext: () => ({ showToast: mockShowToast }),
+  useToastContext: () => mockToastContext,
 }));
 
 jest.mock('~/data-provider', () => ({
@@ -292,6 +297,7 @@ beforeEach(() => {
   setMessages.mockClear();
   mockShowToast.mockClear();
   mockDeleteFiles.mockClear();
+  mockToastContext = { showToast: mockShowToast };
 });
 
 /** Sends a message with the composer files, which the stream then holds for `review`. */
@@ -518,6 +524,26 @@ it('drops a review once the chat moves to another conversation', () => {
   rerender(
     <Chat conversation={{ ...savedConversation, conversationId: 'other' }} review={review} />,
   );
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it("keeps a new chat's review open when a toast renews `showToast`", () => {
+  renderChat(newConversation, maskReview(null));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  mockToastContext = { showToast: (...args) => mockShowToast(...args) };
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt', hidden: true }), {
+    target: { value: 'typed while the review is open' },
+  });
+
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+
+it('drops a review for another conversation as soon as it arrives', () => {
+  renderChat(newConversation, maskReview('stream-1'));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
 
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
