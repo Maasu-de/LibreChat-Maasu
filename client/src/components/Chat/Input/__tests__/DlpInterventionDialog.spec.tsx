@@ -2,17 +2,21 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
 import DlpInterventionDialog, {
-  buildFindingTerms,
+  keyFindings,
+  groupFileFindings,
+  buildMaskedSegments,
   buildFindingSegments,
-  buildReplacementSegments,
 } from '../DlpInterventionDialog';
 
 jest.mock('~/hooks', () => ({
-  useLocalize: () => (key: string) => key,
+  useLocalize: () => (key: string, values?: Record<string, string>) =>
+    [key, ...Object.values(values ?? {})].join(' '),
 }));
 
 const PROJECTS = 'CUSTOM_8F14E45FCEEA167A5A36DEDD4BEA2543';
 const CLIENTS = 'CUSTOM_C9F0F895FB98AB9159F51FD0297E236D';
+const MASK_HIGHLIGHT = 'bg-aimo-mask/35';
+const WARN_HIGHLIGHT = 'bg-aimo-warn/25';
 
 const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding => ({
   location: '/messages/0/content',
@@ -28,6 +32,19 @@ const CROSSING = 'Status of Project Phoenix Secret today';
 const crossingFindings = [
   finding({ start: 18, end: 32, replacement: '[TERM]' }),
   finding({ start: 10, end: 25, replacement: '[TERM]' }),
+];
+
+/** A confidential term and an email address that share "romeo", as in the #191 wireframe. */
+const OVERLAP = 'alfa romeo@example.com';
+const overlapFindings = [
+  finding({ start: 0, end: 10, category: 'OVERLAP_TEST', replacement: '[overlap test]' }),
+  finding({
+    start: 5,
+    end: 22,
+    category: 'EMAIL_ADDRESS',
+    action: 'WARN',
+    replacement: undefined,
+  }),
 ];
 
 describe('DLP intervention text segmentation', () => {
@@ -58,12 +75,6 @@ describe('DLP intervention text segmentation', () => {
     ]);
   });
 
-  it('lists every finding in text order with the whole term it covers', () => {
-    const terms = buildFindingTerms(CROSSING, crossingFindings);
-
-    expect(terms.map(({ term }) => term)).toEqual(['Project Phoenix', 'Phoenix Secret']);
-  });
-
   it('uses Unicode code-point offsets supplied by the governance backend', () => {
     const segments = buildFindingSegments('🙂 Email me@example.com', [
       finding({ start: 8, end: 22, category: 'EMAIL_ADDRESS' }),
@@ -72,13 +83,78 @@ describe('DLP intervention text segmentation', () => {
     expect(segments[1].text).toBe('me@example.com');
   });
 
-  it('visually separates replacement tokens in the complete masked prompt', () => {
-    const segments = buildReplacementSegments('Discuss [CONFIDENTIAL] now', [finding()]);
+  it('keys each value by its category, ignoring case and spacing', () => {
+    const [first, second, outside] = keyFindings('Acme Corp and ACME  corp', [
+      finding({ start: 0, end: 9 }),
+      finding({ start: 14, end: 24 }),
+      finding({ start: 40, end: 44 }),
+    ]);
 
+    expect(first.key).toBeDefined();
+    expect(first.key).toBe(second.key);
+    expect(outside.key).toBeUndefined();
+  });
+
+  it('places each replacement like the gateway, with the findings it stands for', () => {
+    const [later, earlier] = crossingFindings;
+    const segments = buildMaskedSegments(CROSSING, crossingFindings);
+
+    expect(segments.map(({ text }) => text).join('')).toBe('Status of [TERM] [TERM] today');
     expect(segments).toEqual([
-      { text: 'Discuss ', replacement: false },
-      { text: '[CONFIDENTIAL]', replacement: true },
-      { text: ' now', replacement: false },
+      { text: 'Status of ', findings: [] },
+      { text: '[TERM]', findings: [earlier, later], replaced: earlier },
+      { text: ' ', findings: [later] },
+      { text: '[TERM]', findings: [later], replaced: later },
+      { text: ' today', findings: [] },
+    ]);
+  });
+
+  it('links the unmasked rest of a finding to it in the masked prompt', () => {
+    const [term, email] = overlapFindings;
+
+    expect(buildMaskedSegments(OVERLAP, overlapFindings)).toEqual([
+      { text: '[overlap test]', findings: [term, email], replaced: term },
+      { text: '@example.com', findings: [email] },
+    ]);
+  });
+
+  it('groups the findings of each file by category and action, with distinct values', () => {
+    const files = groupFileFindings([
+      {
+        filename: 'report.pdf',
+        fileId: 'file-1',
+        type: 'application/pdf',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 3,
+        terms: ['DE89370400440532013000', 'de89370400440532013000'],
+      },
+      { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'WARN', count: 1 },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-1',
+        category: 'EMAIL_ADDRESS',
+        action: 'WARN',
+        count: 1,
+        terms: ['max@example.com'],
+      },
+    ]);
+
+    expect(files).toEqual([
+      {
+        id: '["file-1","report.pdf"]',
+        filename: 'report.pdf',
+        type: 'application/pdf',
+        groups: [
+          { category: 'IBAN_CODE', action: 'MASK', count: 3, terms: ['DE89370400440532013000'] },
+          { category: 'EMAIL_ADDRESS', action: 'WARN', count: 1, terms: ['max@example.com'] },
+        ],
+      },
+      {
+        id: '[null,"notes.txt"]',
+        filename: 'notes.txt',
+        groups: [{ category: 'EMAIL_ADDRESS', action: 'WARN', count: 1, terms: undefined }],
+      },
     ]);
   });
 });
@@ -101,8 +177,11 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getAllByText('Project Acme')).toHaveLength(2);
-    expect(screen.getByText('[CONFIDENTIAL]')).toBeInTheDocument();
+    expect(screen.getByText('Project Acme', { selector: 'mark' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'com_ui_dlp_file_findings' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' }).textContent).toBe(
+      'Discuss [CONFIDENTIAL] now',
+    );
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('com_ui_dlp_send_masked'));
@@ -124,14 +203,17 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(
-      screen.getByText('com_ui_dlp_category_project_name · com_ui_dlp_decision_block'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Project Acme', { selector: 'mark' })).toHaveAttribute(
+      'title',
+      'com_ui_dlp_category_project_name · com_ui_dlp_decision_block',
+    );
     expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toBeNull();
   });
 
-  it('lists findings in attached files without a masked prompt when the text has none', () => {
+  it('shows a card per attached file without a masked prompt when the text has no findings', () => {
+    const sheet = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     render(
       <DlpInterventionDialog
         result={{
@@ -140,7 +222,13 @@ describe('DlpInterventionDialog', () => {
           fileFindings: [
             { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 2 },
             { filename: 'report.pdf', category: 'PHONE_NUMBER', action: 'WARN', count: 1 },
-            { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'MASK', count: 1 },
+            {
+              filename: 'team.xlsx',
+              type: sheet,
+              category: 'EMAIL_ADDRESS',
+              action: 'MASK',
+              count: 1,
+            },
           ],
           maskedPreview: [{ location: '/messages/0/content', text: 'Summarize' }],
         }}
@@ -150,18 +238,56 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('com_ui_dlp_file_findings')).toBeInTheDocument();
-    expect(screen.getByText('report.pdf')).toBeInTheDocument();
-    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_file_findings' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'report.pdf',
+      'team.xlsx',
+    ]);
+    expect(screen.getByText('Document')).toBeInTheDocument();
+    expect(screen.getByText('Spreadsheet')).toBeInTheDocument();
+    const files = screen.getByRole('region', { name: 'com_ui_dlp_file_findings' });
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_original_prompt' });
+    expect(files.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       screen.getByText('com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask × 2'),
     ).toBeInTheDocument();
     expect(
       screen.getByText('com_ui_dlp_category_phone_number · com_ui_dlp_decision_warn'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('com_ui_dlp_findings')).not.toBeInTheDocument();
-    expect(screen.queryByText('com_ui_dlp_masked_prompt')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toBeNull();
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
+  });
+
+  it('lists the values found in a file and counts those it leaves out', () => {
+    const emails = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => `${name}@example.com`);
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'WARN',
+          findings: [],
+          fileFindings: [
+            {
+              filename: 'team.csv',
+              category: 'EMAIL_ADDRESS',
+              action: 'WARN',
+              count: 9,
+              terms: emails,
+            },
+          ],
+        }}
+        originalText="Who is on this list?"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText('com_ui_dlp_category_email_address · com_ui_dlp_decision_warn'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('a@example.com')).toBeInTheDocument();
+    expect(screen.getByText('e@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('f@example.com')).not.toBeInTheDocument();
+    expect(screen.getByText('com_ui_dlp_more_terms 2')).toBeInTheDocument();
   });
 
   it('falls back to a readable label for a built-in category without its own copy', () => {
@@ -177,35 +303,11 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('VAT ID · com_ui_dlp_decision_warn')).toBeInTheDocument();
-    expect(screen.getByText('→ [CONFIDENTIAL]')).toBeInTheDocument();
-  });
-
-  it('names each overlapping term in full next to its replacement', () => {
-    render(
-      <DlpInterventionDialog
-        result={{
-          decision: 'MASK',
-          findings: crossingFindings,
-          maskedPreview: [
-            { location: '/messages/0/content', text: 'Status of [TERM] [TERM] today' },
-          ],
-        }}
-        originalText={CROSSING}
-        onCancel={jest.fn()}
-        onConfirm={jest.fn()}
-      />,
-    );
-
-    const terms = screen.getAllByRole('listitem').map((item) => item.textContent);
-    expect(terms).toEqual([
-      'com_ui_dlp_category_project_name · com_ui_dlp_decision_maskProject Phoenix→ [TERM]',
-      'com_ui_dlp_category_project_name · com_ui_dlp_decision_maskPhoenix Secret→ [TERM]',
-    ]);
-    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
+    expect(screen.getByText('Project Acme', { selector: 'mark' })).toHaveAttribute(
       'title',
-      'com_ui_dlp_category_project_name → [TERM]\ncom_ui_dlp_category_project_name → [TERM]',
+      'VAT ID · com_ui_dlp_decision_warn → [CONFIDENTIAL]',
     );
+    expect(screen.getByText('(VAT ID · com_ui_dlp_decision_warn)')).toHaveClass('sr-only');
   });
 
   it('shows custom categories by their display names, never by their keys', () => {
@@ -252,18 +354,17 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    const terms = screen.getAllByRole('listitem').map((item) => item.textContent);
-    expect(terms).toEqual(
-      expect.arrayContaining([
-        'Project Names · com_ui_dlp_decision_maskPhoenix→ [Project Names]',
-        'Client Names · com_ui_dlp_decision_maskContoso→ [Client Names]',
-        'com_ui_dlp_category_email_address · com_ui_dlp_decision_maskjane@example.com→ [EMAIL]',
-      ]),
+    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
+      'title',
+      'Project Names · com_ui_dlp_decision_mask → [Project Names]',
+    );
+    expect(screen.getByText('Contoso', { selector: 'mark' })).toHaveAttribute(
+      'title',
+      'Client Names · com_ui_dlp_decision_mask → [Client Names]',
     );
     expect(screen.getByText('Project Names · com_ui_dlp_decision_mask × 2')).toBeInTheDocument();
     expect(screen.getByText('[Project Names]')).toBeInTheDocument();
     expect(screen.getByText('[Client Names]')).toBeInTheDocument();
-    expect(screen.getByTitle('Project Names → [Project Names]')).toHaveTextContent('Phoenix');
     expect(document.body.innerHTML).not.toContain('CUSTOM_');
   });
 
@@ -282,8 +383,121 @@ describe('DlpInterventionDialog', () => {
     );
 
     expect(
-      screen.getAllByText('com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn'),
-    ).toHaveLength(2);
+      screen.getByText('(com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn)'),
+    ).toHaveClass('sr-only');
+    expect(
+      screen.getByText('com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn'),
+    ).toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain('CUSTOM_');
+  });
+
+  it('labels text that overlapping findings share with each of them', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: crossingFindings,
+          maskedPreview: [
+            { location: '/messages/0/content', text: 'Status of [TERM] [TERM] today' },
+          ],
+        }}
+        originalText={CROSSING}
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    const label = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_mask';
+
+    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
+      'title',
+      `${label} → [TERM]\n${label} → [TERM]`,
+    );
+    expect(screen.getAllByText(`(${label})`)).toHaveLength(2);
+  });
+
+  it('highlights a value in the original and the masked prompt while it is hovered', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [finding()],
+          maskedPreview: [{ location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' }],
+        }}
+        originalText="Discuss Project Acme now"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    const original = screen.getByText('Project Acme', { selector: 'mark' });
+    const replacement = screen.getByText('[CONFIDENTIAL]');
+
+    fireEvent.mouseEnter(original);
+    expect(original).toHaveClass(MASK_HIGHLIGHT);
+    expect(replacement).toHaveClass(MASK_HIGHLIGHT);
+
+    fireEvent.mouseLeave(original);
+    expect(original).not.toHaveClass(MASK_HIGHLIGHT);
+    expect(replacement).not.toHaveClass(MASK_HIGHLIGHT);
+
+    fireEvent.mouseEnter(replacement);
+    expect(original).toHaveClass(MASK_HIGHLIGHT);
+    expect(replacement).toHaveClass(MASK_HIGHLIGHT);
+  });
+
+  it('highlights everything a part of the masked prompt stands for while it is hovered', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: overlapFindings,
+          maskedPreview: [{ location: '/messages/0/content', text: '[overlap test]@example.com' }],
+        }}
+        originalText={OVERLAP}
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    const mark = (text: string) => screen.getByText(text, { selector: 'mark' });
+
+    fireEvent.mouseEnter(screen.getByText('@example.com', { selector: 'span' }));
+
+    expect(mark('alfa')).not.toHaveClass(MASK_HIGHLIGHT);
+    expect(mark('romeo')).toHaveClass(WARN_HIGHLIGHT);
+    expect(mark('@example.com')).toHaveClass(WARN_HIGHLIGHT);
+    expect(screen.getByText('[overlap test]')).toHaveClass(WARN_HIGHLIGHT);
+  });
+
+  it('highlights a value in the prompt while the same value is hovered in a file', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'WARN',
+          findings: [finding({ start: 5, end: 20, category: 'EMAIL_ADDRESS', action: 'WARN' })],
+          fileFindings: [
+            {
+              filename: 'notes.txt',
+              category: 'EMAIL_ADDRESS',
+              action: 'WARN',
+              count: 1,
+              terms: ['MAX@example.com'],
+            },
+          ],
+        }}
+        originalText="Mail max@example.com"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const inFile = screen.getByText('MAX@example.com', { selector: 'li span' });
+    const inPrompt = screen.getByText('max@example.com', { selector: 'mark' });
+
+    fireEvent.mouseEnter(inFile);
+    expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
+    expect(inFile).toHaveClass(WARN_HIGHLIGHT);
+
+    fireEvent.mouseLeave(inFile);
+    fireEvent.mouseEnter(inPrompt);
+    expect(inFile).toHaveClass(WARN_HIGHLIGHT);
   });
 });
