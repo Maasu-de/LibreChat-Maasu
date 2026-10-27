@@ -207,7 +207,7 @@ describe('submitted text helpers', () => {
     ]);
   });
 
-  it('counts findings in attached files per file, category and action', () => {
+  it('counts findings in attached files per file, category and action, with their values', () => {
     const messages = [
       { role: 'user', content: ATTACHED },
       { role: 'assistant', content: `ok ${IBAN}` },
@@ -230,13 +230,14 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-report',
         category: 'IBAN_CODE',
         action: 'MASK',
         count: 2,
+        terms: [IBAN],
       },
       {
         filename: 'notes.txt',
@@ -244,6 +245,42 @@ describe('submitted text helpers', () => {
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
         count: 1,
+        terms: ['max@example.com'],
+      },
+    ]);
+  });
+
+  it('lists the distinct values of a file finding in the order they first appear', () => {
+    const text =
+      'Attached document(s):\n```md# "team.csv"\nann@example.com,max@example.com,ann@example.com\n```';
+    const fileContext: DlpFileContext = {
+      text,
+      current: true,
+      files: [
+        {
+          fileId: 'file-team',
+          filename: 'team.csv',
+          start: text.indexOf('# "'),
+          end: text.lastIndexOf('\n```') + 1,
+        },
+      ],
+    };
+    const messages = [{ role: 'user', content: `${text}\n${SUBMITTED}` }];
+    const findings = [
+      emailFinding('/messages/0/content', text.indexOf('ann@')),
+      emailFinding('/messages/0/content', text.indexOf('max@')),
+      emailFinding('/messages/0/content', text.lastIndexOf('ann@')),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, [fileContext])).toEqual([
+      {
+        filename: 'team.csv',
+        fileId: 'file-team',
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        count: 3,
+        terms: ['ann@example.com', 'max@example.com'],
       },
     ]);
   });
@@ -267,14 +304,22 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
-      { filename: 'report.pdf', fileId: 'file-1', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-1',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 1,
+        terms: [IBAN],
+      },
       {
         filename: 'report.pdf',
         fileId: 'file-2',
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
         count: 1,
+        terms: ['max@example.com'],
       },
     ]);
   });
@@ -296,13 +341,14 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-report',
         category: 'IBAN_CODE',
         action: 'MASK',
         count: 1,
+        terms: [IBAN],
       },
     ]);
   });
@@ -327,7 +373,35 @@ describe('submitted text helpers', () => {
     const submitted = findSubmittedText(messages, SUBMITTED)!;
 
     expect(findingsInFiles(messages, findings, submitted, [fileContext])).toEqual([
-      { filename: 'real.md', fileId: 'file-real', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'real.md',
+        fileId: 'file-real',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 1,
+        terms: [IBAN],
+      },
+    ]);
+  });
+
+  it("names each file's MIME type when its attached-document block records one", () => {
+    const fileContext = attachedContext(true);
+    fileContext.files[0].type = 'application/pdf';
+    const messages = [{ role: 'user', content: WITH_FILES }];
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      emailFinding('/messages/0/content', ATTACHED.indexOf('max@')),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(
+      findingsInFiles(messages, findings, submitted, [fileContext]).map(({ filename, type }) => [
+        filename,
+        type,
+      ]),
+    ).toEqual([
+      ['report.pdf', 'application/pdf'],
+      ['notes.txt', undefined],
     ]);
   });
 
@@ -359,6 +433,7 @@ describe('submitted text helpers', () => {
         label: 'Project Names',
         action: 'MASK',
         count: 1,
+        terms: [IBAN],
       },
     ]);
   });
@@ -583,6 +658,7 @@ describe('DLP approval flow', () => {
             category: 'IBAN_CODE',
             action: 'MASK',
             count: 2,
+            terms: [IBAN],
           },
         ],
         maskedPreview: [{ location: '/messages/0/content', text: SUBMITTED }],

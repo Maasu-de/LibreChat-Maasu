@@ -16,15 +16,22 @@ export interface GovernanceMaskedContent {
   text: string;
 }
 
-/** Findings in an attached file, counted by category and action. The file's text is not sent. */
+/**
+ * Findings in an attached file, counted by category and action. Only the matched values are
+ * sent, never the rest of the file's text.
+ */
 export interface GovernanceFileFinding {
   filename: string;
   /** Set for a file attached to the submitted message, which the user can still withdraw. */
   fileId?: string;
+  /** The file's MIME type. */
+  type?: string;
   category: string;
   label?: string;
   action: GovernanceDecision;
   count: number;
+  /** The distinct matched values, in the order they first appear in the file. */
+  terms?: string[];
 }
 
 export interface GovernanceDlpResult {
