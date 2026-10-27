@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Trans } from 'react-i18next';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
 import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
@@ -126,11 +127,16 @@ export default function DlpInterventionDialog({
   onConfirm: () => void;
 }) {
   const localize = useLocalize();
-  const { decision } = result;
+  const { decision, modelRestriction } = result;
   const categoryLabel = (category: string) => {
     const key = CATEGORY_COPY[category];
     return key ? localize(key) : label(category);
   };
+  const title = modelRestriction
+    ? localize('com_ui_dlp_model_restricted_title')
+    : localize(COPY[decision].title);
+  /** The restriction names the models in the text, which the dialog's plain description cannot. */
+  const description = modelRestriction ? undefined : localize(COPY[decision].description);
   const originalSegments = useMemo(
     () => buildFindingSegments(originalText, result.findings),
     [originalText, result.findings],
@@ -167,12 +173,33 @@ export default function DlpInterventionDialog({
   return (
     <OGDialog open onOpenChange={(open) => !open && onCancel()}>
       <OGDialogTemplate
-        title={localize(COPY[decision].title)}
-        description={localize(COPY[decision].description)}
+        title={title}
+        description={description}
         className="max-w-2xl"
         showCancelButton={false}
         main={
           <div className="flex max-h-[65vh] flex-col gap-4 overflow-y-auto px-1" role="document">
+            {modelRestriction && (
+              <p className="text-sm text-text-secondary">
+                <Trans
+                  i18nKey="com_ui_dlp_model_restricted_description"
+                  values={{
+                    models: modelRestriction.models.join(', '),
+                    categories: modelRestriction.categories.map(categoryLabel).join(', '),
+                  }}
+                  components={{
+                    model: (
+                      <span
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 text-xs font-semibold',
+                          ACTION_CLASS.BLOCK,
+                        )}
+                      />
+                    ),
+                  }}
+                />
+              </p>
+            )}
             {sendFailed && (
               <p
                 role="alert"

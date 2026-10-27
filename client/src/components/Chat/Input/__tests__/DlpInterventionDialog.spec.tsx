@@ -1,6 +1,8 @@
 import React from 'react';
+import { I18nextProvider } from 'react-i18next';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
+import i18n from '~/locales/i18n';
 import DlpInterventionDialog, {
   buildFindingSegments,
   buildReplacementSegments,
@@ -93,6 +95,40 @@ describe('DlpInterventionDialog', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
+  });
+
+  it('names the compared models the findings do not allow, with only a close action', () => {
+    const onCancel = jest.fn();
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <DlpInterventionDialog
+          result={{
+            decision: 'BLOCK',
+            findings: [finding({ action: 'MASK' })],
+            modelRestriction: {
+              models: ['public-s2'],
+              categories: ['PROJECT_NAME', 'CUSTOM_TERM'],
+            },
+          }}
+          originalText="Discuss Project Acme now"
+          onCancel={onCancel}
+          onConfirm={jest.fn()}
+        />
+      </I18nextProvider>,
+    );
+
+    expect(screen.getByText('com_ui_dlp_model_restricted_title')).toBeInTheDocument();
+    const model = screen.getByText('public-s2');
+    expect(model).toHaveClass('rounded-full', 'text-red-800');
+    expect(model.parentElement).toHaveTextContent(
+      "public-s2 can't receive prompts that contain: com_ui_dlp_category_project_name, CUSTOM TERM. Choose a different model or remove it from the comparison to continue with this prompt.",
+    );
+    expect(screen.queryByText('com_ui_dlp_block_title')).not.toBeInTheDocument();
+    expect(screen.getByText('Project Acme')).toBeInTheDocument();
+    expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('com_ui_close'));
+    expect(onCancel).toHaveBeenCalled();
   });
 
   it('lists findings in attached files without a masked prompt when the text has none', () => {
