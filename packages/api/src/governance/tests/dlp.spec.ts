@@ -617,6 +617,29 @@ describe('two-model comparison', () => {
     expect(req.governanceDlpReview?.modelRestriction?.categories).toEqual(['EMAIL_ADDRESS']);
   });
 
+  it.each<[string, () => Response, string]>([
+    ['not allowed', restricted, "can't receive prompts that contain email address"],
+    ['held for review', () => review('WARN'), 'needs your review first'],
+  ])(
+    'answers with a notice for a model %s once the other model already answered',
+    async (_label, gateway, expected) => {
+      const req = comparisonRequest();
+
+      const [answered, notified] = await Promise.all([
+        send(createRequestDlpFetch(req, async () => completion())),
+        send(
+          createRequestDlpFetch(req, async () => gateway()),
+          undefined,
+          'public-s2',
+        ),
+      ]);
+
+      expect(await responseText(answered)).toBe('Hi');
+      expect(await responseText(notified)).toContain(expected);
+      expect(req.governanceDlpReview).toBeUndefined();
+    },
+  );
+
   it('keeps a single-model block as it was', async () => {
     const req = { ...comparisonRequest(), body: { text } } as ServerRequest;
 

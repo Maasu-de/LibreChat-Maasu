@@ -41,6 +41,12 @@ const DLP_UNSUPPORTED_MESSAGE =
 const COMPARISON_BLOCKED_MESSAGE =
   "This model was not called: your organization's AI governance policy blocks this message.";
 const COMPARISON_FAILURE_MESSAGE = 'This model could not respond. Please try again later.';
+const COMPARISON_REVIEW_MESSAGE =
+  'This model was not called: the message needs your review first. Send it to this model alone to review it.';
+const comparisonRestrictedMessage = ({ categories }: GovernanceModelRestriction): string =>
+  `This model was not called: it can't receive prompts that contain ${categories
+    .map((category) => category.toLowerCase().replace(/_/g, ' '))
+    .join(', ')}.`;
 
 export type {
   GovernanceDecision,
@@ -735,7 +741,8 @@ function showComparisonReview(
  * shown is chosen from both: when the findings do not allow a model, that is shown and nothing is
  * sent. A review the user can approve ends the turn as for a single model; once approved, each
  * model's own review is approved with it. A block or failure becomes that model's response text
- * instead of an error, because an error would also end the other model's response.
+ * instead of an error, because an error would also end the other model's response. So does a
+ * review once the other model already answered, as the turn then can no longer end with it.
  */
 function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
   req.governanceDlpSent ??= false;
@@ -778,7 +785,15 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
         return comparisonNotice(COMPARISON_BLOCKED_MESSAGE);
       }
       await waitForComparison(settle(), init?.signal);
-      return response;
+      if (isDlpUnsent(req)) {
+        return response;
+      }
+      /** The other model already answered, so the turn can no longer end with this review. */
+      req.governanceDlpReview = undefined;
+      await response.body?.cancel();
+      return comparisonNotice(
+        restriction ? comparisonRestrictedMessage(restriction) : COMPARISON_REVIEW_MESSAGE,
+      );
     } catch (error) {
       settle();
       if (init?.signal?.aborted) {
