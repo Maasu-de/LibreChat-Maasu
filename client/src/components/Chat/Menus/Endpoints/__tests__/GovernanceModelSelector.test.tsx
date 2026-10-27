@@ -1,7 +1,8 @@
 import userEvent from '@testing-library/user-event';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GOVERNANCE_ENDPOINT, QueryKeys } from 'librechat-data-provider';
+import { useGetModelsQuery } from 'librechat-data-provider/react-query';
 import type { EModelEndpoint, GovernanceModel, TConversation } from 'librechat-data-provider';
 import GovernanceModelSelector from '../GovernanceModelSelector';
 import AddedConvo from '~/components/Chat/Input/AddedConvo';
@@ -10,6 +11,7 @@ import { groupGovernanceModels } from '../governance';
 jest.mock('../../../../../../../packages/data-provider/src/data-service', () => ({
   ...jest.requireActual('../../../../../../../packages/data-provider/src/data-service'),
   getGovernanceModels: jest.fn(),
+  getModels: jest.fn(),
 }));
 
 jest.mock('~/hooks', () => ({
@@ -122,6 +124,10 @@ describe('GovernanceModelSelector', () => {
       .mockResolvedValueOnce({ [GOVERNANCE_ENDPOINT]: [] })
       .mockResolvedValueOnce({ [GOVERNANCE_ENDPOINT]: models });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData([QueryKeys.models], {
+      [GOVERNANCE_ENDPOINT]: ['old-model'],
+      Other: ['other-model'],
+    });
     render(
       <QueryClientProvider client={client}>
         <GovernanceModelSelector endpoint={GOVERNANCE_ENDPOINT} value={null} onSelect={jest.fn()} />
@@ -133,6 +139,42 @@ describe('GovernanceModelSelector', () => {
 
     expect(await screen.findByRole('heading', { name: 'S1 — EU Sovereign' })).toBeInTheDocument();
     expect(getGovernanceModels).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(client.getQueryData([QueryKeys.models])).toEqual({
+        [GOVERNANCE_ENDPOINT]: ['sovereign-model', 'hosted-model'],
+        Other: ['other-model'],
+      }),
+    );
+  });
+
+  it('keeps gateway identifiers from the tier catalog when the regular model list refreshes', async () => {
+    const { getModels } = jest.requireMock(
+      '../../../../../../../packages/data-provider/src/data-service',
+    ) as { getModels: jest.Mock };
+    getModels.mockResolvedValue({
+      [GOVERNANCE_ENDPOINT]: ['old-model'],
+      Other: ['other-model'],
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData([QueryKeys.governanceModels], { [GOVERNANCE_ENDPOINT]: models });
+
+    function ModelsQuery() {
+      useGetModelsQuery({ refetchOnMount: 'always' });
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <ModelsQuery />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(getModels).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(client.getQueryData([QueryKeys.models])).toMatchObject({
+        [GOVERNANCE_ENDPOINT]: ['sovereign-model', 'hosted-model'],
+        Other: ['other-model'],
+      }),
+    );
   });
 
   it('uses the same options in the comparison selector and passes the selected identifier', async () => {
