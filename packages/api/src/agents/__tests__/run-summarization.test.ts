@@ -952,7 +952,7 @@ describe('custom-endpoint provider resolution', () => {
 // Suite: governed summarization fetch
 // ---------------------------------------------------------------------------
 describe('governed summarization fetch', () => {
-  const gatewayUrl = 'http://gateway.test/api/v1/dlp';
+  const gatewayUrl = 'http://gateway.test/v1';
   const governedFetch = () =>
     createRequestDlpFetch(
       { body: { text: 'hi' }, user: { id: 'user-1' } } as ServerRequest,

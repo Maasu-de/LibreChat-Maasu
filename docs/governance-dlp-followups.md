@@ -1,7 +1,7 @@
 # Governance DLP follow-ups
 
 The DLP approval flow covers only a normal, plain-text chat submission. Such a message is sent
-to the gateway's `POST /api/v1/dlp/chat/completions` with `require_user_approval: true`. When
+to the gateway's `POST /v1/chat/completions` with `require_user_approval: true`. When
 DLP finds something in the submitted text, the gateway returns a review instead of a completion.
 LibreChat ends the turn without saving the message, shows the review in the intervention
 dialog, and on approval sends the masked messages again with the review's `dlp_token`.
@@ -36,9 +36,8 @@ The following work is intentionally deferred.
 LibreChat needs three server-side values, all of which
 `ai-governance-gateway/deploy/compose.yaml` passes to the LibreChat service:
 
-- `GOVERNANCE_API_BASE_URL`, set to the gateway's DLP completions base URL, for example
-  `http://governance-backend:8000/api/v1/dlp`. The gateway no longer serves anything under
-  the earlier `/v1` base URL.
+- `GOVERNANCE_API_BASE_URL`, set to the gateway's OpenAI-compatible base URL, for example
+  `http://governance-backend:8000/v1` for completions and model listing.
 - `LIBRECHAT_SERVICE_CREDENTIAL`.
 - `GOVERNANCE_DLP_ENABLED=true`.
 

@@ -1051,7 +1051,7 @@ describe('BaseClient', () => {
         const req = { body: { text: 'Hello, world!' }, user: { id: 'user-1' } };
         const governedFetch = createRequestDlpFetch(req, gatewayFetch);
         const callGateway = () =>
-          governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+          governedFetch('http://governance.test/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

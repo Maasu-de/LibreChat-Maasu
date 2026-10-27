@@ -652,7 +652,7 @@ describe('ResumableAgentController resume metadata', () => {
       const sendMessage = async (_text, opts) => {
         opts.onStart(userMessage, 'response-message');
         chunksBeforeSent = mockGenerationJobManager.emitChunk.mock.calls.length;
-        await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+        await governedFetch('http://governance.test/v1/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -759,7 +759,7 @@ describe('ResumableAgentController resume metadata', () => {
       const initializeClient = jest.fn(async ({ req }) => {
         const modelFetch = governed ? createRequestDlpFetch(req, completion) : completion;
         const sendMessage = async () => {
-          await modelFetch('http://governance.test/api/v1/dlp/chat/completions', {
+          await modelFetch('http://governance.test/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

@@ -12,7 +12,7 @@ import {
 } from '../review';
 import { createGovernanceDlpFetch } from '../dlp';
 
-const DLP_COMPLETIONS_URL = 'http://governance.test/api/v1/dlp/chat/completions';
+const DLP_COMPLETIONS_URL = 'http://governance.test/v1/chat/completions';
 const SUBMITTED = 'Please email max@example.com today';
 const MASKED = 'Please email [EMAIL] today';
 
