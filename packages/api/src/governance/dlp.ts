@@ -4,6 +4,7 @@ import type {
   TEphemeralAgent,
   GovernanceDecision,
   GovernanceDlpReview,
+  GovernanceModelRestriction,
 } from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
 import type { FileContext } from '~/files/context';
@@ -15,6 +16,7 @@ import {
   getReviewStore,
   toClientReview,
   findSubmittedText,
+  toModelRestriction,
   findingsInFiles,
   findingsInSubmittedText,
 } from './review';
@@ -76,8 +78,11 @@ export interface GovernanceFetchParams {
   reviewId?: string;
   /** The attached-document blocks this turn added to messages. */
   fileContexts?: () => DlpFileContext[];
-  /** Receives a review the user has to decide on. The model call then ends without a completion. */
-  onReview?: (review: GovernanceDlpReview) => void;
+  /**
+   * Receives a review the user has to decide on. The model call then ends without a completion.
+   * A block caused by findings that do not allow the requested model also receives that restriction.
+   */
+  onReview?: (review: GovernanceDlpReview, restriction?: GovernanceModelRestriction) => void;
   /** Called when the gateway starts a completion, which means the request passed DLP. */
   onSent?: () => void;
   /** Told after each send of the approved review whether a failure put it back for another try. */
@@ -340,7 +345,7 @@ interface ApprovalParams {
   text: string;
   reviewId?: string;
   fileContexts: () => DlpFileContext[];
-  onReview: (review: GovernanceDlpReview) => void;
+  onReview: (review: GovernanceDlpReview, restriction?: GovernanceModelRestriction) => void;
   onApprovalKept?: (kept: boolean) => void;
   fetch: GovernanceFetch;
   reviews: ReviewStore;
@@ -384,7 +389,10 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     params.fileContexts(),
   );
   if (decision === 'BLOCK') {
-    params.onReview(toClientReview(review, decision, findings, undefined, fileFindings));
+    params.onReview(
+      toClientReview(review, decision, findings, undefined, fileFindings),
+      toModelRestriction(review, params.request.model),
+    );
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
 
@@ -654,16 +662,91 @@ function claimComparisonApproval(req: ServerRequest): Promise<boolean> {
   return req.governanceComparisonApproval;
 }
 
+/** The models of a comparison, whose first gateway calls a turn-ending review waits for. */
+const COMPARED_MODELS = 2;
+/** How long a turn-ending review waits for the other model's call, which should come back at once. */
+const COMPARISON_SETTLE_TIMEOUT_MS = 30_000;
+
+/** Counts one compared model's first gateway call as come back, and resolves once both have. */
+function settleComparison(req: ServerRequest): Promise<void> {
+  if (!req.governanceComparisonSettled) {
+    let settle = () => {};
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    req.governanceComparisonSettled = { remaining: COMPARED_MODELS, settled, settle };
+  }
+  const comparison = req.governanceComparisonSettled;
+  comparison.remaining -= 1;
+  if (comparison.remaining <= 0) {
+    comparison.settle();
+  }
+  return comparison.settled;
+}
+
+/** Waits for `settled`, but not past a stopped turn or the settle timeout. */
+async function waitForComparison(
+  settled: Promise<void>,
+  signal?: AbortSignal | null,
+): Promise<void> {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const timer = setTimeout(release, COMPARISON_SETTLE_TIMEOUT_MS);
+  signal?.addEventListener('abort', release, { once: true });
+  try {
+    await Promise.race([settled, released]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', release);
+  }
+}
+
+/**
+ * Sets the review a comparison turn ends with, whichever model's call came back first: models the
+ * findings do not allow are shown, together, before a review the user can approve, which is shown
+ * before a plain block.
+ */
+function showComparisonReview(
+  req: ServerRequest,
+  review: GovernanceDlpReview,
+  restriction?: GovernanceModelRestriction,
+): void {
+  const shown = req.governanceDlpReview?.modelRestriction;
+  if (restriction) {
+    req.governanceDlpReview = {
+      ...review,
+      modelRestriction: {
+        models: [...(shown?.models ?? []), ...restriction.models],
+        categories: [...new Set([...(shown?.categories ?? []), ...restriction.categories])],
+      },
+    };
+    return;
+  }
+  if (!shown && (review.decision !== 'BLOCK' || !req.governanceDlpReview)) {
+    req.governanceDlpReview = review;
+  }
+}
+
 /**
  * The governed fetch for one model of a two-model comparison. The gateway reviews each model's
- * call on its own. A review the user has to decide on ends the turn as for a single model; once
- * approved, each model's own review is approved with it. A block or failure becomes that model's
- * response text instead of an error, because an error would also end the other model's response.
+ * call on its own. A review that ends the turn waits for the other model's call, so the review
+ * shown is chosen from both: when the findings do not allow a model, that is shown and nothing is
+ * sent. A review the user can approve ends the turn as for a single model; once approved, each
+ * model's own review is approved with it. A block or failure becomes that model's response text
+ * instead of an error, because an error would also end the other model's response.
  */
 function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
   req.governanceDlpSent ??= false;
+  let firstCall = true;
   return async (input, init) => {
+    const counted = firstCall;
+    firstCall = false;
+    let settled: Promise<void> | undefined;
+    const settle = () => (settled ??= counted ? settleComparison(req) : Promise.resolve());
     let review: GovernanceDlpReview | undefined;
+    let restriction: GovernanceModelRestriction | undefined;
     const send = (reviewId?: string) =>
       createGovernanceDlpFetch({
         userId: req.user?.id ?? '',
@@ -672,29 +755,32 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
         text: typeof req.body?.text === 'string' ? req.body.text : '',
         reviewId,
         fileContexts: () => req.governanceDlpFileContexts ?? [],
-        onReview: (result) => {
+        onReview: (result, restricted) => {
           review = result;
+          restriction = restricted;
         },
         onSent: () => markDlpSent(req),
       })(input, init);
     try {
       const response = await send();
-      if (response.ok) {
-        return response;
-      }
-      if (!review) {
-        return comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+      if (response.ok || !review) {
+        settle();
+        return response.ok ? response : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
       }
       if (review.decision !== 'BLOCK' && (await claimComparisonApproval(req))) {
+        settle();
         const approved = await send(review.reviewId);
         return approved.ok ? approved : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
       }
-      /** A review the user can approve is shown before a block, which leaves nothing to approve. */
-      if (review.decision !== 'BLOCK' || !req.governanceDlpReview) {
-        req.governanceDlpReview = review;
+      showComparisonReview(req, review, restriction);
+      if (review.decision === 'BLOCK' && !restriction) {
+        settle();
+        return comparisonNotice(COMPARISON_BLOCKED_MESSAGE);
       }
-      return review.decision === 'BLOCK' ? comparisonNotice(COMPARISON_BLOCKED_MESSAGE) : response;
+      await waitForComparison(settle(), init?.signal);
+      return response;
     } catch (error) {
+      settle();
       if (init?.signal?.aborted) {
         throw error;
       }

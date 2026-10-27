@@ -49,6 +49,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpApprovalKept?: boolean;
   /** Whether this comparison turn claimed the review the user approved, shared by both models. */
   governanceComparisonApproval?: Promise<boolean>;
+  /** Resolves once both compared models' first gateway calls came back. */
+  governanceComparisonSettled?: { remaining: number; settled: Promise<void>; settle: () => void };
   /**
    * `false` until the gateway starts this turn's governed completion, `true` from then on, and
    * unset for a turn that is not governed. An unsent turn stores nothing.

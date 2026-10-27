@@ -420,12 +420,32 @@ describe('two-model comparison', () => {
       },
     });
 
-  const send = (governedFetch: GovernanceFetch, signal?: AbortSignal) =>
+  /** A block because the findings do not allow the requested model. */
+  const restricted = (): Response =>
+    sse({
+      choices: [],
+      dlp: {
+        review_id: `comparison-review-${++reviewCount}`,
+        action: 'BLOCK',
+        restricted_categories: ['EMAIL_ADDRESS'],
+        findings: [
+          {
+            location: '/messages/0/content',
+            start: 13,
+            end: 28,
+            category: 'EMAIL_ADDRESS',
+            action: 'WARN',
+          },
+        ],
+      },
+    });
+
+  const send = (governedFetch: GovernanceFetch, signal?: AbortSignal, model = 'governed-model') =>
     governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'governed-model',
+        model,
         messages: [{ role: 'user', content: text }],
         stream: true,
       }),
@@ -481,8 +501,10 @@ describe('two-model comparison', () => {
   it('asks the user to review a masked message, ahead of the other model being blocked', async () => {
     const req = comparisonRequest();
 
-    const masked = await send(createRequestDlpFetch(req, async () => review('MASK')));
-    const blocked = await send(createRequestDlpFetch(req, async () => review('BLOCK')));
+    const [masked, blocked] = await Promise.all([
+      send(createRequestDlpFetch(req, async () => review('MASK'))),
+      send(createRequestDlpFetch(req, async () => review('BLOCK'))),
+    ]);
 
     expect(masked.status).toBe(400);
     expect(await responseText(blocked)).toContain('blocks this message');
@@ -531,10 +553,78 @@ describe('two-model comparison', () => {
   it('asks again when the approval is no longer valid', async () => {
     const req = comparisonRequest({ dlpReviewId: 'expired-review' });
 
-    const response = await send(createRequestDlpFetch(req, async () => review('WARN')));
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, async () => review('WARN'))),
+      send(createRequestDlpFetch(req, async () => review('WARN'))),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([400, 400]);
+    expect(req.governanceDlpReview?.decision).toBe('WARN');
+  });
+
+  it('names a model the findings do not allow, even after the other model asked for a review', async () => {
+    const req = comparisonRequest();
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const restrictedGateway = jest.fn(async (): Promise<Response> => {
+      await released;
+      return restricted();
+    });
+    let reviewedSettled = false;
+
+    const reviewed = send(createRequestDlpFetch(req, async () => review('MASK'))).finally(() => {
+      reviewedSettled = true;
+    });
+    const blocked = send(createRequestDlpFetch(req, restrictedGateway), undefined, 'public-s2');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(req.governanceDlpReview?.decision).toBe('MASK');
+    expect(reviewedSettled).toBe(false);
+
+    release();
+    const responses = await Promise.all([reviewed, blocked]);
+
+    expect(responses.map((response) => response.ok)).toEqual([false, false]);
+    expect(req.governanceDlpReview).toMatchObject({
+      decision: 'BLOCK',
+      modelRestriction: { models: ['public-s2'], categories: ['EMAIL_ADDRESS'] },
+    });
+    expect(isDlpUnsent(req)).toBe(true);
+  });
+
+  it('names both models when the findings allow neither', async () => {
+    const req = comparisonRequest();
+
+    await Promise.all([
+      send(
+        createRequestDlpFetch(req, async () => restricted()),
+        undefined,
+        'public-s2',
+      ),
+      send(
+        createRequestDlpFetch(req, async () => restricted()),
+        undefined,
+        'public-s3',
+      ),
+    ]);
+
+    expect(req.governanceDlpReview?.modelRestriction?.models.sort()).toEqual([
+      'public-s2',
+      'public-s3',
+    ]);
+    expect(req.governanceDlpReview?.modelRestriction?.categories).toEqual(['EMAIL_ADDRESS']);
+  });
+
+  it('keeps a single-model block as it was', async () => {
+    const req = { ...comparisonRequest(), body: { text } } as ServerRequest;
+
+    const response = await send(createRequestDlpFetch(req, async () => restricted()));
 
     expect(response.status).toBe(400);
-    expect(req.governanceDlpReview?.decision).toBe('WARN');
+    expect(req.governanceDlpReview?.decision).toBe('BLOCK');
+    expect(req.governanceDlpReview?.modelRestriction).toBeUndefined();
   });
 
   it('still ends the call when the user stops the turn', async () => {
