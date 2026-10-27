@@ -7,6 +7,11 @@ import GovernanceModelSelector from '../GovernanceModelSelector';
 import AddedConvo from '~/components/Chat/Input/AddedConvo';
 import { groupGovernanceModels } from '../governance';
 
+jest.mock('../../../../../../../packages/data-provider/src/data-service', () => ({
+  ...jest.requireActual('../../../../../../../packages/data-provider/src/data-service'),
+  getGovernanceModels: jest.fn(),
+}));
+
 jest.mock('~/hooks', () => ({
   useLocalize: () => {
     const translations = jest.requireActual('~/locales/en/translation.json');
@@ -106,6 +111,28 @@ describe('GovernanceModelSelector', () => {
     await userEvent.type(screen.getByRole('combobox'), 'hosted');
     expect(screen.getByRole('heading', { name: 'S2 — EU Hosted' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'sovereign-model' })).not.toBeInTheDocument();
+  });
+
+  it('retries an empty catalog and shows models when the gateway recovers', async () => {
+    const { getGovernanceModels } = jest.requireMock(
+      '../../../../../../../packages/data-provider/src/data-service',
+    ) as { getGovernanceModels: jest.Mock };
+    getGovernanceModels
+      .mockReset()
+      .mockResolvedValueOnce({ [GOVERNANCE_ENDPOINT]: [] })
+      .mockResolvedValueOnce({ [GOVERNANCE_ENDPOINT]: models });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <GovernanceModelSelector endpoint={GOVERNANCE_ENDPOINT} value={null} onSelect={jest.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('heading', { name: 'S1 — EU Sovereign' })).toBeInTheDocument();
+    expect(getGovernanceModels).toHaveBeenCalledTimes(2);
   });
 
   it('uses the same options in the comparison selector and passes the selected identifier', async () => {

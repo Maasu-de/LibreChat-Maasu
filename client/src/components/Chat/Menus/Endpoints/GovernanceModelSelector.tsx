@@ -18,7 +18,7 @@ export default function GovernanceModelSelector({
   trigger?: ReactElement;
 }) {
   const localize = useLocalize();
-  const { data, isLoading, isError } = useGetGovernanceModelsQuery();
+  const { data, isLoading, isFetching, isError, refetch } = useGetGovernanceModelsQuery();
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
   const groups = groupGovernanceModels(data?.[endpoint] ?? []);
@@ -33,9 +33,21 @@ export default function GovernanceModelSelector({
       comboboxLabel={localize('com_endpoint_search_models')}
     >
       {(isLoading || isError || groups.length === 0) && (
-        <p role="status" className="px-3 py-2 text-sm text-text-secondary">
-          {localize(isLoading ? 'com_ui_loading' : 'com_ui_governance_models_unavailable')}
-        </p>
+        <div className="px-3 py-2 text-sm text-text-secondary">
+          <p role="status">
+            {localize(isFetching ? 'com_ui_loading' : 'com_ui_governance_models_unavailable')}
+          </p>
+          {!isLoading && (
+            <button
+              type="button"
+              className="mt-1 rounded px-2 py-1 text-text-primary hover:bg-surface-hover disabled:opacity-50"
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              {localize('com_ui_retry')}
+            </button>
+          )}
+        </div>
       )}
       {groups.map(({ tier, models }) => {
         const matchingModels = models.filter((model) =>
