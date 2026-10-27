@@ -714,9 +714,12 @@ export default function useChatFunctions({
 
   const cancelDlpIntervention = useCallback(() => dropDlpReview(true), [dropDlpReview]);
 
+  /** Also runs when a review arrives, so one for another conversation is dropped at once, not at
+   *  whatever re-run comes next (a toast changes `showToast`, and with it `dropDlpReview`). */
+  const reviewConversationKey = dlpReview && dlpConversationKey(dlpReview.conversationId);
   useEffect(() => {
     dropDlpReview(false, dlpConversationKey(immutableConversation?.conversationId));
-  }, [immutableConversation?.conversationId, dropDlpReview]);
+  }, [immutableConversation?.conversationId, reviewConversationKey, dropDlpReview]);
 
   /**
    * Sends the reviewed text (masked where the review masks it) as approved by the user, and
