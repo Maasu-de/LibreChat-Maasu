@@ -2,7 +2,6 @@ import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-prov
 import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
 import {
-  maskText,
   readReview,
   createReviewEvent,
   findingsInFiles,
@@ -362,31 +361,6 @@ describe('submitted text helpers', () => {
         count: 1,
       },
     ]);
-  });
-
-  it('masks by code point like the gateway', () => {
-    const text = '🙂 max@example.com and max@example.com';
-    const findings = [
-      emailFinding('/messages/0/content', 2),
-      emailFinding('/messages/0/content', 22),
-    ];
-    expect(maskText(text, findings)).toBe('🙂 [EMAIL] and [EMAIL]');
-  });
-
-  it('masks the rest of a crossing finding like the gateway', () => {
-    const findings = [
-      termFinding('/messages/0/content', 0, 15),
-      termFinding('/messages/0/content', 8, 22),
-    ];
-    expect(maskText(CROSSING_TERMS, findings)).toBe('[TERM] [TERM]');
-  });
-
-  it('drops a finding inside an earlier one like the gateway', () => {
-    const findings = [
-      termFinding('/messages/0/content', 0, 7),
-      termFinding('/messages/0/content', 0, 15),
-    ];
-    expect(maskText('Project Phoenix', findings)).toBe('[TERM]');
   });
 });
 

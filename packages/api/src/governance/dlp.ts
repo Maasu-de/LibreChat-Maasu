@@ -1,4 +1,4 @@
-import { isEphemeralAgentId } from 'librechat-data-provider';
+import { maskGovernanceText, isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
   TEphemeralAgent,
@@ -9,7 +9,6 @@ import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
 import type { FileContext } from '~/files/context';
 import type { ServerRequest } from '~/types/http';
 import {
-  maskText,
   readReview,
   reviewTtl,
   getReviewStore,
@@ -391,7 +390,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     return rejectCompletion('dlp_malformed_response');
   }
 
-  const approvedText = maskText(params.text, findings);
+  const approvedText = maskGovernanceText(params.text, findings);
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
     return rejectCompletion('dlp_malformed_response');
   }
