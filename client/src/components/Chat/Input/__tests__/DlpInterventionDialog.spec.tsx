@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
 import DlpInterventionDialog, {
+  sentText,
   keyFindings,
   groupFileFindings,
   buildMaskedSegments,
@@ -17,7 +18,20 @@ const PROJECTS = 'CUSTOM_8F14E45FCEEA167A5A36DEDD4BEA2543';
 const CLIENTS = 'CUSTOM_C9F0F895FB98AB9159F51FD0297E236D';
 const MASK_HIGHLIGHT = 'bg-aimo-mask/35';
 const WARN_HIGHLIGHT = 'bg-aimo-warn/25';
+const REDACTED = ['bg-text-primary', 'text-surface-primary'];
 const EMAIL_WARN = 'com_ui_dlp_category_email_address · com_ui_dlp_decision_warn';
+const PROJECT_MASK = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_mask';
+
+/** The redaction bar that holds a replacement or the value revealed in its place. */
+const barOf = (element: HTMLElement) => {
+  const bar = element.closest('mark');
+  if (!bar) {
+    throw new Error('not in a redaction bar');
+  }
+  return bar;
+};
+/** Whether a bar shows its replacement, not the original value laid over it. */
+const showsToken = (bar: HTMLElement) => bar.querySelector('.invisible') === null;
 
 const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding => ({
   location: '/messages/0/content',
@@ -96,27 +110,29 @@ describe('DLP intervention text segmentation', () => {
     expect(outside.key).toBeUndefined();
   });
 
-  it('places each replacement like the gateway, with the findings it stands for', () => {
+  it('redacts each value the gateway replaces, with every finding it covers', () => {
     const [later, earlier] = crossingFindings;
     const segments = buildMaskedSegments(CROSSING, crossingFindings);
 
-    expect(segments.map(({ text }) => text).join('')).toBe('Status of [TERM] [TERM] today');
     expect(segments).toEqual([
-      { text: 'Status of ', findings: [] },
-      { text: '[TERM]', findings: [earlier, later], replaced: earlier },
-      { text: ' ', findings: [later] },
-      { text: '[TERM]', findings: [later], replaced: later },
-      { text: ' today', findings: [] },
+      { text: 'Status of ' },
+      { text: 'Project Phoenix', replaced: earlier, covers: [earlier, later] },
+      { text: ' ' },
+      { text: 'Secret', replaced: later, covers: [later] },
+      { text: ' today' },
     ]);
+    expect(sentText(segments)).toBe('Status of [TERM] [TERM] today');
   });
 
-  it('links the unmasked rest of a finding to it in the masked prompt', () => {
+  it('underlines the unmasked rest of a finding that a redacted value partly covers', () => {
     const [term, email] = overlapFindings;
+    const segments = buildMaskedSegments(OVERLAP, overlapFindings);
 
-    expect(buildMaskedSegments(OVERLAP, overlapFindings)).toEqual([
-      { text: '[overlap test]', findings: [term, email], replaced: term },
-      { text: '@example.com', findings: [email] },
+    expect(segments).toEqual([
+      { text: 'alfa romeo', replaced: term, covers: [term, email] },
+      { text: '@example.com', findings: [{ finding: email, lane: 0, ends: true }] },
     ]);
+    expect(sentText(segments)).toBe('[overlap test]@example.com');
   });
 
   it('groups the findings of each file by category and action, with distinct values', () => {
@@ -161,7 +177,7 @@ describe('DLP intervention text segmentation', () => {
 });
 
 describe('DlpInterventionDialog', () => {
-  it('shows the complete MASK preview and provides cancel and send actions', () => {
+  it('shows only the masked prompt as it will be sent, each replacement set as a bar', () => {
     const onCancel = jest.fn();
     const onConfirm = jest.fn();
 
@@ -178,17 +194,38 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('Project Acme', { selector: 'mark' })).toBeInTheDocument();
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
+    const bar = barOf(within(prompt).getByText('[CONFIDENTIAL]'));
+    expect(screen.queryByRole('region', { name: 'com_ui_dlp_original_prompt' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'com_ui_dlp_file_findings' })).toBeNull();
-    expect(screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' }).textContent).toBe(
-      'Discuss [CONFIDENTIAL] now',
-    );
-    expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
+    expect(prompt.textContent).toBe(`Discuss [CONFIDENTIAL] (${PROJECT_MASK}) now`);
+    expect(bar).toHaveClass(...REDACTED);
+    expect(screen.queryByText('Project Acme')).toBeNull();
+    expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
 
     fireEvent.click(screen.getByText('com_ui_dlp_send_masked'));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText('com_ui_cancel'));
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the masked text from the gateway as is when it differs from the local rule', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [finding()],
+          maskedPreview: [{ location: '/messages/0/content', text: 'Discuss <redacted> now' }],
+        }}
+        originalText="Discuss Project Acme now"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
+    expect(prompt.textContent).toBe('Discuss <redacted> now');
+    expect(within(prompt).queryByText('Project Acme')).toBeNull();
   });
 
   it('does not provide a continuation action for BLOCK', () => {
@@ -443,17 +480,12 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
-      'title',
-      'Project Names · com_ui_dlp_decision_mask → [Project Names]',
-    );
-    expect(screen.getByText('Contoso', { selector: 'mark' })).toHaveAttribute(
-      'title',
-      'Client Names · com_ui_dlp_decision_mask → [Client Names]',
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' }).textContent).toBe(
+      '[Project Names] (Project Names · com_ui_dlp_decision_mask) for ' +
+        '[Client Names] (Client Names · com_ui_dlp_decision_mask), mail ' +
+        '[EMAIL] (com_ui_dlp_category_email_address · com_ui_dlp_decision_mask)',
     );
     expect(screen.getByText('Project Names · com_ui_dlp_decision_mask × 2')).toBeInTheDocument();
-    expect(screen.getByText('[Project Names]')).toBeInTheDocument();
-    expect(screen.getByText('[Client Names]')).toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain('CUSTOM_');
   });
 
@@ -484,6 +516,29 @@ describe('DlpInterventionDialog', () => {
     render(
       <DlpInterventionDialog
         result={{
+          decision: 'WARN',
+          findings: crossingFindings.map((f) =>
+            finding({ ...f, action: 'WARN', replacement: undefined }),
+          ),
+        }}
+        originalText={CROSSING}
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    const label = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_warn';
+
+    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
+      'title',
+      `${label}\n${label}`,
+    );
+    expect(screen.getAllByText(`(${label})`)).toHaveLength(2);
+  });
+
+  it('sets overlapping masked values like the gateway replaces them', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
           decision: 'MASK',
           findings: crossingFindings,
           maskedPreview: [
@@ -495,45 +550,102 @@ describe('DlpInterventionDialog', () => {
         onConfirm={jest.fn()}
       />,
     );
-    const label = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_mask';
+    const [first, second] = screen.getAllByText('[TERM]').map(barOf);
 
-    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
-      'title',
-      `${label} → [TERM]\n${label} → [TERM]`,
-    );
-    expect(screen.getAllByText(`(${label})`)).toHaveLength(2);
+    fireEvent.mouseEnter(second);
+    expect(barOf(screen.getByText('Secret'))).toBe(second);
+    expect(showsToken(first)).toBe(true);
+    expect(first).toHaveClass(MASK_HIGHLIGHT);
+
+    fireEvent.mouseEnter(first);
+    expect(barOf(screen.getByText('Project Phoenix'))).toBe(first);
+    expect(showsToken(second)).toBe(true);
   });
 
-  it('highlights a value in the original and the masked prompt while it is hovered', () => {
-    render(
-      <DlpInterventionDialog
-        result={{
-          decision: 'MASK',
-          findings: [finding()],
-          maskedPreview: [{ location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' }],
-        }}
-        originalText="Discuss Project Acme now"
-        onCancel={jest.fn()}
-        onConfirm={jest.fn()}
-      />,
-    );
-    const original = screen.getByText('Project Acme', { selector: 'mark' });
-    const replacement = screen.getByText('[CONFIDENTIAL]');
+  describe('redaction bar', () => {
+    const renderMasked = () =>
+      render(
+        <DlpInterventionDialog
+          result={{
+            decision: 'MASK',
+            findings: [finding()],
+            maskedPreview: [
+              { location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' },
+            ],
+          }}
+          originalText="Discuss Project Acme now"
+          onCancel={jest.fn()}
+          onConfirm={jest.fn()}
+        />,
+      );
+    const tokenBar = () => barOf(screen.getByText('[CONFIDENTIAL]'));
+    const revealedIn = (bar: HTMLElement) =>
+      !showsToken(bar) && within(bar).queryByText('Project Acme') !== null;
+    const moveTo = (clientX: number, clientY: number) =>
+      fireEvent.mouseMove(document, { clientX, clientY });
+    /** Client rects given as [left, top, right, bottom]. */
+    const rects = (...boxes: [number, number, number, number][]) => {
+      const list = boxes.map(([left, top, right, bottom]) => ({
+        left,
+        top,
+        right,
+        bottom,
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+        toJSON: () => ({}),
+      }));
+      return Object.assign(list, { item: (i: number) => list[i] ?? null });
+    };
 
-    fireEvent.mouseEnter(original);
-    expect(original).toHaveClass(MASK_HIGHLIGHT);
-    expect(replacement).toHaveClass(MASK_HIGHLIGHT);
+    it('shows the original value in place of the bar while the pointer is on it', () => {
+      renderMasked();
+      const bar = tokenBar();
 
-    fireEvent.mouseLeave(original);
-    expect(original).not.toHaveClass(MASK_HIGHLIGHT);
-    expect(replacement).not.toHaveClass(MASK_HIGHLIGHT);
+      fireEvent.mouseEnter(bar);
+      expect(revealedIn(bar)).toBe(true);
+      expect(within(bar).getByText('[CONFIDENTIAL]')).toHaveClass('invisible');
+      expect(bar).toHaveClass(MASK_HIGHLIGHT);
+      expect(bar).not.toHaveClass(...REDACTED);
+      expect(screen.queryByRole('dialog', { name: PROJECT_MASK })).toBeNull();
+      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
 
-    fireEvent.mouseEnter(replacement);
-    expect(original).toHaveClass(MASK_HIGHLIGHT);
-    expect(replacement).toHaveClass(MASK_HIGHLIGHT);
+      moveTo(500, 500);
+      expect(showsToken(bar)).toBe(true);
+      expect(within(bar).queryByText('Project Acme')).toBeNull();
+      expect(bar).toHaveClass(...REDACTED);
+    });
+
+    it('keeps the value until the pointer leaves both the place of the bar and the value', () => {
+      renderMasked();
+      const bar = tokenBar();
+      const place = jest.spyOn(bar, 'getClientRects').mockReturnValue(rects([100, 10, 160, 30]));
+
+      fireEvent.mouseEnter(bar);
+      place.mockReturnValue(rects([0, 42, 180, 62]));
+
+      moveTo(150, 20);
+      expect(revealedIn(bar)).toBe(true);
+      moveTo(20, 50);
+      expect(revealedIn(bar)).toBe(true);
+      moveTo(300, 50);
+      expect(showsToken(bar)).toBe(true);
+    });
+
+    it('shows the original value while the bar has focus', () => {
+      renderMasked();
+      const bar = tokenBar();
+
+      act(() => bar.focus());
+      expect(revealedIn(bar)).toBe(true);
+
+      act(() => screen.getByRole('button', { name: 'com_ui_cancel' }).focus());
+      expect(showsToken(bar)).toBe(true);
+    });
   });
 
-  it('highlights everything a part of the masked prompt stands for while it is hovered', () => {
+  it('lights a bar while the unmasked rest of a finding it covers is hovered', () => {
     render(
       <DlpInterventionDialog
         result={{
@@ -546,14 +658,59 @@ describe('DlpInterventionDialog', () => {
         onConfirm={jest.fn()}
       />,
     );
-    const mark = (text: string) => screen.getByText(text, { selector: 'mark' });
+    const bar = barOf(screen.getByText('[overlap test]'));
+    const rest = screen.getByText('@example.com', { selector: 'mark' });
+    expect(rest).toHaveAttribute('title', EMAIL_WARN);
+    expect(rest.parentElement).toHaveClass('border-aimo-warn');
 
-    fireEvent.mouseEnter(screen.getByText('@example.com', { selector: 'span' }));
+    fireEvent.mouseEnter(rest);
+    expect(bar).toHaveClass(WARN_HIGHLIGHT);
+    expect(showsToken(bar)).toBe(true);
+    expect(rest).toHaveClass(WARN_HIGHLIGHT);
 
-    expect(mark('alfa')).not.toHaveClass(MASK_HIGHLIGHT);
-    expect(mark('romeo')).toHaveClass(WARN_HIGHLIGHT);
-    expect(mark('@example.com')).toHaveClass(WARN_HIGHLIGHT);
-    expect(screen.getByText('[overlap test]')).toHaveClass(WARN_HIGHLIGHT);
+    fireEvent.mouseLeave(rest);
+    expect(bar).toHaveClass(...REDACTED);
+    fireEvent.mouseEnter(bar);
+    expect(barOf(screen.getByText('alfa romeo'))).toBe(bar);
+    expect(bar).toHaveClass(MASK_HIGHLIGHT);
+    expect(rest).toHaveClass(WARN_HIGHLIGHT);
+  });
+
+  it('links the masked values of a file badge to their bars in the prompt', () => {
+    const iban = 'DE89370400440532013000';
+    const ibanMask = 'com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask';
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [finding({ start: 4, end: 26, category: 'IBAN_CODE', replacement: '[IBAN]' })],
+          fileFindings: [
+            {
+              filename: 'invoice.md',
+              category: 'IBAN_CODE',
+              action: 'MASK',
+              count: 1,
+              terms: [iban],
+            },
+          ],
+          maskedPreview: [{ location: '/messages/0/content', text: 'Pay [IBAN] now' }],
+        }}
+        originalText={`Pay ${iban} now`}
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    const badge = screen.getByRole('button', { name: ibanMask });
+    const bar = barOf(screen.getByText('[IBAN]'));
+
+    fireEvent.mouseEnter(badge);
+    expect(bar).toHaveClass(MASK_HIGHLIGHT);
+    expect(showsToken(bar)).toBe(true);
+    fireEvent.mouseLeave(badge);
+    expect(bar).toHaveClass(...REDACTED);
+
+    fireEvent.mouseEnter(bar);
+    expect(badge).toHaveClass(MASK_HIGHLIGHT);
   });
 
   it('links the values of a file badge to the same values in the prompt', () => {

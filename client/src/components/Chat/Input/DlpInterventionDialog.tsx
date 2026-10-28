@@ -13,7 +13,7 @@ import type {
   GovernanceDecision,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
-import type { ReactNode } from 'react';
+import type { ReactNode, SyntheticEvent } from 'react';
 import type { TranslationKeys } from '~/hooks';
 import FilePreview from './Files/FilePreview';
 import { cn, getFileType } from '~/utils';
@@ -29,12 +29,16 @@ type TextInterval<F extends GovernanceFinding> = {
   end: number;
   findings: SegmentFinding<F>[];
 };
-/** Masked text: kept text or the replacement of `replaced`, with the findings it stands for. */
-type MaskedSegment<F extends GovernanceFinding> = {
+/** An original value the gateway sends as the replacement of `replaced`, with what it covers. */
+type RedactedValue<F extends GovernanceFinding> = {
   text: string;
-  findings: F[];
-  replaced?: GovernanceFinding;
+  replaced: GovernanceFinding;
+  covers: F[];
 };
+/** Masked text: kept text, underlined by the findings left in it, and redacted values. */
+type MaskedSegment<F extends GovernanceFinding> = TextSegment<F> | RedactedValue<F>;
+/** The redacted value shown in the text, and the place its bar took before the text reflowed. */
+type RevealedValue = { index: number; keys: string[]; bar: DOMRect[]; element: HTMLElement };
 /** The findings of one category and action in a file, with the distinct values they matched. */
 type FindingGroup = Pick<
   GovernanceFileFinding,
@@ -43,7 +47,7 @@ type FindingGroup = Pick<
 /** The findings in one attached file, whose MIME type picks its icon like in the composer. */
 type FileFindings = { id: string; filename: string; type?: string; groups: FindingGroup[] };
 type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
-type ActionStyle = { chip: string; underline: string; ink: string; highlight: string };
+type ActionStyle = { chip: string; underline: string; highlight: string };
 
 /** How many matched values the popup of a finding badge lists; the rest are only counted. */
 const VISIBLE_TERMS = 50;
@@ -84,9 +88,16 @@ const COPY = {
   BLOCK: { title: 'com_ui_dlp_block_title', description: 'com_ui_dlp_block_description' },
 } as const satisfies Record<GovernanceDecision, { title: string; description: string }>;
 
-/** The box that holds both the original and the masked prompt. */
+/** The box that holds the prompt, as it will be sent when the gateway masks it. */
 const PROMPT_BOX =
   'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
+/**
+ * A replacement in the masked prompt, set in ink like a redaction bar. The bar never breaks
+ * across lines, so a revealed value no wider than it takes exactly its place.
+ */
+const REDACTION =
+  'inline-grid max-w-full justify-items-center rounded-sm px-1 py-0.5 leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy';
+const REDACTED = 'bg-text-primary text-surface-primary';
 const BADGE =
   'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em] transition-colors';
 
@@ -94,28 +105,27 @@ const ACTION_STYLE: Record<GovernanceDecision, ActionStyle> = {
   ALLOW: {
     chip: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
     underline: 'border-aimo-green',
-    ink: 'text-aimo-green-ink',
     highlight: 'bg-aimo-green/25',
   },
   MASK: {
     chip: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
     underline: 'border-aimo-mask',
-    ink: 'text-aimo-mask-ink',
     highlight: 'bg-aimo-mask/35',
   },
   WARN: {
     chip: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
     underline: 'border-aimo-warn',
-    ink: 'text-aimo-warn-ink',
     highlight: 'bg-aimo-warn/25',
   },
   BLOCK: {
     chip: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
     underline: 'border-aimo-block',
-    ink: 'text-aimo-block-ink',
     highlight: 'bg-aimo-block/20',
   },
 };
+
+const isAt = (x: number, y: number) => (rect: DOMRect) =>
+  x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 
 const byPosition = (a: GovernanceFinding, b: GovernanceFinding) =>
   a.start - b.start || b.end - a.end;
@@ -226,8 +236,8 @@ export function buildFindingSegments<F extends GovernanceFinding>(
 }
 
 /**
- * Splits the masked text into the text it keeps and the replacements the gateway puts in, each
- * with the findings of the original text it stands for.
+ * Splits the text into what the gateway keeps, underlined by the findings it leaves unmasked,
+ * and the values it replaces like the gateway, each with every finding it covers.
  */
 export function buildMaskedSegments<F extends GovernanceFinding>(
   text: string,
@@ -237,7 +247,7 @@ export function buildMaskedSegments<F extends GovernanceFinding>(
   const ranges = getGovernanceMaskRanges(chars, findings);
   const intervals = splitAtFindings(
     chars,
-    findings,
+    findings.filter(({ replacement }) => replacement === undefined),
     ranges.flatMap(({ start, end }) => [start, end]),
   );
 
@@ -248,24 +258,27 @@ export function buildMaskedSegments<F extends GovernanceFinding>(
       r++;
     }
     const range = ranges[r];
-    const covered = covering.map(({ finding }) => finding);
-    if (range === undefined || range.start > start) {
-      segments.push({ text: chars.slice(start, end).join(''), findings: covered });
-      continue;
+    if (range?.start === start) {
+      segments.push({
+        text: chars.slice(range.start, range.end).join(''),
+        replaced: range.finding,
+        covers: findings
+          .filter((f) => isInText(chars, f) && f.start < range.end && f.end > range.start)
+          .sort(byPosition),
+      });
+    } else if (range === undefined || range.start > start) {
+      const kept = chars.slice(start, end).join('');
+      segments.push(covering.length > 0 ? { text: kept, findings: covering } : { text: kept });
     }
-    const last = segments[segments.length - 1];
-    if (start > range.start && last?.replaced === range.finding) {
-      last.findings = [...new Set([...last.findings, ...covered])];
-      continue;
-    }
-    segments.push({
-      text: range.finding.replacement ?? '',
-      findings: covered,
-      replaced: range.finding,
-    });
   }
   return segments;
 }
+
+/** The text the gateway sends for the masked segments. */
+export const sentText = (segments: MaskedSegment<GovernanceFinding>[]): string =>
+  segments
+    .map((segment) => ('replaced' in segment ? (segment.replaced.replacement ?? '') : segment.text))
+    .join('');
 
 /**
  * The findings in each attached file, grouped by category and action, each group with its
@@ -412,7 +425,11 @@ export default function DlpInterventionDialog({
   const { decision } = result;
   /** Keys of the values under the pointer, highlighted wherever they occur. */
   const [active, setActive] = useState<string[]>([]);
-  const activeKeys = useMemo(() => new Set(active), [active]);
+  const [revealed, setRevealed] = useState<RevealedValue | null>(null);
+  const activeKeys = useMemo(
+    () => new Set(revealed ? [...active, ...revealed.keys] : active),
+    [active, revealed],
+  );
   const cancelRef = useRef<HTMLButtonElement>(null);
   const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
     if (displayName) {
@@ -435,23 +452,36 @@ export default function DlpInterventionDialog({
     () => keyFindings(originalText, result.findings),
     [originalText, result.findings],
   );
-  const originalSegments = useMemo(
-    () => buildFindingSegments(originalText, findings),
-    [originalText, findings],
-  );
   const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
   const maskedText = result.maskedPreview?.find(
     (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
   )?.text;
   const showMasked = decision === 'MASK' && Boolean(maskedText) && result.findings.length > 0;
-  const maskedSegments = useMemo((): MaskedSegment<KeyedFinding>[] => {
+  /** The prompt as it will be sent when it is masked, else as written. */
+  const promptSegments = useMemo((): MaskedSegment<KeyedFinding>[] => {
     if (!showMasked || maskedText === undefined) {
-      return [];
+      return buildFindingSegments(originalText, findings);
     }
     const segments = buildMaskedSegments(originalText, findings);
-    const matches = segments.map(({ text }) => text).join('') === maskedText;
-    return matches ? segments : [{ text: maskedText, findings: [] }];
+    return sentText(segments) === maskedText ? segments : [{ text: maskedText }];
   }, [showMasked, maskedText, originalText, findings]);
+
+  /** The text reflows around a revealed value, so it stays until the pointer leaves both places. */
+  useEffect(() => {
+    if (revealed === null) {
+      return;
+    }
+    const { index, bar, element } = revealed;
+    const conceal = ({ clientX, clientY }: MouseEvent) => {
+      const at = isAt(clientX, clientY);
+      if (bar.some(at) || Array.from(element.getClientRects()).some(at)) {
+        return;
+      }
+      setRevealed((current) => (current?.index === index ? null : current));
+    };
+    document.addEventListener('mousemove', conceal);
+    return () => document.removeEventListener('mousemove', conceal);
+  }, [revealed]);
 
   const keysOf = (keyed: KeyedFinding[]) =>
     keyed.flatMap(({ key }) => (key === undefined ? [] : [key]));
@@ -500,28 +530,51 @@ export default function DlpInterventionDialog({
     );
   };
 
-  const renderMasked = (
-    { text, findings: covering, replaced }: MaskedSegment<KeyedFinding>,
+  /**
+   * A replacement in the masked prompt is set like a redaction bar. While the pointer is on it,
+   * or it has focus, the original value takes its place, centered on the bar's width when it is
+   * shorter, so the text after it doesn't move.
+   */
+  const renderRedacted = (
+    { text, replaced, covers }: RedactedValue<KeyedFinding>,
     index: number,
   ) => {
-    if (!replaced && covering.length === 0) {
-      return <span key={index}>{text}</span>;
-    }
-    const lit = litOf(covering);
+    const shown = revealed?.index === index;
+    const lit = litOf(covers);
+    const reveal = ({ currentTarget }: SyntheticEvent<HTMLElement>) => {
+      const bar = Array.from(currentTarget.getClientRects());
+      setRevealed((current) =>
+        current?.index === index
+          ? current
+          : { index, keys: keysOf(covers), bar, element: currentTarget },
+      );
+    };
     return (
-      <span
+      <mark
         key={index}
-        {...hoverProps(keysOf(covering))}
+        tabIndex={0}
+        onMouseEnter={reveal}
+        onFocus={reveal}
+        onBlur={() => setRevealed((current) => (current?.index === index ? null : current))}
         className={cn(
-          'rounded-sm box-decoration-clone transition-colors',
-          replaced && ['font-semibold', ACTION_STYLE[replaced.action].ink],
-          lit.length > 0 && ACTION_STYLE[mostSevere(lit)].highlight,
+          REDACTION,
+          lit.length > 0 ? [ACTION_STYLE[mostSevere(lit)].highlight, 'text-inherit'] : REDACTED,
         )}
       >
-        {text}
-      </span>
+        <span
+          aria-hidden={shown || undefined}
+          className={cn('font-semibold [grid-area:1/1]', shown && 'invisible')}
+        >
+          {replaced.replacement}
+        </span>
+        {shown && <span className="[grid-area:1/1]">{text}</span>}
+        <span className="sr-only">{` (${findingLabel(replaced)})`}</span>
+      </mark>
     );
   };
+
+  const renderSegment = (segment: MaskedSegment<KeyedFinding>, index: number) =>
+    'replaced' in segment ? renderRedacted(segment, index) : renderOriginal(segment, index);
 
   /** A badge per finding group; while one of its values is hovered anywhere, it lights up too. */
   const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
@@ -640,15 +693,13 @@ export default function DlpInterventionDialog({
               </section>
             )}
 
-            <section aria-label={localize('com_ui_dlp_original_prompt')}>
-              <p className={PROMPT_BOX}>{originalSegments.map(renderOriginal)}</p>
+            <section
+              aria-label={localize(
+                showMasked ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
+              )}
+            >
+              <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
             </section>
-
-            {maskedSegments.length > 0 && (
-              <section aria-label={localize('com_ui_dlp_masked_prompt')}>
-                <p className={PROMPT_BOX}>{maskedSegments.map(renderMasked)}</p>
-              </section>
-            )}
           </div>
         }
         buttons={
