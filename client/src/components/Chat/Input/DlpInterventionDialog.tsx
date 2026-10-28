@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
+import { ChevronDown } from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
 import {
   FileSources,
@@ -43,8 +45,10 @@ type FileFindings = { id: string; filename: string; type?: string; groups: Findi
 type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
 type ActionStyle = { chip: string; underline: string; ink: string; highlight: string };
 
-/** How many matched values a finding group lists; the rest are only counted. */
-const VISIBLE_TERMS = 5;
+/** How many matched values the popup of a finding badge lists; the rest are only counted. */
+const VISIBLE_TERMS = 50;
+/** Grace period so moving the pointer from a badge to its popup doesn't close it. */
+const CLOSE_DELAY_MS = 120;
 const SEVERITY: GovernanceDecision[] = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
 
 const label = (category: string) => category.replaceAll('_', ' ');
@@ -83,6 +87,8 @@ const COPY = {
 /** The box that holds both the original and the masked prompt. */
 const PROMPT_BOX =
   'whitespace-pre-wrap break-words rounded-xl bg-aimo-fill px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
+const BADGE =
+  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em] transition-colors';
 
 const ACTION_STYLE: Record<GovernanceDecision, ActionStyle> = {
   ALLOW: {
@@ -286,6 +292,108 @@ export function groupFileFindings(fileFindings: GovernanceFileFinding[] = []): F
   return Array.from(files.values());
 }
 
+/**
+ * A finding badge whose popup shows what was found. Hovering opens the popup until the pointer
+ * leaves; a click, tap or Enter keeps it open until Escape or a click outside. The popup stays
+ * inside the dialog and never takes focus: the dialog's Radix copy has its own layer and focus
+ * stacks, and it ignores Escape only while an expanded trigger has focus.
+ */
+function FindingBadge({
+  label,
+  className,
+  onHover,
+  children,
+}: {
+  label: string;
+  className: string;
+  onHover: (hovered: boolean) => void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  /** The popup was opened by hovering, so it closes when the pointer leaves it. */
+  const [byHover, setByHover] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelClose = useCallback(() => {
+    if (closeTimer.current != null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+  useEffect(() => cancelClose, [cancelClose]);
+
+  const show = () => {
+    cancelClose();
+    if (!open) {
+      setByHover(true);
+      setOpen(true);
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    if (open && byHover) {
+      closeTimer.current = setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
+    }
+  };
+  const keepFocus = (event: Event) => event.preventDefault();
+
+  return (
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        cancelClose();
+        setOpen(next);
+      }}
+    >
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className={cn(
+            BADGE,
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
+            className,
+          )}
+          onMouseEnter={() => {
+            show();
+            onHover(true);
+          }}
+          onMouseLeave={() => {
+            scheduleClose();
+            onHover(false);
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            cancelClose();
+            setByHover(false);
+            setOpen(byHover || !open);
+          }}
+        >
+          {label}
+          <ChevronDown
+            className={cn('size-3 shrink-0 transition-transform', open && 'rotate-180')}
+            aria-hidden="true"
+          />
+        </button>
+      </Popover.Trigger>
+      <Popover.Content
+        side="top"
+        align="start"
+        sideOffset={6}
+        collisionPadding={16}
+        aria-label={label}
+        onOpenAutoFocus={keepFocus}
+        onCloseAutoFocus={keepFocus}
+        onEscapeKeyDown={() => setOpen(false)}
+        onMouseEnter={cancelClose}
+        onMouseLeave={scheduleClose}
+        className="z-10 max-h-60 w-max max-w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border-light bg-surface-secondary p-2 text-sm text-text-primary shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+      >
+        {children}
+      </Popover.Content>
+    </Popover.Root>
+  );
+}
+
 export default function DlpInterventionDialog({
   result,
   originalText,
@@ -305,6 +413,7 @@ export default function DlpInterventionDialog({
   /** Keys of the values under the pointer, highlighted wherever they occur. */
   const [active, setActive] = useState<string[]>([]);
   const activeKeys = useMemo(() => new Set(active), [active]);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
     if (displayName) {
       return displayName;
@@ -414,55 +523,64 @@ export default function DlpInterventionDialog({
     );
   };
 
+  /** A badge per finding group; while one of its values is hovered anywhere, it lights up too. */
   const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
+    const id = `${category}\n${action}`;
+    const caption = findingLabel({ category, label: displayName, action });
     const listed = terms ?? [];
-    const hidden = listed.length - VISIBLE_TERMS;
-    return (
-      <div key={`${category}\n${action}`}>
-        <span
-          className={cn(
-            'inline-block rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em]',
-            ACTION_STYLE[action].chip,
-          )}
-        >
-          {findingLabel({ category, label: displayName, action })}
+    if (listed.length === 0) {
+      return (
+        <span key={id} className={cn(BADGE, ACTION_STYLE[action].chip)}>
+          {caption}
           {terms === undefined && count > 1 ? ` × ${count}` : ''}
         </span>
-        {listed.length > 0 && (
-          <ul className="mt-1.5 flex list-disc flex-col gap-0.5 pl-5 text-sm marker:text-text-tertiary">
-            {listed.slice(0, VISIBLE_TERMS).map((term) => {
-              const key = termKey(category, term);
-              return (
-                <li key={key} {...hoverProps([key])} className="break-words text-text-primary">
-                  <span
-                    className={cn(
-                      'rounded-sm box-decoration-clone px-1 transition-colors',
-                      activeKeys.has(key) && ACTION_STYLE[action].highlight,
-                    )}
-                  >
-                    {term}
-                  </span>
-                </li>
-              );
-            })}
-            {hidden > 0 && (
-              <li className="list-none px-1 text-xs text-text-secondary">
-                {localize('com_ui_dlp_more_terms', { 0: String(hidden) })}
-              </li>
-            )}
-          </ul>
+      );
+    }
+    const keys = listed.map((term) => termKey(category, term));
+    const hidden = listed.length - VISIBLE_TERMS;
+    return (
+      <FindingBadge
+        key={id}
+        label={caption}
+        className={cn(
+          ACTION_STYLE[action].chip,
+          keys.some((key) => activeKeys.has(key)) && ACTION_STYLE[action].highlight,
         )}
-      </div>
+        onHover={(hovered) => setActive(hovered ? keys : [])}
+      >
+        <ul className="flex flex-col gap-0.5">
+          {listed.slice(0, VISIBLE_TERMS).map((term, i) => (
+            <li key={keys[i]} {...hoverProps([keys[i]])} className="break-words">
+              <span
+                className={cn(
+                  'rounded-sm box-decoration-clone px-1 transition-colors',
+                  activeKeys.has(keys[i]) && ACTION_STYLE[action].highlight,
+                )}
+              >
+                {term}
+              </span>
+            </li>
+          ))}
+          {hidden > 0 && (
+            <li className="px-1 text-xs text-text-secondary">
+              {localize('com_ui_dlp_more_terms', { 0: String(hidden) })}
+            </li>
+          )}
+        </ul>
+      </FindingBadge>
     );
   };
 
-  /** Every file in a review was sent as extracted text, which its source badge shows. */
+  /**
+   * Every file in a review was sent as extracted text, which its source badge shows. A card grows
+   * to fit its badges two to a row from the `sm` breakpoint, and its filename never widens it.
+   */
   const renderFile = ({ id, filename, type, groups }: FileFindings) => {
     const fileType = getFileType(type);
     return (
       <li
         key={id}
-        className="w-full min-w-0 overflow-hidden rounded-2xl border border-border-light bg-surface-hover-alt text-sm text-text-primary sm:w-56"
+        className="w-full min-w-0 overflow-hidden rounded-2xl border border-border-light bg-surface-hover-alt text-sm text-text-primary sm:w-auto sm:min-w-56 sm:max-w-full"
       >
         <div className="flex flex-row items-center gap-2 p-1.5">
           <FilePreview
@@ -470,16 +588,25 @@ export default function DlpInterventionDialog({
             fileType={fileType}
             className="relative"
           />
-          <div className="overflow-hidden text-center">
-            <h3 className="truncate font-medium" title={filename}>
-              {filename}
-            </h3>
-            <div className="truncate text-text-secondary" title={fileType.title}>
-              {fileType.title}
+          <div className="w-0 flex-1">
+            <div className="w-fit max-w-full overflow-hidden text-center">
+              <h3 className="truncate font-medium" title={filename}>
+                {filename}
+              </h3>
+              <div className="truncate text-text-secondary" title={fileType.title}>
+                {fileType.title}
+              </div>
             </div>
           </div>
         </div>
-        <div className="flex flex-col gap-3 px-2.5 pb-3 pt-1">{groups.map(renderGroup)}</div>
+        <div
+          className={cn(
+            'grid justify-items-start gap-1.5 px-2.5 pb-3 pt-1',
+            groups.length > 1 && 'sm:grid-cols-[repeat(2,minmax(0,auto))]',
+          )}
+        >
+          {groups.map(renderGroup)}
+        </div>
       </li>
     );
   };
@@ -492,6 +619,10 @@ export default function DlpInterventionDialog({
         className="max-w-[760px]"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          cancelRef.current?.focus();
+        }}
         main={
           <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto px-1" role="document">
             {sendFailed && (
@@ -522,7 +653,7 @@ export default function DlpInterventionDialog({
         }
         buttons={
           <>
-            <Button variant="outline" onClick={onCancel}>
+            <Button ref={cancelRef} variant="outline" onClick={onCancel}>
               {localize(decision === 'BLOCK' ? 'com_ui_close' : 'com_ui_cancel')}
             </Button>
             {decision !== 'BLOCK' && (

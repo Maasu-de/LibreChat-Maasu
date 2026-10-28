@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
 import DlpInterventionDialog, {
   keyFindings,
@@ -17,6 +17,7 @@ const PROJECTS = 'CUSTOM_8F14E45FCEEA167A5A36DEDD4BEA2543';
 const CLIENTS = 'CUSTOM_C9F0F895FB98AB9159F51FD0297E236D';
 const MASK_HIGHLIGHT = 'bg-aimo-mask/35';
 const WARN_HIGHLIGHT = 'bg-aimo-warn/25';
+const EMAIL_WARN = 'com_ui_dlp_category_email_address · com_ui_dlp_decision_warn';
 
 const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding => ({
   location: '/messages/0/content',
@@ -258,8 +259,8 @@ describe('DlpInterventionDialog', () => {
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
   });
 
-  it('lists the values found in a file and counts those it leaves out', () => {
-    const emails = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => `${name}@example.com`);
+  it('shows the values found in a file only in the popup of their badge', () => {
+    const emails = Array.from({ length: 53 }, (_, i) => `user${i}@example.com`);
     render(
       <DlpInterventionDialog
         result={{
@@ -270,7 +271,7 @@ describe('DlpInterventionDialog', () => {
               filename: 'team.csv',
               category: 'EMAIL_ADDRESS',
               action: 'WARN',
-              count: 9,
+              count: 60,
               terms: emails,
             },
           ],
@@ -281,13 +282,101 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(
-      screen.getByText('com_ui_dlp_category_email_address · com_ui_dlp_decision_warn'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('a@example.com')).toBeInTheDocument();
-    expect(screen.getByText('e@example.com')).toBeInTheDocument();
-    expect(screen.queryByText('f@example.com')).not.toBeInTheDocument();
-    expect(screen.getByText('com_ui_dlp_more_terms 2')).toBeInTheDocument();
+    const badge = screen.getByRole('button', { name: EMAIL_WARN });
+    expect(badge).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('user0@example.com')).not.toBeInTheDocument();
+
+    fireEvent.mouseEnter(badge);
+    const popup = screen.getByRole('dialog', { name: EMAIL_WARN });
+    expect(badge).toHaveAttribute('aria-expanded', 'true');
+    expect(within(popup).getByText('user0@example.com')).toBeInTheDocument();
+    expect(within(popup).getByText('user49@example.com')).toBeInTheDocument();
+    expect(within(popup).queryByText('user50@example.com')).not.toBeInTheDocument();
+    expect(within(popup).getByText('com_ui_dlp_more_terms 3')).toBeInTheDocument();
+  });
+
+  describe('popup of a file finding badge', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const renderFileFinding = (onCancel = jest.fn()) =>
+      render(
+        <DlpInterventionDialog
+          result={{
+            decision: 'WARN',
+            findings: [],
+            fileFindings: [
+              {
+                filename: 'notes.txt',
+                category: 'EMAIL_ADDRESS',
+                action: 'WARN',
+                count: 1,
+                terms: ['max@example.com'],
+              },
+            ],
+          }}
+          originalText="Summarize"
+          onCancel={onCancel}
+          onConfirm={jest.fn()}
+        />,
+      );
+    const popup = () => screen.queryByRole('dialog', { name: EMAIL_WARN });
+    const wait = (ms: number) => act(() => jest.advanceTimersByTime(ms));
+
+    it('leaves the initial focus on cancel', () => {
+      renderFileFinding();
+      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+    });
+
+    it('opens on hover without taking focus, and closes when the pointer leaves', () => {
+      renderFileFinding();
+      const badge = screen.getByRole('button', { name: EMAIL_WARN });
+
+      fireEvent.mouseEnter(badge);
+      expect(popup()).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+
+      fireEvent.mouseLeave(badge);
+      fireEvent.mouseEnter(popup() as HTMLElement);
+      wait(500);
+      expect(popup()).toBeInTheDocument();
+
+      fireEvent.mouseLeave(popup() as HTMLElement);
+      wait(500);
+      expect(popup()).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+    });
+
+    it('stays open once clicked, until a click outside', () => {
+      renderFileFinding();
+      const badge = screen.getByRole('button', { name: EMAIL_WARN });
+
+      fireEvent.mouseEnter(badge);
+      fireEvent.click(badge);
+      fireEvent.mouseLeave(badge);
+      wait(500);
+      expect(popup()).toBeInTheDocument();
+
+      fireEvent.pointerDown(screen.getByText('Summarize'));
+      expect(popup()).not.toBeInTheDocument();
+    });
+
+    it('opens from the keyboard and closes on Escape without closing the dialog', () => {
+      const onCancel = jest.fn();
+      renderFileFinding(onCancel);
+      const badge = screen.getByRole('button', { name: EMAIL_WARN });
+
+      badge.focus();
+      fireEvent.click(badge);
+      expect(popup()).toBeInTheDocument();
+      expect(badge).toHaveFocus();
+
+      fireEvent.keyDown(badge, { key: 'Escape' });
+      expect(popup()).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: 'com_ui_dlp_warn_title' })).toBeInTheDocument();
+      expect(onCancel).not.toHaveBeenCalled();
+      expect(badge).toHaveFocus();
+    });
   });
 
   it('falls back to a readable label for a built-in category without its own copy', () => {
@@ -467,7 +556,7 @@ describe('DlpInterventionDialog', () => {
     expect(screen.getByText('[overlap test]')).toHaveClass(WARN_HIGHLIGHT);
   });
 
-  it('highlights a value in the prompt while the same value is hovered in a file', () => {
+  it('links the values of a file badge to the same values in the prompt', () => {
     render(
       <DlpInterventionDialog
         result={{
@@ -489,15 +578,22 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    const inFile = screen.getByText('MAX@example.com', { selector: 'li span' });
+    const badge = screen.getByRole('button', { name: EMAIL_WARN });
     const inPrompt = screen.getByText('max@example.com', { selector: 'mark' });
 
+    fireEvent.mouseEnter(inPrompt);
+    expect(badge).toHaveClass(WARN_HIGHLIGHT);
+    fireEvent.mouseLeave(inPrompt);
+    expect(badge).not.toHaveClass(WARN_HIGHLIGHT);
+
+    fireEvent.mouseEnter(badge);
+    expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
+
+    const inFile = screen.getByText('MAX@example.com', { selector: 'li span' });
+    fireEvent.mouseLeave(badge);
+    expect(inPrompt).not.toHaveClass(WARN_HIGHLIGHT);
     fireEvent.mouseEnter(inFile);
     expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
-    expect(inFile).toHaveClass(WARN_HIGHLIGHT);
-
-    fireEvent.mouseLeave(inFile);
-    fireEvent.mouseEnter(inPrompt);
     expect(inFile).toHaveClass(WARN_HIGHLIGHT);
   });
 });
