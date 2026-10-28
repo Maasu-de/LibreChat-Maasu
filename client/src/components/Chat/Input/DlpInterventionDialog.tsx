@@ -533,14 +533,13 @@ export default function DlpInterventionDialog({
   /**
    * A replacement in the masked prompt is set like a redaction bar. While the pointer is on it,
    * or it has focus, the original value takes its place, centered on the bar's width when it is
-   * shorter, so the text after it doesn't move.
+   * shorter, so the text after it doesn't move. Only that bar lights up, never other bars.
    */
   const renderRedacted = (
     { text, replaced, covers }: RedactedValue<KeyedFinding>,
     index: number,
   ) => {
     const shown = revealed?.index === index;
-    const lit = litOf(covers);
     const reveal = ({ currentTarget }: SyntheticEvent<HTMLElement>) => {
       const bar = Array.from(currentTarget.getClientRects());
       setRevealed((current) =>
@@ -558,7 +557,7 @@ export default function DlpInterventionDialog({
         onBlur={() => setRevealed((current) => (current?.index === index ? null : current))}
         className={cn(
           REDACTION,
-          lit.length > 0 ? [ACTION_STYLE[mostSevere(lit)].highlight, 'text-inherit'] : REDACTED,
+          shown ? [ACTION_STYLE[replaced.action].highlight, 'text-inherit'] : REDACTED,
         )}
       >
         <span
