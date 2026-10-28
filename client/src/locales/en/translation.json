@@ -1,4 +1,6 @@
 {
+  "com_error_tenant_budget_exceeded": "Your organization has reached its monthly spending limit. Contact your administrator or try again next month.",
+  "com_error_group_budget_exceeded": "One of your groups has reached its monthly spending limit. Contact your administrator or try again next month.",
   "chat_direction_left_to_right": "Left to Right",
   "chat_direction_right_to_left": "Right to Left",
   "com_a11y_ai_composing": "The AI is still composing.",

@@ -10,6 +10,7 @@ const {
   getReferencedQuotes,
   createApprovalRetryEvent,
   getRetryableDlpReviewId,
+  getBudgetErrorMessage,
   resolveTitleTiming,
   GenerationJobManager,
   filterPersistableAbortContent,
@@ -729,8 +730,9 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
           GenerationJobManager.completeJob(streamId);
         } else {
           logger.error(`[ResumableAgentController] Generation error for ${streamId}:`, error);
-          await GenerationJobManager.emitError(streamId, error.message || 'Generation failed');
-          GenerationJobManager.completeJob(streamId, error.message);
+          const message = getBudgetErrorMessage(error) ?? error.message;
+          await GenerationJobManager.emitError(streamId, message || 'Generation failed');
+          GenerationJobManager.completeJob(streamId, message);
         }
 
         await finishResumableRequest(req, userId);
@@ -761,13 +763,14 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
     });
   } catch (error) {
     logger.error('[ResumableAgentController] Initialization error:', error);
+    const message = getBudgetErrorMessage(error) ?? error.message;
     if (!res.headersSent) {
-      res.status(500).json({ error: error.message || 'Failed to start generation' });
+      res.status(500).json({ error: message || 'Failed to start generation' });
     } else {
       // JSON already sent, emit error to stream so client can receive it
-      await GenerationJobManager.emitError(streamId, error.message || 'Failed to start generation');
+      await GenerationJobManager.emitError(streamId, message || 'Failed to start generation');
     }
-    GenerationJobManager.completeJob(streamId, error.message);
+    GenerationJobManager.completeJob(streamId, message);
     await finishResumableRequest(req, userId);
     if (client) {
       disposeClient(client);

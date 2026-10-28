@@ -7,6 +7,12 @@ jest.mock('~/hooks', () => ({
 }));
 
 describe('Error', () => {
+  it.each(['tenant', 'group'])('shows a monthly budget message for %s rejections', (scope) => {
+    const key = `com_error_${scope}_budget_exceeded`;
+    render(<>{Error({ text: JSON.stringify({ code: 'budget_exceeded', scope }) })}</>);
+    expect(screen.getByText(key)).toBeInTheDocument();
+    expect(translation).toHaveProperty(key);
+  });
   it.each([
     ['AUTHENTICATION_REQUIRED', 'com_error_authentication_required'],
     ['ACCESS_DENIED', 'com_error_access_denied'],
