@@ -314,12 +314,10 @@ export function groupFileFindings(fileFindings: GovernanceFileFinding[] = []): F
 function FindingBadge({
   label,
   className,
-  onHover,
   children,
 }: {
   label: string;
   className: string;
-  onHover: (hovered: boolean) => void;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -366,14 +364,8 @@ function FindingBadge({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
             className,
           )}
-          onMouseEnter={() => {
-            show();
-            onHover(true);
-          }}
-          onMouseLeave={() => {
-            scheduleClose();
-            onHover(false);
-          }}
+          onMouseEnter={show}
+          onMouseLeave={scheduleClose}
           onClick={(event) => {
             event.preventDefault();
             cancelClose();
@@ -575,7 +567,7 @@ export default function DlpInterventionDialog({
   const renderSegment = (segment: MaskedSegment<KeyedFinding>, index: number) =>
     'replaced' in segment ? renderRedacted(segment, index) : renderOriginal(segment, index);
 
-  /** A badge per finding group; while one of its values is hovered anywhere, it lights up too. */
+  /** A badge per finding group, whose popup only lists its values: nothing lights up with them. */
   const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
     const id = `${category}\n${action}`;
     const caption = findingLabel({ category, label: displayName, action });
@@ -588,29 +580,13 @@ export default function DlpInterventionDialog({
         </span>
       );
     }
-    const keys = listed.map((term) => termKey(category, term));
     const hidden = listed.length - VISIBLE_TERMS;
     return (
-      <FindingBadge
-        key={id}
-        label={caption}
-        className={cn(
-          ACTION_STYLE[action].chip,
-          keys.some((key) => activeKeys.has(key)) && ACTION_STYLE[action].highlight,
-        )}
-        onHover={(hovered) => setActive(hovered ? keys : [])}
-      >
+      <FindingBadge key={id} label={caption} className={ACTION_STYLE[action].chip}>
         <ul className="flex flex-col gap-0.5">
-          {listed.slice(0, VISIBLE_TERMS).map((term, i) => (
-            <li key={keys[i]} {...hoverProps([keys[i]])} className="break-words">
-              <span
-                className={cn(
-                  'rounded-sm box-decoration-clone px-1 transition-colors',
-                  activeKeys.has(keys[i]) && ACTION_STYLE[action].highlight,
-                )}
-              >
-                {term}
-              </span>
+          {listed.slice(0, VISIBLE_TERMS).map((term) => (
+            <li key={term} className="break-words px-1">
+              {term}
             </li>
           ))}
           {hidden > 0 && (
