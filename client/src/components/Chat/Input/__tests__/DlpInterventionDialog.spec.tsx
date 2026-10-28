@@ -3,10 +3,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
 import DlpInterventionDialog, {
   sentText,
-  keyFindings,
   groupFileFindings,
-  buildMaskedSegments,
-  buildFindingSegments,
+  buildRedactedSegments,
 } from '../DlpInterventionDialog';
 
 jest.mock('~/hooks', () => ({
@@ -18,9 +16,13 @@ const PROJECTS = 'CUSTOM_8F14E45FCEEA167A5A36DEDD4BEA2543';
 const CLIENTS = 'CUSTOM_C9F0F895FB98AB9159F51FD0297E236D';
 const MASK_HIGHLIGHT = 'bg-aimo-mask/35';
 const WARN_HIGHLIGHT = 'bg-aimo-warn/25';
+const BLOCK_HIGHLIGHT = 'bg-aimo-block/20';
 const REDACTED = ['bg-text-primary', 'text-surface-primary'];
 const EMAIL_WARN = 'com_ui_dlp_category_email_address · com_ui_dlp_decision_warn';
 const PROJECT_MASK = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_mask';
+/** The bar of a value the gateway does not replace shows its category. */
+const PROJECT_TOKEN = '[com_ui_dlp_category_project_name]';
+const EMAIL_TOKEN = '[com_ui_dlp_category_email_address]';
 
 /** The redaction bar that holds a replacement or the value revealed in its place. */
 const barOf = (element: HTMLElement) => {
@@ -63,76 +65,66 @@ const overlapFindings = [
 ];
 
 describe('DLP intervention text segmentation', () => {
-  it('keeps sensitive original text separate from surrounding text', () => {
-    const segments = buildFindingSegments('Discuss Project Acme now', [finding()]);
-
-    expect(segments.map((segment) => segment.text)).toEqual(['Discuss ', 'Project Acme', ' now']);
-    expect(segments[1].findings?.[0].finding.category).toBe('PROJECT_NAME');
-  });
-
-  it('underlines overlapping findings in full on separate rows', () => {
-    const segments = buildFindingSegments(CROSSING, crossingFindings);
-
-    expect(
-      segments.map(({ text, findings }) => [text, findings?.map(({ lane, ends }) => [lane, ends])]),
-    ).toEqual([
-      ['Status of ', undefined],
-      ['Project ', [[0, false]]],
-      [
-        'Phoenix',
-        [
-          [0, true],
-          [1, false],
-        ],
-      ],
-      [' Secret', [[1, true]]],
-      [' today', undefined],
+  it('redacts each finding in the text and keeps the text around it', () => {
+    const project = finding({ action: 'WARN', replacement: undefined });
+    const segments = buildRedactedSegments('Discuss Project Acme now', [
+      project,
+      finding({ start: 30, end: 34 }),
+      finding({ location: '/messages/1/content' }),
     ]);
+
+    expect(segments).toEqual([
+      { text: 'Discuss ' },
+      { text: 'Project Acme', finding: project },
+      { text: ' now' },
+    ]);
+    expect(sentText(segments)).toBe('Discuss Project Acme now');
   });
 
   it('uses Unicode code-point offsets supplied by the governance backend', () => {
-    const segments = buildFindingSegments('🙂 Email me@example.com', [
+    const segments = buildRedactedSegments('🙂 Email me@example.com', [
       finding({ start: 8, end: 22, category: 'EMAIL_ADDRESS' }),
     ]);
 
     expect(segments[1].text).toBe('me@example.com');
   });
 
-  it('keys each value by its category, ignoring case and spacing', () => {
-    const [first, second, outside] = keyFindings('Acme Corp and ACME  corp', [
-      finding({ start: 0, end: 9 }),
-      finding({ start: 14, end: 24 }),
-      finding({ start: 40, end: 44 }),
-    ]);
-
-    expect(first.key).toBeDefined();
-    expect(first.key).toBe(second.key);
-    expect(outside.key).toBeUndefined();
-  });
-
-  it('redacts each value the gateway replaces, with every finding it covers', () => {
+  it('redacts each value the gateway replaces like the gateway masks it', () => {
     const [later, earlier] = crossingFindings;
-    const segments = buildMaskedSegments(CROSSING, crossingFindings);
+    const segments = buildRedactedSegments(CROSSING, crossingFindings);
 
     expect(segments).toEqual([
       { text: 'Status of ' },
-      { text: 'Project Phoenix', replaced: earlier, covers: [earlier, later] },
+      { text: 'Project Phoenix', finding: earlier },
       { text: ' ' },
-      { text: 'Secret', replaced: later, covers: [later] },
+      { text: 'Secret', finding: later },
       { text: ' today' },
     ]);
     expect(sentText(segments)).toBe('Status of [TERM] [TERM] today');
   });
 
-  it('underlines the unmasked rest of a finding that a redacted value partly covers', () => {
+  it('redacts the rest of a finding that a replaced value partly covers', () => {
     const [term, email] = overlapFindings;
-    const segments = buildMaskedSegments(OVERLAP, overlapFindings);
+    const segments = buildRedactedSegments(OVERLAP, overlapFindings);
 
     expect(segments).toEqual([
-      { text: 'alfa romeo', replaced: term, covers: [term, email] },
-      { text: '@example.com', findings: [{ finding: email, lane: 0, ends: true }] },
+      { text: 'alfa romeo', finding: term },
+      { text: '@example.com', finding: email },
     ]);
     expect(sentText(segments)).toBe('[overlap test]@example.com');
+  });
+
+  it('keeps the text that findings without a replacement share in the earlier bar', () => {
+    const [later, earlier] = crossingFindings.map((f) => ({ ...f, replacement: undefined }));
+    const segments = buildRedactedSegments(CROSSING, [later, earlier]);
+
+    expect(segments).toEqual([
+      { text: 'Status of ' },
+      { text: 'Project Phoenix', finding: earlier },
+      { text: ' Secret', finding: later },
+      { text: ' today' },
+    ]);
+    expect(sentText(segments)).toBe(CROSSING);
   });
 
   it('groups the findings of each file by category and action, with distinct values', () => {
@@ -228,29 +220,43 @@ describe('DlpInterventionDialog', () => {
     expect(within(prompt).queryByText('Project Acme')).toBeNull();
   });
 
-  it('does not provide a continuation action for BLOCK', () => {
+  it('redacts a blocked prompt the same way, without a continuation action', () => {
+    const iban = 'DE89370400440532013000';
     render(
       <DlpInterventionDialog
         result={{
           decision: 'BLOCK',
-          findings: [finding({ action: 'BLOCK', replacement: undefined })],
+          findings: [
+            finding({ action: 'BLOCK', replacement: undefined }),
+            finding({ start: 26, end: 48, category: 'IBAN_CODE', replacement: '[IBAN]' }),
+          ],
         }}
-        originalText="Discuss Project Acme now"
+        originalText={`Discuss Project Acme, pay ${iban}`}
         onCancel={jest.fn()}
         onConfirm={jest.fn()}
       />,
     );
 
-    expect(screen.getByText('Project Acme', { selector: 'mark' })).toHaveAttribute(
-      'title',
-      'com_ui_dlp_category_project_name · com_ui_dlp_decision_block',
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_original_prompt' });
+    const bar = barOf(within(prompt).getByText(PROJECT_TOKEN));
+    expect(prompt.textContent).toBe(
+      `Discuss ${PROJECT_TOKEN} (com_ui_dlp_category_project_name · com_ui_dlp_decision_block)` +
+        ', pay [IBAN] (com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask)',
     );
+    expect(bar).toHaveClass(...REDACTED);
+    expect(barOf(within(prompt).getByText('[IBAN]'))).toHaveClass(...REDACTED);
+    expect(screen.queryByText('Project Acme')).toBeNull();
+    expect(screen.queryByText(iban)).toBeNull();
+
+    fireEvent.mouseEnter(bar);
+    expect(barOf(screen.getByText('Project Acme'))).toBe(bar);
+    expect(bar).toHaveClass(BLOCK_HIGHLIGHT);
+
     expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toBeNull();
   });
 
-  it('shows a card per attached file without a masked prompt when the text has no findings', () => {
+  it('shows a card per attached file above the prompt', () => {
     const sheet = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     render(
       <DlpInterventionDialog
@@ -284,15 +290,15 @@ describe('DlpInterventionDialog', () => {
     expect(screen.getByText('Document')).toBeInTheDocument();
     expect(screen.getByText('Spreadsheet')).toBeInTheDocument();
     const files = screen.getByRole('region', { name: 'com_ui_dlp_file_findings' });
-    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_original_prompt' });
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
     expect(files.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(prompt.textContent).toBe('Summarize');
     expect(
       screen.getByText('com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask × 2'),
     ).toBeInTheDocument();
     expect(
       screen.getByText('com_ui_dlp_category_phone_number · com_ui_dlp_decision_warn'),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toBeNull();
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
   });
 
@@ -421,7 +427,7 @@ describe('DlpInterventionDialog', () => {
       <DlpInterventionDialog
         result={{
           decision: 'WARN',
-          findings: [finding({ category: 'VAT_ID', action: 'WARN' })],
+          findings: [finding({ category: 'VAT_ID', action: 'WARN', replacement: undefined })],
         }}
         originalText="Discuss Project Acme now"
         onCancel={jest.fn()}
@@ -429,11 +435,8 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('Project Acme', { selector: 'mark' })).toHaveAttribute(
-      'title',
-      'VAT ID · com_ui_dlp_decision_warn → [CONFIDENTIAL]',
-    );
-    expect(screen.getByText('(VAT ID · com_ui_dlp_decision_warn)')).toHaveClass('sr-only');
+    const bar = barOf(screen.getByText('[VAT ID]'));
+    expect(within(bar).getByText('(VAT ID · com_ui_dlp_decision_warn)')).toHaveClass('sr-only');
   });
 
   it('shows custom categories by their display names, never by their keys', () => {
@@ -503,8 +506,9 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
+    const bar = barOf(screen.getByText('[com_ui_dlp_category_custom_term]'));
     expect(
-      screen.getByText('(com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn)'),
+      within(bar).getByText('(com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn)'),
     ).toHaveClass('sr-only');
     expect(
       screen.getByText('com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn'),
@@ -512,7 +516,7 @@ describe('DlpInterventionDialog', () => {
     expect(document.body.innerHTML).not.toContain('CUSTOM_');
   });
 
-  it('labels text that overlapping findings share with each of them', () => {
+  it('redacts a warned prompt the same way, the text findings share in one bar', () => {
     render(
       <DlpInterventionDialog
         result={{
@@ -520,19 +524,31 @@ describe('DlpInterventionDialog', () => {
           findings: crossingFindings.map((f) =>
             finding({ ...f, action: 'WARN', replacement: undefined }),
           ),
+          maskedPreview: [{ location: '/messages/0/content', text: CROSSING }],
         }}
         originalText={CROSSING}
         onCancel={jest.fn()}
         onConfirm={jest.fn()}
       />,
     );
-    const label = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_warn';
+    const label = '(com_ui_dlp_category_project_name · com_ui_dlp_decision_warn)';
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_original_prompt' });
+    const [first, second] = within(prompt).getAllByText(PROJECT_TOKEN).map(barOf);
 
-    expect(screen.getByText('Phoenix', { selector: 'mark' })).toHaveAttribute(
-      'title',
-      `${label}\n${label}`,
+    expect(prompt.textContent).toBe(
+      `Status of ${PROJECT_TOKEN} ${label}${PROJECT_TOKEN} ${label} today`,
     );
-    expect(screen.getAllByText(`(${label})`)).toHaveLength(2);
+    expect(first).toHaveClass(...REDACTED);
+    expect(second).toHaveClass(...REDACTED);
+
+    fireEvent.mouseEnter(first);
+    expect(barOf(screen.getByText('Project Phoenix'))).toBe(first);
+    expect(first).toHaveClass(WARN_HIGHLIGHT);
+    expect(showsToken(second)).toBe(true);
+
+    fireEvent.mouseEnter(second);
+    expect(barOf(screen.getByText('Secret'))).toBe(second);
+    expect(showsToken(first)).toBe(true);
   });
 
   it('sets overlapping masked values like the gateway replaces them', () => {
@@ -646,7 +662,7 @@ describe('DlpInterventionDialog', () => {
     });
   });
 
-  it('lights only the hovered bar, and the unmasked rest of a finding it covers', () => {
+  it('lights only the hovered bar, also beside the bar of a value the gateway replaces', () => {
     render(
       <DlpInterventionDialog
         result={{
@@ -660,20 +676,20 @@ describe('DlpInterventionDialog', () => {
       />,
     );
     const bar = barOf(screen.getByText('[overlap test]'));
-    const rest = screen.getByText('@example.com', { selector: 'mark' });
-    expect(rest).toHaveAttribute('title', EMAIL_WARN);
-    expect(rest.parentElement).toHaveClass('border-aimo-warn');
+    const rest = barOf(screen.getByText(EMAIL_TOKEN));
+    expect(within(rest).getByText(`(${EMAIL_WARN})`)).toHaveClass('sr-only');
 
     fireEvent.mouseEnter(rest);
+    expect(barOf(screen.getByText('@example.com'))).toBe(rest);
     expect(rest).toHaveClass(WARN_HIGHLIGHT);
     expect(showsToken(bar)).toBe(true);
     expect(bar).toHaveClass(...REDACTED);
 
-    fireEvent.mouseLeave(rest);
     fireEvent.mouseEnter(bar);
     expect(barOf(screen.getByText('alfa romeo'))).toBe(bar);
     expect(bar).toHaveClass(MASK_HIGHLIGHT);
-    expect(rest).toHaveClass(WARN_HIGHLIGHT);
+    expect(showsToken(rest)).toBe(true);
+    expect(rest).toHaveClass(...REDACTED);
   });
 
   it('lights no file badge while a bar with its value is hovered, and no bar while it is', () => {
@@ -719,7 +735,15 @@ describe('DlpInterventionDialog', () => {
       <DlpInterventionDialog
         result={{
           decision: 'WARN',
-          findings: [finding({ start: 5, end: 20, category: 'EMAIL_ADDRESS', action: 'WARN' })],
+          findings: [
+            finding({
+              start: 5,
+              end: 20,
+              category: 'EMAIL_ADDRESS',
+              action: 'WARN',
+              replacement: undefined,
+            }),
+          ],
           fileFindings: [
             {
               filename: 'notes.txt',
@@ -737,12 +761,13 @@ describe('DlpInterventionDialog', () => {
     );
     const lit = () => document.getElementsByClassName(WARN_HIGHLIGHT);
     const badge = screen.getByRole('button', { name: EMAIL_WARN });
-    const inPrompt = screen.getByText('max@example.com', { selector: 'mark' });
+    const bar = barOf(screen.getByText(EMAIL_TOKEN));
 
-    fireEvent.mouseEnter(inPrompt);
-    expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
+    fireEvent.mouseEnter(bar);
+    expect(bar).toHaveClass(WARN_HIGHLIGHT);
     expect(badge).not.toHaveClass(WARN_HIGHLIGHT);
-    fireEvent.mouseLeave(inPrompt);
+    act(() => screen.getByRole('button', { name: 'com_ui_cancel' }).focus());
+    fireEvent.mouseMove(document, { clientX: 500, clientY: 500 });
 
     fireEvent.mouseEnter(badge);
     const inFile = within(screen.getByRole('dialog', { name: EMAIL_WARN })).getByText(
@@ -752,5 +777,6 @@ describe('DlpInterventionDialog', () => {
 
     fireEvent.mouseEnter(inFile);
     expect(lit()).toHaveLength(0);
+    expect(showsToken(bar)).toBe(true);
   });
 });
