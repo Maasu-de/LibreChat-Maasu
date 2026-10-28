@@ -86,7 +86,7 @@ const COPY = {
 
 /** The box that holds both the original and the masked prompt. */
 const PROMPT_BOX =
-  'whitespace-pre-wrap break-words rounded-xl bg-aimo-fill px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
+  'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
 const BADGE =
   'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em] transition-colors';
 
