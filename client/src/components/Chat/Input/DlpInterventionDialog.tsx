@@ -19,10 +19,10 @@ import FilePreview from './Files/FilePreview';
 import { cn, getFileType } from '~/utils';
 import { useLocalize } from '~/hooks';
 
-/** An original value in the prompt, set as a redaction bar for the finding that took it. */
-type RedactedValue = { text: string; finding: GovernanceFinding };
-/** The prompt: text without findings, and redacted values. */
-type PromptSegment = { text: string } | RedactedValue;
+/** An original value in the prompt, with the finding that took it. */
+type FoundValue = { text: string; finding: GovernanceFinding };
+/** The prompt: text without findings, and found values. */
+type PromptSegment = { text: string } | FoundValue;
 /** The redacted value shown in the text, and the place its bar took before the text reflowed. */
 type RevealedValue = { index: number; bar: DOMRect[]; element: HTMLElement };
 /** The findings of one category and action in a file, with the distinct values they matched. */
@@ -39,6 +39,7 @@ type ActionStyle = { chip: string; highlight: string };
 const VISIBLE_TERMS = 50;
 /** Grace period so moving the pointer from a badge to its popup doesn't close it. */
 const CLOSE_DELAY_MS = 120;
+const SEVERITY: GovernanceDecision[] = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
 
 const label = (category: string) => category.replaceAll('_', ' ');
 
@@ -77,19 +78,21 @@ const COPY = {
 const PROMPT_BOX =
   'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
 /**
- * A finding in the prompt, set in ink like a redaction bar. The bar never breaks across lines,
- * so a revealed value no wider than it takes exactly its place.
+ * A value the gateway replaces, set in ink like a redaction bar. The bar never breaks across
+ * lines, so a revealed value no wider than it takes exactly its place.
  */
 const REDACTION =
   'inline-grid max-w-full justify-items-center rounded-sm px-1 py-0.5 leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy';
 const REDACTED = 'bg-text-primary text-surface-primary';
+/** A value the gateway keeps, readable on the color of its finding's action. */
+const FLAGGED = 'rounded-sm box-decoration-clone px-0.5 text-inherit';
 const BADGE =
   'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em] transition-colors';
 
 const ACTION_STYLE: Record<GovernanceDecision, ActionStyle> = {
   ALLOW: {
     chip: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
-    highlight: 'bg-aimo-green/25',
+    highlight: 'bg-aimo-green/30',
   },
   MASK: {
     chip: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
@@ -97,11 +100,11 @@ const ACTION_STYLE: Record<GovernanceDecision, ActionStyle> = {
   },
   WARN: {
     chip: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
-    highlight: 'bg-aimo-warn/25',
+    highlight: 'bg-aimo-warn/40',
   },
   BLOCK: {
     chip: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
-    highlight: 'bg-aimo-block/20',
+    highlight: 'bg-aimo-block/30',
   },
 };
 
@@ -110,6 +113,9 @@ const isAt = (x: number, y: number) => (rect: DOMRect) =>
 
 const byPosition = (a: GovernanceFinding, b: GovernanceFinding) =>
   a.start - b.start || b.end - a.end;
+
+const bySeverity = (a: GovernanceFinding, b: GovernanceFinding) =>
+  SEVERITY.indexOf(b.action) - SEVERITY.indexOf(a.action) || byPosition(a, b);
 
 const isInText = (chars: string[], f: GovernanceFinding) =>
   f.location === GOVERNANCE_DLP_TEXT_LOCATION &&
@@ -134,21 +140,18 @@ const uniqueTerms = (category: string, terms: string[]) => {
 };
 
 /**
- * Splits the text into what has no findings and a redacted value per finding, in text order. A
- * value the gateway replaces takes the range the gateway masks; any other finding takes what no
- * replaced or earlier finding took, so text that findings share is in one bar.
+ * Splits the text into what has no findings and a value per finding, in text order. A value the
+ * gateway replaces takes the range the gateway masks; any other finding takes what no replaced,
+ * more severe or earlier finding took.
  */
-export function buildRedactedSegments(
-  text: string,
-  findings: GovernanceFinding[],
-): PromptSegment[] {
+export function buildPromptSegments(text: string, findings: GovernanceFinding[]): PromptSegment[] {
   const chars = Array.from(text);
   const inText = findings.filter((finding) => isInText(chars, finding));
   const owners = new Array<GovernanceFinding | undefined>(chars.length);
   for (const { start, end, finding } of getGovernanceMaskRanges(chars, inText)) {
     owners.fill(finding, start, end);
   }
-  const kept = inText.filter(({ replacement }) => replacement === undefined).sort(byPosition);
+  const kept = inText.filter(({ replacement }) => replacement === undefined).sort(bySeverity);
   for (const finding of kept) {
     for (let i = finding.start; i < Math.min(finding.end, chars.length); i++) {
       owners[i] ??= finding;
@@ -333,9 +336,9 @@ export default function DlpInterventionDialog({
   const maskedText = result.maskedPreview?.find(
     (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
   )?.text;
-  /** The prompt with every finding redacted; when it is masked, exactly as it will be sent. */
+  /** The prompt with its findings; when it is masked, exactly as it will be sent. */
   const promptSegments = useMemo(() => {
-    const segments = buildRedactedSegments(originalText, result.findings);
+    const segments = buildPromptSegments(originalText, result.findings);
     const unlike =
       decision === 'MASK' && maskedText !== undefined && sentText(segments) !== maskedText;
     return unlike ? [{ text: maskedText }] : segments;
@@ -359,12 +362,11 @@ export default function DlpInterventionDialog({
   }, [revealed]);
 
   /**
-   * A finding in the prompt is set like a redaction bar, with the gateway's replacement or, when
-   * the value is not replaced, its category. While the pointer is on it, or it has focus, the
-   * original value takes its place, centered on the bar's width when it is shorter, so the text
-   * after it doesn't move. Only that bar lights up, never other bars.
+   * A value the gateway replaces is set like a redaction bar with its replacement. While the
+   * pointer is on it, or it has focus, the original value takes its place, centered on the bar's
+   * width when it is shorter, so the text after it doesn't move. Only that bar lights up.
    */
-  const renderRedacted = ({ text, finding }: RedactedValue, index: number) => {
+  const renderRedacted = ({ text, finding }: FoundValue, index: number) => {
     const shown = revealed?.index === index;
     const reveal = ({ currentTarget }: SyntheticEvent<HTMLElement>) => {
       const bar = Array.from(currentTarget.getClientRects());
@@ -388,7 +390,7 @@ export default function DlpInterventionDialog({
           aria-hidden={shown || undefined}
           className={cn('font-semibold [grid-area:1/1]', shown && 'invisible')}
         >
-          {finding.replacement ?? `[${categoryLabel(finding)}]`}
+          {finding.replacement}
         </span>
         {shown && <span className="[grid-area:1/1]">{text}</span>}
         <span className="sr-only">{` (${findingLabel(finding)})`}</span>
@@ -396,8 +398,21 @@ export default function DlpInterventionDialog({
     );
   };
 
-  const renderSegment = (segment: PromptSegment, index: number) =>
-    'finding' in segment ? renderRedacted(segment, index) : <span key={index}>{segment.text}</span>;
+  const renderFlagged = ({ text, finding }: FoundValue, index: number) => (
+    <mark key={index} className={cn(FLAGGED, ACTION_STYLE[finding.action].highlight)}>
+      {text}
+      <span className="sr-only">{` (${findingLabel(finding)})`}</span>
+    </mark>
+  );
+
+  const renderSegment = (segment: PromptSegment, index: number) => {
+    if (!('finding' in segment)) {
+      return <span key={index}>{segment.text}</span>;
+    }
+    return segment.finding.replacement === undefined
+      ? renderFlagged(segment, index)
+      : renderRedacted(segment, index);
+  };
 
   /** A badge per finding group, whose popup only lists its values: nothing lights up with them. */
   const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
