@@ -676,7 +676,7 @@ describe('DlpInterventionDialog', () => {
     expect(rest).toHaveClass(WARN_HIGHLIGHT);
   });
 
-  it('lights the file badge of a hovered bar, but no bar while the badge is hovered', () => {
+  it('lights no file badge while a bar with its value is hovered, and no bar while it is', () => {
     const iban = 'DE89370400440532013000';
     const ibanMask = 'com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask';
     render(
@@ -704,16 +704,17 @@ describe('DlpInterventionDialog', () => {
     const bar = barOf(screen.getByText('[IBAN]'));
 
     fireEvent.mouseEnter(badge);
+    expect(screen.getByRole('dialog', { name: ibanMask })).toHaveTextContent(iban);
     expect(bar).toHaveClass(...REDACTED);
     expect(showsToken(bar)).toBe(true);
     fireEvent.mouseLeave(badge);
 
     fireEvent.mouseEnter(bar);
     expect(bar).toHaveClass(MASK_HIGHLIGHT);
-    expect(badge).toHaveClass(MASK_HIGHLIGHT);
+    expect(badge).not.toHaveClass(MASK_HIGHLIGHT);
   });
 
-  it('links the values of a file badge to the same values in the prompt', () => {
+  it('only shows the values of a file badge, lighting neither them nor the prompt', () => {
     render(
       <DlpInterventionDialog
         result={{
@@ -734,23 +735,22 @@ describe('DlpInterventionDialog', () => {
         onConfirm={jest.fn()}
       />,
     );
-
+    const lit = () => document.getElementsByClassName(WARN_HIGHLIGHT);
     const badge = screen.getByRole('button', { name: EMAIL_WARN });
     const inPrompt = screen.getByText('max@example.com', { selector: 'mark' });
 
     fireEvent.mouseEnter(inPrompt);
-    expect(badge).toHaveClass(WARN_HIGHLIGHT);
-    fireEvent.mouseLeave(inPrompt);
+    expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
     expect(badge).not.toHaveClass(WARN_HIGHLIGHT);
+    fireEvent.mouseLeave(inPrompt);
 
     fireEvent.mouseEnter(badge);
-    expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
+    const inFile = within(screen.getByRole('dialog', { name: EMAIL_WARN })).getByText(
+      'MAX@example.com',
+    );
+    expect(lit()).toHaveLength(0);
 
-    const inFile = screen.getByText('MAX@example.com', { selector: 'li span' });
-    fireEvent.mouseLeave(badge);
-    expect(inPrompt).not.toHaveClass(WARN_HIGHLIGHT);
     fireEvent.mouseEnter(inFile);
-    expect(inPrompt).toHaveClass(WARN_HIGHLIGHT);
-    expect(inFile).toHaveClass(WARN_HIGHLIGHT);
+    expect(lit()).toHaveLength(0);
   });
 });
