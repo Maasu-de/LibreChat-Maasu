@@ -6,12 +6,13 @@ import {
   extractEnvVariable,
   normalizeEndpointName,
 } from 'librechat-data-provider';
-import type { TModelsConfig, TEndpoint } from 'librechat-data-provider';
+import type { GovernanceModelsConfig, TModelsConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, GetUserKeyValuesFunction, UserKeyValues } from '~/types';
 import type { FetchModelsParams } from '~/endpoints/models';
 import { fetchModels as defaultFetchModels } from '~/endpoints/models';
 import { getTokenConfigKey } from '~/endpoints/custom/initialize';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { validateEndpointURL } from '~/auth';
 import { tokenConfigCache } from '~/cache';
 import { isUserProvided } from '~/utils';
@@ -55,7 +56,10 @@ export interface LoadConfigModelsDeps {
 export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
   const { getAppConfig, getUserKeyValues, fetchModels = defaultFetchModels } = deps;
 
-  return async function loadConfigModels(req: ServerRequest): Promise<TModelsConfig> {
+  return async function loadConfigModels(
+    req: ServerRequest,
+    metadata?: GovernanceModelsConfig,
+  ): Promise<TModelsConfig> {
     const appConfig =
       req.config ??
       (await getAppConfig({
@@ -68,6 +72,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
     }
 
     const modelsConfig: TModelsConfig = {};
+    const fetchedMetadata: GovernanceModelsConfig = {};
     const azureConfig = appConfig.endpoints?.[EModelEndpoint.azureOpenAI];
     const { modelNames } = azureConfig ?? {};
 
@@ -187,6 +192,13 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
           const tokenKey = getTokenConfigKey(endpoint, name, req.user?.id ?? '', tenantId);
           uniqueKeyToTokenKey[uniqueKey] = tokenKey;
           fetchPromisesMap[uniqueKey] = fetchModels({
+            ...(metadata
+              ? {
+                  onModels: (data) => {
+                    fetchedMetadata[uniqueKey] = data;
+                  },
+                }
+              : {}),
             name,
             apiKey: API_KEY,
             baseURL: BASE_URL,
@@ -224,6 +236,13 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
                 );
               }
               return fetchModels({
+                ...(metadata
+                  ? {
+                      onModels: (data) => {
+                        fetchedMetadata[userFetchKey] = data;
+                      },
+                    }
+                  : {}),
                 name,
                 apiKey: resolvedApiKey,
                 baseURL: resolvedBaseURL,
@@ -275,7 +294,10 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
         const defaults = (endpoint.models?.default ?? []).map((m) =>
           typeof m === 'string' ? m : m.name,
         );
-        modelsConfig[name] = !modelData?.length ? defaults : modelData;
+        modelsConfig[name] = isGovernancePilotEnabled() || modelData?.length ? modelData : defaults;
+        if (metadata) {
+          metadata[name] = fetchedMetadata[currentKey] ?? [];
+        }
       }
 
       /** A shared fetch caches token config under one endpoint's tokenKey;
