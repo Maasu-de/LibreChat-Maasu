@@ -554,8 +554,9 @@ describe('DlpInterventionDialog', () => {
 
     fireEvent.mouseEnter(second);
     expect(barOf(screen.getByText('Secret'))).toBe(second);
+    expect(second).toHaveClass(MASK_HIGHLIGHT);
     expect(showsToken(first)).toBe(true);
-    expect(first).toHaveClass(MASK_HIGHLIGHT);
+    expect(first).toHaveClass(...REDACTED);
 
     fireEvent.mouseEnter(first);
     expect(barOf(screen.getByText('Project Phoenix'))).toBe(first);
@@ -645,7 +646,7 @@ describe('DlpInterventionDialog', () => {
     });
   });
 
-  it('lights a bar while the unmasked rest of a finding it covers is hovered', () => {
+  it('lights only the hovered bar, and the unmasked rest of a finding it covers', () => {
     render(
       <DlpInterventionDialog
         result={{
@@ -664,19 +665,18 @@ describe('DlpInterventionDialog', () => {
     expect(rest.parentElement).toHaveClass('border-aimo-warn');
 
     fireEvent.mouseEnter(rest);
-    expect(bar).toHaveClass(WARN_HIGHLIGHT);
-    expect(showsToken(bar)).toBe(true);
     expect(rest).toHaveClass(WARN_HIGHLIGHT);
+    expect(showsToken(bar)).toBe(true);
+    expect(bar).toHaveClass(...REDACTED);
 
     fireEvent.mouseLeave(rest);
-    expect(bar).toHaveClass(...REDACTED);
     fireEvent.mouseEnter(bar);
     expect(barOf(screen.getByText('alfa romeo'))).toBe(bar);
     expect(bar).toHaveClass(MASK_HIGHLIGHT);
     expect(rest).toHaveClass(WARN_HIGHLIGHT);
   });
 
-  it('links the masked values of a file badge to their bars in the prompt', () => {
+  it('lights the file badge of a hovered bar, but no bar while the badge is hovered', () => {
     const iban = 'DE89370400440532013000';
     const ibanMask = 'com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask';
     render(
@@ -704,12 +704,12 @@ describe('DlpInterventionDialog', () => {
     const bar = barOf(screen.getByText('[IBAN]'));
 
     fireEvent.mouseEnter(badge);
-    expect(bar).toHaveClass(MASK_HIGHLIGHT);
+    expect(bar).toHaveClass(...REDACTED);
     expect(showsToken(bar)).toBe(true);
     fireEvent.mouseLeave(badge);
-    expect(bar).toHaveClass(...REDACTED);
 
     fireEvent.mouseEnter(bar);
+    expect(bar).toHaveClass(MASK_HIGHLIGHT);
     expect(badge).toHaveClass(MASK_HIGHLIGHT);
   });
 
