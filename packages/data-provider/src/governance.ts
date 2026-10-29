@@ -1,4 +1,4 @@
-import type { GovernanceFinding } from './types/governance';
+import type { GovernanceFinding, GovernanceMaskedSpan } from './types/governance';
 
 /** The characters Python's `str.isspace()` matches, which the gateway skips when trimming. */
 const GATEWAY_WHITESPACE =
@@ -45,14 +45,33 @@ export function getGovernanceMaskRanges(
   return ranges;
 }
 
-/** Applies each finding's replacement to the text like the gateway, using code-point offsets. */
-export function maskGovernanceText(text: string, findings: GovernanceFinding[]): string {
+/**
+ * Applies each finding's replacement to the text like the gateway, using code-point offsets, and
+ * gives the range each replacement takes in the masked text.
+ */
+export function getGovernanceMasking(
+  text: string,
+  findings: GovernanceFinding[],
+): { text: string; masks: GovernanceMaskedSpan[] } {
   const chars = Array.from(text);
+  const masks: GovernanceMaskedSpan[] = [];
   let masked = '';
   let cursor = 0;
+  let offset = 0;
   for (const { start, end, finding } of getGovernanceMaskRanges(chars, findings)) {
-    masked += chars.slice(cursor, start).join('') + (finding.replacement ?? '');
+    const replacement = finding.replacement ?? '';
+    const length = Array.from(replacement).length;
+    offset += start - cursor;
+    if (length > 0) {
+      masks.push({ start: offset, end: offset + length, category: finding.category, replacement });
+    }
+    masked += chars.slice(cursor, start).join('') + replacement;
+    offset += length;
     cursor = end;
   }
-  return masked + chars.slice(cursor).join('');
+  return { text: masked + chars.slice(cursor).join(''), masks };
 }
+
+/** Applies each finding's replacement to the text like the gateway, using code-point offsets. */
+export const maskGovernanceText = (text: string, findings: GovernanceFinding[]): string =>
+  getGovernanceMasking(text, findings).text;
