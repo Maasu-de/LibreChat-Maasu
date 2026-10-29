@@ -364,10 +364,31 @@ it.each([savedConversation, newConversation])(
 
     expect(setSubmission).toHaveBeenCalledTimes(1);
     expect(lastSubmission().userMessage.text).toBe(maskedEmail);
+    expect(lastSubmission().userMessage.dlpMasks).toEqual([
+      { start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' },
+    ]);
     expect(lastSubmission().dlpReviewId).toBe('review-1');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   },
 );
+
+it('puts no masks on the sent message when the approved text is not masked like the review', () => {
+  const review = maskReview(savedConversation.conversationId);
+  const gatewayText = 'Please email [REDACTED] today';
+  renderChat(savedConversation, {
+    ...review,
+    result: {
+      ...review.result,
+      maskedPreview: [{ location: '/messages/0/content', text: gatewayText }],
+    },
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+  expect(lastSubmission().userMessage.text).toBe(gatewayText);
+  expect(lastSubmission().userMessage.dlpMasks).toBeUndefined();
+});
 
 it('shows the review again when its approved send fails, so it can be sent again', () => {
   renderChat(savedConversation, maskReview(savedConversation.conversationId));
