@@ -4,6 +4,7 @@ import { DelayedRender } from '@librechat/client';
 import type { TMessage } from 'librechat-data-provider';
 import type { TMessageContentProps, TDisplayProps } from '~/common';
 import Error from '~/components/Messages/Content/Error';
+import MaskedText, { getMaskedSegments } from './MaskedText';
 import { useMessageContext } from '~/Providers';
 import MarkdownLite from './MarkdownLite';
 import EditMessage from './EditMessage';
@@ -100,15 +101,24 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
     [showCursor, isSubmitting],
   );
 
+  /** A masked message shows as plain text: its masks are ranges of the text, not of markdown. */
+  const maskedSegments = useMemo(
+    () => (isCreatedByUser ? getMaskedSegments(text, message.dlpMasks) : undefined),
+    [isCreatedByUser, text, message.dlpMasks],
+  );
+
   const content = useMemo(() => {
     if (!isCreatedByUser) {
       return <Markdown content={text} isLatestMessage={isLatestMessage} />;
+    }
+    if (maskedSegments) {
+      return <MaskedText segments={maskedSegments} />;
     }
     if (enableUserMsgMarkdown) {
       return <MarkdownLite content={text} />;
     }
     return <>{text}</>;
-  }, [isCreatedByUser, enableUserMsgMarkdown, text, isLatestMessage]);
+  }, [isCreatedByUser, maskedSegments, enableUserMsgMarkdown, text, isLatestMessage]);
 
   return (
     <Container message={message}>
@@ -117,7 +127,7 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
           'markdown prose message-content dark:prose-invert light w-full break-words',
           isSubmitting && 'submitting',
           showCursorState && text.length > 0 && 'result-streaming',
-          isCreatedByUser && !enableUserMsgMarkdown && 'whitespace-pre-wrap',
+          isCreatedByUser && (!enableUserMsgMarkdown || maskedSegments) && 'whitespace-pre-wrap',
           isCreatedByUser ? 'dark:text-gray-20' : 'dark:text-gray-100',
         )}
       >
