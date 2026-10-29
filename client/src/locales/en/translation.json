@@ -1082,6 +1082,7 @@
   "com_ui_dlp_category_client_name": "Client name",
   "com_ui_dlp_category_code_name": "Code name",
   "com_ui_dlp_category_credit_card": "Credit card",
+  "com_ui_dlp_category_custom_term": "Custom confidential term",
   "com_ui_dlp_category_email_address": "Email address",
   "com_ui_dlp_category_iban_code": "IBAN",
   "com_ui_dlp_category_phone_number": "Phone number",
