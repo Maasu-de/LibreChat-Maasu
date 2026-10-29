@@ -1,4 +1,5 @@
 import React from 'react';
+import userEvent from '@testing-library/user-event';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { GovernanceFinding } from 'librechat-data-provider';
 import DlpInterventionDialog, {
@@ -195,7 +196,7 @@ describe('DlpInterventionDialog', () => {
     expect(prompt.textContent).toBe(`Discuss [CONFIDENTIAL] (${PROJECT_MASK}) now`);
     expect(bar).toHaveClass(...REDACTED);
     expect(screen.queryByText('Project Acme')).toBeNull();
-    expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' })).toHaveFocus();
 
     fireEvent.click(screen.getByText('com_ui_dlp_send_masked'));
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -336,6 +337,78 @@ describe('DlpInterventionDialog', () => {
     expect(within(popup).getByText('com_ui_dlp_more_terms 3')).toBeInTheDocument();
   });
 
+  describe('keyboard', () => {
+    const renderDecision = (decision: 'MASK' | 'BLOCK') => {
+      const onCancel = jest.fn();
+      const onConfirm = jest.fn();
+      render(
+        <DlpInterventionDialog
+          result={{
+            decision,
+            findings: [finding({ action: decision })],
+            maskedPreview: [
+              { location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' },
+            ],
+          }}
+          originalText="Discuss Project Acme now"
+          onCancel={onCancel}
+          onConfirm={onConfirm}
+        />,
+      );
+      return { onCancel, onConfirm };
+    };
+    const dialog = () => screen.getByRole('dialog', { name: /^com_ui_dlp_/ });
+
+    it('sends on Enter from the focused send button, once', async () => {
+      const { onCancel, onConfirm } = renderDecision('MASK');
+      expect(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' })).toHaveFocus();
+
+      await userEvent.setup().keyboard('{Enter}');
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it('sends on Enter from anywhere in the dialog but another button', () => {
+      const { onCancel, onConfirm } = renderDecision('MASK');
+
+      fireEvent.keyDown(dialog(), { key: 'Enter' });
+      fireEvent.keyDown(barOf(screen.getByText('[CONFIDENTIAL]')), { key: 'Enter' });
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+
+      fireEvent.keyDown(screen.getByRole('button', { name: 'com_ui_cancel' }), { key: 'Enter' });
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it('never sends on a held Enter', () => {
+      const { onConfirm } = renderDecision('MASK');
+      const send = screen.getByRole('button', { name: 'com_ui_dlp_send_masked' });
+
+      expect(fireEvent.keyDown(send, { key: 'Enter', repeat: true })).toBe(false);
+      expect(fireEvent.keyDown(dialog(), { key: 'Enter', repeat: true })).toBe(false);
+      expect(onConfirm).not.toHaveBeenCalled();
+    });
+
+    it('cancels on Escape', () => {
+      const { onCancel, onConfirm } = renderDecision('MASK');
+
+      fireEvent.keyDown(dialog(), { key: 'Escape' });
+      expect(onCancel).toHaveBeenCalledTimes(1);
+      expect(onConfirm).not.toHaveBeenCalled();
+    });
+
+    it('only closes a blocked prompt, focused on close', () => {
+      const { onCancel, onConfirm } = renderDecision('BLOCK');
+      expect(screen.getByRole('button', { name: 'com_ui_close' })).toHaveFocus();
+
+      fireEvent.keyDown(dialog(), { key: 'Enter' });
+      expect(onConfirm).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(dialog(), { key: 'Escape' });
+      expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('popup of a file finding badge', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
@@ -364,9 +437,9 @@ describe('DlpInterventionDialog', () => {
     const popup = () => screen.queryByRole('dialog', { name: EMAIL_WARN });
     const wait = (ms: number) => act(() => jest.advanceTimersByTime(ms));
 
-    it('leaves the initial focus on cancel', () => {
+    it('leaves the initial focus on the button that sends', () => {
       renderFileFinding();
-      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+      expect(screen.getByRole('button', { name: 'com_ui_dlp_continue' })).toHaveFocus();
     });
 
     it('opens on hover without taking focus, and closes when the pointer leaves', () => {
@@ -375,7 +448,7 @@ describe('DlpInterventionDialog', () => {
 
       fireEvent.mouseEnter(badge);
       expect(popup()).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+      expect(screen.getByRole('button', { name: 'com_ui_dlp_continue' })).toHaveFocus();
 
       fireEvent.mouseLeave(badge);
       fireEvent.mouseEnter(popup() as HTMLElement);
@@ -385,7 +458,7 @@ describe('DlpInterventionDialog', () => {
       fireEvent.mouseLeave(popup() as HTMLElement);
       wait(500);
       expect(popup()).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+      expect(screen.getByRole('button', { name: 'com_ui_dlp_continue' })).toHaveFocus();
     });
 
     it('stays open once clicked, until a click outside', () => {
@@ -617,7 +690,7 @@ describe('DlpInterventionDialog', () => {
       expect(bar).toHaveClass(MASK_HIGHLIGHT);
       expect(bar).not.toHaveClass(...REDACTED);
       expect(screen.queryByRole('dialog', { name: PROJECT_MASK })).toBeNull();
-      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+      expect(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' })).toHaveFocus();
 
       moveTo(500, 500);
       expect(showsToken(bar)).toBe(true);
