@@ -14,6 +14,7 @@ import {
   isAgentsEndpoint,
   parseCompactConvo,
   replaceSpecialVars,
+  getGovernanceMasking,
   isAssistantsEndpoint,
   getDefaultParamsEndpoint,
   GOVERNANCE_DLP_TEXT_LOCATION,
@@ -296,6 +297,7 @@ export default function useChatFunctions({
       overrideQuotes,
       addedConvo,
       dlpReviewId,
+      dlpMasks,
     } = {},
   ) => {
     setShowStopButton(false);
@@ -499,6 +501,8 @@ export default function useChatFunctions({
        * also merges these into the model-facing user text at request time.
        */
       quotes: quotes.length > 0 ? quotes : undefined,
+      /** The server puts the same masks on the stored message once the gateway sends it. */
+      dlpMasks,
     };
 
     const submissionFiles = overrideFiles ?? targetParentMessage?.files;
@@ -738,6 +742,9 @@ export default function useChatFunctions({
       showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
       return false;
     }
+    const masking = getGovernanceMasking(pendingDlpReview.text, result.findings);
+    const dlpMasks =
+      masking.text === approved.text && masking.masks.length > 0 ? masking.masks : undefined;
 
     setDlpReview({ ...pendingDlpReview, status: 'sending' });
     /** The reviewed submit already drained the `$` queue, so its skills come from the review.
@@ -746,6 +753,7 @@ export default function useChatFunctions({
       { text: approved.text },
       {
         dlpReviewId: result.reviewId,
+        dlpMasks,
         overrideManualSkills: pendingDlpReview.manualSkills ?? [],
         overrideFiles: pendingDlpReview.files,
       },
