@@ -16,6 +16,15 @@ export interface GovernanceMaskedContent {
   text: string;
 }
 
+/** A replacement the gateway put in a masked text, as the code-point range it takes there. */
+export interface GovernanceMaskedSpan {
+  start: number;
+  end: number;
+  category: string;
+  /** The text of the range, so a text changed since then is not taken for masked. */
+  replacement: string;
+}
+
 /**
  * Findings in an attached file, counted by category and action. Only the matched values are
  * sent, never the rest of the file's text.
