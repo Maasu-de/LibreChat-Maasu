@@ -9,6 +9,7 @@ import type {
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
 import type { FileContext } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
+import type { GovernanceMasking } from './mask';
 import { standardCache } from '~/cache';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
@@ -360,11 +361,15 @@ function createUnsentTurnEvent(userMessage?: ReviewedUserMessage): FinalEvent {
   };
 }
 
+/**
+ * The review the user decides on, with where the gateway masks the submitted text. Every
+ * decision but BLOCK can be approved, so it also gives the masked text an approval sends.
+ */
 export function toClientReview(
   review: GatewayReview,
   decision: GovernanceDecision,
   findings: GovernanceFinding[],
-  approvedText?: string,
+  { text, masks, ranges }: GovernanceMasking,
   fileFindings: GovernanceFileFinding[] = [],
 ): GovernanceDlpReview {
   return {
@@ -372,11 +377,12 @@ export function toClientReview(
     decision,
     policyVersion: review.policy_version,
     findings,
+    maskedRanges: ranges.length > 0 ? ranges : undefined,
     fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
     maskedPreview:
-      approvedText === undefined
+      decision === 'BLOCK'
         ? undefined
-        : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text: approvedText }],
+        : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text, ...(masks.length > 0 && { masks }) }],
     expiresAt: review.expires_at,
   };
 }

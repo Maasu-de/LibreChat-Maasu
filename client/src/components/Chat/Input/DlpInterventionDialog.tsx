@@ -2,15 +2,12 @@ import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
-import {
-  FileSources,
-  getGovernanceMaskRanges,
-  GOVERNANCE_DLP_TEXT_LOCATION,
-} from 'librechat-data-provider';
+import { FileSources, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
   GovernanceDlpResult,
   GovernanceFinding,
   GovernanceDecision,
+  GovernanceMaskedRange,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { ReactNode, KeyboardEvent, SyntheticEvent } from 'react';
@@ -125,17 +122,22 @@ const uniqueTerms = (category: string, terms: string[]) => {
 
 /**
  * Splits the text into what has no findings and a value per finding, in text order. A value the
- * gateway replaces takes the range the gateway masks; any other finding takes what no replaced,
- * more severe or earlier finding took.
+ * gateway replaces takes the range the review gives it; any other finding takes what no
+ * replaced, more severe or earlier finding took.
  */
-export function buildPromptSegments(text: string, findings: GovernanceFinding[]): PromptSegment[] {
+export function buildPromptSegments(
+  text: string,
+  findings: GovernanceFinding[],
+  maskedRanges: GovernanceMaskedRange[] = [],
+): PromptSegment[] {
   const chars = Array.from(text);
-  const inText = findings.filter((finding) => isInText(chars, finding));
   const owners = new Array<GovernanceFinding | undefined>(chars.length);
-  for (const { start, end, finding } of getGovernanceMaskRanges(chars, inText)) {
-    owners.fill(finding, start, end);
+  for (const { start, end, finding } of maskedRanges) {
+    owners.fill(findings[finding], start, end);
   }
-  const kept = inText.filter(({ replacement }) => replacement === undefined).sort(bySeverity);
+  const kept = findings
+    .filter((finding) => finding.replacement === undefined && isInText(chars, finding))
+    .sort(bySeverity);
   for (const finding of kept) {
     for (let i = finding.start; i < Math.min(finding.end, chars.length); i++) {
       owners[i] ??= finding;
@@ -155,14 +157,6 @@ export function buildPromptSegments(text: string, findings: GovernanceFinding[])
   }
   return segments;
 }
-
-/** The text the gateway sends for the segments: each replaced value as its replacement. */
-export const sentText = (segments: PromptSegment[]): string =>
-  segments
-    .map((segment) =>
-      'finding' in segment ? (segment.finding.replacement ?? segment.text) : segment.text,
-    )
-    .join('');
 
 /**
  * The findings in each attached file, grouped by category and action, each group with its
@@ -307,16 +301,11 @@ export default function DlpInterventionDialog({
     `${categoryLabel(finding)} · ${localize(DECISION_COPY[finding.action])}`;
 
   const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
-  const maskedText = result.maskedPreview?.find(
-    (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
-  )?.text;
-  /** The prompt with its findings; when it is masked, exactly as it will be sent. */
-  const promptSegments = useMemo(() => {
-    const segments = buildPromptSegments(originalText, result.findings);
-    const unlike =
-      decision === 'MASK' && maskedText !== undefined && sentText(segments) !== maskedText;
-    return unlike ? [{ text: maskedText }] : segments;
-  }, [decision, maskedText, originalText, result.findings]);
+  /** The prompt with its findings, each value the gateway replaces where the review puts it. */
+  const promptSegments = useMemo(
+    () => buildPromptSegments(originalText, result.findings, result.maskedRanges),
+    [originalText, result.findings, result.maskedRanges],
+  );
 
   /** The text reflows around a revealed value, so it stays until the pointer leaves both places. */
   useEffect(() => {

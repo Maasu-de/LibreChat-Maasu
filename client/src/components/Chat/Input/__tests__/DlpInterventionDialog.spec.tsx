@@ -1,9 +1,8 @@
 import React from 'react';
 import userEvent from '@testing-library/user-event';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import type { GovernanceFinding } from 'librechat-data-provider';
+import type { GovernanceFinding, GovernanceMaskedRange } from 'librechat-data-provider';
 import DlpInterventionDialog, {
-  sentText,
   groupFileFindings,
   buildPromptSegments,
 } from '../DlpInterventionDialog';
@@ -42,11 +41,18 @@ const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding 
   replacement: '[CONFIDENTIAL]',
   ...overrides,
 });
+/** The range the gateway replaces for the first finding, `finding()` itself by default. */
+const maskedAt = (start = 8, end = 20): GovernanceMaskedRange[] => [{ start, end, finding: 0 }];
 
 const CROSSING = 'Status of Project Phoenix Secret today';
 const crossingFindings = [
   finding({ start: 18, end: 32, replacement: '[TERM]' }),
   finding({ start: 10, end: 25, replacement: '[TERM]' }),
+];
+/** The later finding is masked from after the earlier one, without the space between them. */
+const crossingRanges: GovernanceMaskedRange[] = [
+  { start: 10, end: 25, finding: 1 },
+  { start: 26, end: 32, finding: 0 },
 ];
 
 /** A confidential term and an email address that share "romeo", as in the #191 wireframe. */
@@ -64,11 +70,12 @@ const overlapFindings = [
 
 describe('DLP intervention text segmentation', () => {
   it('splits the text at each finding in it', () => {
-    const project = finding({ action: 'WARN', replacement: undefined });
+    const warned = { action: 'WARN' as const, replacement: undefined };
+    const project = finding(warned);
     const segments = buildPromptSegments('Discuss Project Acme now', [
       project,
-      finding({ start: 30, end: 34 }),
-      finding({ location: '/messages/1/content' }),
+      finding({ ...warned, start: 30, end: 34 }),
+      finding({ ...warned, location: '/messages/1/content' }),
     ]);
 
     expect(segments).toEqual([
@@ -76,40 +83,37 @@ describe('DLP intervention text segmentation', () => {
       { text: 'Project Acme', finding: project },
       { text: ' now' },
     ]);
-    expect(sentText(segments)).toBe('Discuss Project Acme now');
   });
 
   it('uses Unicode code-point offsets supplied by the governance backend', () => {
-    const segments = buildPromptSegments('🙂 Email me@example.com', [
-      finding({ start: 8, end: 22, category: 'EMAIL_ADDRESS' }),
-    ]);
+    const segments = buildPromptSegments(
+      '🙂 Email me@example.com',
+      [finding({ start: 8, end: 22, category: 'EMAIL_ADDRESS' })],
+      maskedAt(8, 22),
+    );
 
     expect(segments[1].text).toBe('me@example.com');
   });
 
-  it('redacts each value the gateway replaces like the gateway masks it', () => {
+  it('gives each value the gateway replaces the range the review gives it', () => {
     const [later, earlier] = crossingFindings;
-    const segments = buildPromptSegments(CROSSING, crossingFindings);
 
-    expect(segments).toEqual([
+    expect(buildPromptSegments(CROSSING, crossingFindings, crossingRanges)).toEqual([
       { text: 'Status of ' },
       { text: 'Project Phoenix', finding: earlier },
       { text: ' ' },
       { text: 'Secret', finding: later },
       { text: ' today' },
     ]);
-    expect(sentText(segments)).toBe('Status of [TERM] [TERM] today');
   });
 
   it('keeps the rest of a finding that a replaced value partly covers', () => {
     const [term, email] = overlapFindings;
-    const segments = buildPromptSegments(OVERLAP, overlapFindings);
 
-    expect(segments).toEqual([
+    expect(buildPromptSegments(OVERLAP, overlapFindings, maskedAt(0, 10))).toEqual([
       { text: 'alfa romeo', finding: term },
       { text: '@example.com', finding: email },
     ]);
-    expect(sentText(segments)).toBe('[overlap test]@example.com');
   });
 
   it('gives the text that kept findings share to the more severe, else the earlier one', () => {
@@ -181,6 +185,7 @@ describe('DlpInterventionDialog', () => {
         result={{
           decision: 'MASK',
           findings: [finding()],
+          maskedRanges: maskedAt(),
           maskedPreview: [{ location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' }],
         }}
         originalText="Discuss Project Acme now"
@@ -204,25 +209,6 @@ describe('DlpInterventionDialog', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the masked text from the gateway as is when it differs from the local rule', () => {
-    render(
-      <DlpInterventionDialog
-        result={{
-          decision: 'MASK',
-          findings: [finding()],
-          maskedPreview: [{ location: '/messages/0/content', text: 'Discuss <redacted> now' }],
-        }}
-        originalText="Discuss Project Acme now"
-        onCancel={jest.fn()}
-        onConfirm={jest.fn()}
-      />,
-    );
-
-    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
-    expect(prompt.textContent).toBe('Discuss <redacted> now');
-    expect(within(prompt).queryByText('Project Acme')).toBeNull();
-  });
-
   it('shows blocked values on their color and masked ones as bars, with no way to send', () => {
     const iban = 'DE89370400440532013000';
     render(
@@ -233,6 +219,7 @@ describe('DlpInterventionDialog', () => {
             finding({ action: 'BLOCK', replacement: undefined }),
             finding({ start: 26, end: 48, category: 'IBAN_CODE', replacement: '[IBAN]' }),
           ],
+          maskedRanges: [{ start: 26, end: 48, finding: 1 }],
         }}
         originalText={`Discuss Project Acme, pay ${iban}`}
         onCancel={jest.fn()}
@@ -346,6 +333,7 @@ describe('DlpInterventionDialog', () => {
           result={{
             decision,
             findings: [finding({ action: decision })],
+            maskedRanges: maskedAt(),
             maskedPreview: [
               { location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' },
             ],
@@ -532,6 +520,11 @@ describe('DlpInterventionDialog', () => {
             }),
             finding({ start: 26, end: 42, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }),
           ],
+          maskedRanges: [
+            { start: 0, end: 7, finding: 0 },
+            { start: 12, end: 19, finding: 1 },
+            { start: 26, end: 42, finding: 2 },
+          ],
           fileFindings: [
             {
               filename: 'notes.txt',
@@ -615,12 +608,13 @@ describe('DlpInterventionDialog', () => {
     }
   });
 
-  it('sets overlapping masked values like the gateway replaces them', () => {
+  it('sets overlapping masked values where the review puts them', () => {
     render(
       <DlpInterventionDialog
         result={{
           decision: 'MASK',
           findings: crossingFindings,
+          maskedRanges: crossingRanges,
           maskedPreview: [
             { location: '/messages/0/content', text: 'Status of [TERM] [TERM] today' },
           ],
@@ -650,6 +644,7 @@ describe('DlpInterventionDialog', () => {
           result={{
             decision: 'MASK',
             findings: [finding()],
+            maskedRanges: maskedAt(),
             maskedPreview: [
               { location: '/messages/0/content', text: 'Discuss [CONFIDENTIAL] now' },
             ],
@@ -732,6 +727,7 @@ describe('DlpInterventionDialog', () => {
         result={{
           decision: 'MASK',
           findings: overlapFindings,
+          maskedRanges: maskedAt(0, 10),
           maskedPreview: [{ location: '/messages/0/content', text: '[overlap test]@example.com' }],
         }}
         originalText={OVERLAP}
@@ -759,6 +755,7 @@ describe('DlpInterventionDialog', () => {
         result={{
           decision: 'MASK',
           findings: [finding({ start: 4, end: 26, category: 'IBAN_CODE', replacement: '[IBAN]' })],
+          maskedRanges: maskedAt(4, 26),
           fileFindings: [
             {
               filename: 'invoice.md',

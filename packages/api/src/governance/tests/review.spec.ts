@@ -540,12 +540,14 @@ describe('DLP approval flow', () => {
 
     expect(response.status).toBe(400);
     expect(upstream).toHaveBeenCalledTimes(1);
+    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
     expect(onReview).toHaveBeenCalledWith({
       reviewId: 'review-1',
       decision: 'MASK',
       policyVersion: 5,
       findings: [emailFinding('/messages/0/content', 13)],
-      maskedPreview: [{ location: '/messages/0/content', text: MASKED }],
+      maskedRanges: [{ start: 13, end: 28, finding: 0 }],
+      maskedPreview: [{ location: '/messages/0/content', text: MASKED, masks }],
       expiresAt,
     });
     expect(reviews.entries.get('review-1')).toEqual({
@@ -555,7 +557,7 @@ describe('DLP approval flow', () => {
       messages: maskedMessages,
       dlpToken: 'approval-token',
       expiresAt,
-      masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }],
+      masks,
     });
     expect(onSent).not.toHaveBeenCalled();
   });
@@ -582,15 +584,20 @@ describe('DLP approval flow', () => {
 
     const response = await send(crossing);
 
+    const masks = [
+      { start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' },
+      { start: 7, end: 13, category: 'TENANT_TERM', replacement: '[TERM]' },
+    ];
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
     expect(onReview).toHaveBeenCalledTimes(1);
-    expect(reviews.entries.get('review-1')).toMatchObject({
-      text: '[TERM] [TERM]',
-      masks: [
-        { start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' },
-        { start: 7, end: 13, category: 'TENANT_TERM', replacement: '[TERM]' },
+    expect(onReview.mock.calls[0]?.[0]).toMatchObject({
+      maskedRanges: [
+        { start: 0, end: 15, finding: 0 },
+        { start: 16, end: 22, finding: 1 },
       ],
+      maskedPreview: [{ text: '[TERM] [TERM]', masks }],
     });
+    expect(reviews.entries.get('review-1')).toMatchObject({ text: '[TERM] [TERM]', masks });
   });
 
   it('rejects a review whose findings are all outside the submitted text, without approving it', async () => {
@@ -684,21 +691,34 @@ describe('DLP approval flow', () => {
   });
 
   it('hands a BLOCK review to the user without storing an approval', async () => {
+    const blocked = 'Discuss Project Acme, mail max@example.com';
     const { upstream, onReview, onSent, reviews, send } = setup({
+      text: blocked,
       responses: [
         reviewResponse({
           review_id: 'review-3',
           action: 'BLOCK',
-          findings: [{ ...emailFinding('/messages/1/content', 13), action: 'BLOCK' }],
+          findings: [
+            {
+              ...termFinding('/messages/1/content', 8, 20),
+              action: 'BLOCK',
+              replacement: undefined,
+            },
+            emailFinding('/messages/1/content', blocked.indexOf('max@')),
+          ],
         }),
       ],
     });
 
-    const response = await send(messages);
+    const response = await send([messages[0], { role: 'user', content: blocked }]);
 
     expect(response.status).toBe(400);
     expect(upstream).toHaveBeenCalledTimes(1);
-    expect(onReview.mock.calls[0]?.[0]).toMatchObject({ reviewId: 'review-3', decision: 'BLOCK' });
+    expect(onReview.mock.calls[0]?.[0]).toMatchObject({
+      reviewId: 'review-3',
+      decision: 'BLOCK',
+      maskedRanges: [{ start: 27, end: 42, finding: 1 }],
+    });
     expect(onReview.mock.calls[0]?.[0].maskedPreview).toBeUndefined();
     expect(onSent).not.toHaveBeenCalled();
     expect(reviews.entries.size).toBe(0);
