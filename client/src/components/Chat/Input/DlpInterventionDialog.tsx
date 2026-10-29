@@ -13,7 +13,7 @@ import type {
   GovernanceDecision,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
-import type { ReactNode, SyntheticEvent } from 'react';
+import type { ReactNode, KeyboardEvent, SyntheticEvent } from 'react';
 import type { CategorizedFinding } from '~/components/Chat/Messages/Content/MaskedText';
 import type { TranslationKeys } from '~/hooks';
 import {
@@ -301,6 +301,7 @@ export default function DlpInterventionDialog({
   const { decision } = result;
   const [revealed, setRevealed] = useState<RevealedValue | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const categoryLabel = useCategoryLabel();
   const findingLabel = (finding: CategorizedFinding & Pick<GovernanceFinding, 'action'>) =>
     `${categoryLabel(finding)} · ${localize(DECISION_COPY[finding.action])}`;
@@ -369,6 +370,25 @@ export default function DlpInterventionDialog({
         <span className="sr-only">{` (${findingLabel(finding)})`}</span>
       </mark>
     );
+  };
+
+  /**
+   * Enter sends, unless another button has focus, which keeps its own action. A held Enter never
+   * does, so a key still down from the composer can't send a prompt nobody has seen.
+   */
+  const sendOnEnter = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (decision === 'BLOCK' || event.key !== 'Enter') {
+      return;
+    }
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    if (event.target instanceof Element && event.target.closest('button')) {
+      return;
+    }
+    event.preventDefault();
+    onConfirm();
   };
 
   const renderFlagged = ({ text, finding }: FoundValue, index: number) => (
@@ -469,8 +489,9 @@ export default function DlpInterventionDialog({
         showCancelButton={false}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
-          cancelRef.current?.focus();
+          (confirmRef.current ?? cancelRef.current)?.focus();
         }}
+        onKeyDown={sendOnEnter}
         main={
           <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto px-1" role="document">
             {sendFailed && (
@@ -503,7 +524,11 @@ export default function DlpInterventionDialog({
               {localize(decision === 'BLOCK' ? 'com_ui_close' : 'com_ui_cancel')}
             </Button>
             {decision !== 'BLOCK' && (
-              <Button variant={decision === 'WARN' ? 'default' : 'submit'} onClick={onConfirm}>
+              <Button
+                ref={confirmRef}
+                variant={decision === 'WARN' ? 'default' : 'submit'}
+                onClick={onConfirm}
+              >
                 {localize(decision === 'MASK' ? 'com_ui_dlp_send_masked' : 'com_ui_dlp_continue')}
               </Button>
             )}

@@ -244,4 +244,32 @@ test.describe('governed prompts', () => {
     await expect(messagesView(page).locator('mark', { hasText: '[IBAN]' })).toHaveCount(2);
     await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
   });
+
+  test('keyboard: Escape puts the prompt back, Enter sends it, a held Enter does not', async ({
+    page,
+  }) => {
+    const prompt = `Pay ${IBAN} today`;
+    const composer = page.getByRole('textbox', { name: 'Message input' });
+    const dialog = page.getByRole('dialog');
+    const send = dialog.getByRole('button', { name: 'Send masked' });
+
+    await sendMessage(page, prompt);
+    await expect(send).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(composer).toHaveValue(prompt);
+
+    await composer.focus();
+    await page.keyboard.down('Enter');
+    await expect(send).toBeFocused();
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    await expect(dialog).toBeVisible();
+    await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
+
+    await dialog.locator('mark', { hasText: '[IBAN]' }).click();
+    await page.keyboard.press('Enter');
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+    await expect(dialog).not.toBeVisible();
+  });
 });

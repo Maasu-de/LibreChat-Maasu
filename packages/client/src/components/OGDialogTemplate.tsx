@@ -2,6 +2,7 @@ import {
   forwardRef,
   ForwardRefExoticComponent,
   isValidElement,
+  KeyboardEvent,
   ReactNode,
   Ref,
   RefAttributes,
@@ -69,6 +70,7 @@ type DialogTemplateProps = {
   onClose?: () => void;
   /** Runs instead of focusing the first focusable element once the dialog opens, if prevented. */
   onOpenAutoFocus?: (event: Event) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
 };
 
 const OGDialogTemplate: ForwardRefExoticComponent<
@@ -88,6 +90,7 @@ const OGDialogTemplate: ForwardRefExoticComponent<
     footerClassName,
     showCloseButton = false,
     overlayClassName,
+    onKeyDown,
     onOpenAutoFocus,
     showCancelButton = true,
   } = props;
@@ -126,6 +129,7 @@ const OGDialogTemplate: ForwardRefExoticComponent<
       ref={ref}
       className={cn('w-11/12 border-none bg-surface-dialog text-foreground', className ?? '')}
       onOpenAutoFocus={onOpenAutoFocus}
+      onKeyDown={onKeyDown}
       onClick={(e) => e.stopPropagation()}
     >
       <OGDialogHeader className={cn(headerClassName ?? '')}>
