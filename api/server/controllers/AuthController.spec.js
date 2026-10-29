@@ -24,7 +24,10 @@ jest.mock('~/models', () => ({
 jest.mock('@librechat/api', () => ({
   math: jest.fn((value, fallback) => fallback),
   isEnabled: jest.fn(),
+  isGovernancePilotEnabled: jest.fn(() => false),
   findOpenIDUser: jest.fn(),
+  syncOidcAdministrator: jest.fn(),
+  requiresOidcEntitlementRefresh: jest.fn(() => false),
   getOpenIdIssuer: jest.fn(() => 'https://issuer.example.com'),
   buildOpenIDRefreshParams: jest.fn(() => {
     const params = {};
@@ -41,7 +44,12 @@ jest.mock('@librechat/api', () => ({
 const openIdClient = require('openid-client');
 const jwt = require('jsonwebtoken');
 const { logger } = require('@librechat/data-schemas');
-const { isEnabled, findOpenIDUser, buildOpenIDRefreshParams } = require('@librechat/api');
+const {
+  isEnabled,
+  findOpenIDUser,
+  syncOidcAdministrator,
+  buildOpenIDRefreshParams,
+} = require('@librechat/api');
 const { graphTokenController, refreshController } = require('./AuthController');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
 const {
@@ -628,6 +636,7 @@ describe('refreshController – OpenID path', () => {
 
     await refreshController(req, res);
 
+    expect(syncOidcAdministrator).toHaveBeenCalledWith(user, mockTokenset, updateUser);
     expect(getOpenIdEmail).toHaveBeenCalledWith(claimsWithUpn);
     expect(findOpenIDUser).toHaveBeenCalledWith(
       expect.objectContaining({

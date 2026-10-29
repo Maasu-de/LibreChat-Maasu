@@ -89,6 +89,24 @@ describe('getOpenIdRoleSyncOptions', () => {
       }),
     ).toThrow('OPENID_ROLE_SYNC_FALLBACK_ROLE cannot be ADMIN');
   });
+
+  it('also rejects GOVERNANCE_ADMIN in role priority and fallback role', () => {
+    expect(() =>
+      getOpenIdRoleSyncOptions({
+        OPENID_ROLE_SYNC_ENABLED: 'true',
+        OPENID_ROLE_SYNC_CLAIM: 'roles',
+        OPENID_ROLE_SYNC_ROLE_PRIORITY: SystemRoles.GOVERNANCE_ADMIN,
+      }),
+    ).toThrow('OPENID_ROLE_SYNC_ROLE_PRIORITY cannot include ADMIN');
+
+    expect(() =>
+      getOpenIdRoleSyncOptions({
+        OPENID_ROLE_SYNC_ENABLED: 'true',
+        OPENID_ROLE_SYNC_CLAIM: 'roles',
+        OPENID_ROLE_SYNC_FALLBACK_ROLE: SystemRoles.GOVERNANCE_ADMIN,
+      }),
+    ).toThrow('OPENID_ROLE_SYNC_FALLBACK_ROLE cannot be ADMIN');
+  });
 });
 
 describe('getOpenIdRolesForOpenIdSync', () => {

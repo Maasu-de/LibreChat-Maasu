@@ -44,6 +44,7 @@ export const health = () => `${BASE_URL}/health`;
 /** Served by the governance SSO gateway (nginx), not by LibreChat */
 export const gatewaySession = () => `${BASE_URL}/_sso/session`;
 export const governanceHealth = () => `${BASE_URL}/api/governance/health`;
+export const governanceModels = () => `${models()}?include=governance`;
 export const governanceUsage = (params: q.FinanceUsageQueryParams = {}) =>
   `${BASE_URL}/api/governance/usage${buildQuery(params)}`;
 export const user = () => `${BASE_URL}/api/user`;

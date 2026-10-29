@@ -25,8 +25,8 @@ jest.mock('@librechat/api', () => ({
 
 jest.mock('../governanceGroups', () => {
   const router = require('express').Router();
-  router.requireGovernanceAdminToken = (req, res, next) =>
-    req.headers.authorization === 'Bearer admin-token'
+  router.requireGovernanceGatewayService = (req, res, next) =>
+    req.headers.authorization === 'Bearer gateway-service-secret'
       ? next()
       : res.status(401).json({ message: 'Unauthorized' });
   return router;
@@ -70,7 +70,7 @@ beforeEach(() => {
 });
 
 describe('POST /api/governance/usage-labels', () => {
-  it('requires the governance administrator token before resolving labels', async () => {
+  it('requires the Gateway service credential before resolving labels', async () => {
     const response = await request(app).post('/api/governance/usage-labels').send({
       by_user: [],
       by_group: [],
@@ -89,7 +89,7 @@ describe('POST /api/governance/usage-labels', () => {
 
     const response = await request(app)
       .post('/api/governance/usage-labels')
-      .set('Authorization', 'Bearer admin-token')
+      .set('Authorization', 'Bearer gateway-service-secret')
       .send(rows);
 
     expect(response.status).toBe(200);
@@ -109,7 +109,7 @@ describe('POST /api/governance/usage-labels', () => {
 
     const response = await request(app)
       .post('/api/governance/usage-labels')
-      .set('Authorization', 'Bearer admin-token')
+      .set('Authorization', 'Bearer gateway-service-secret')
       .send(rows);
 
     expect(response.status).toBe(200);

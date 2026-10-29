@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
-import { isAgentsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint, GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
-import { useGetEndpointsQuery } from '~/data-provider';
+import GovernanceModelSelector from '~/components/Chat/Menus/Endpoints/GovernanceModelSelector';
+import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import { EndpointIcon } from '~/components/Endpoints';
 import { useAgentsMapContext } from '~/Providers';
 
@@ -15,6 +16,7 @@ export default function AddedConvo({
 }) {
   const agentsMap = useAgentsMapContext();
   const { data: endpointsConfig } = useGetEndpointsQuery();
+  const { data: startupConfig } = useGetStartupConfig();
   const title = useMemo(() => {
     // Priority: agent name > modelDisplayLabel > modelLabel > model
     if (isAgentsEndpoint(addedConvo?.endpoint) && addedConvo?.agent_id) {
@@ -48,9 +50,20 @@ export default function AddedConvo({
           />
         </div>
       </span>
-      <span className="text-token-text-secondary line-clamp-3 flex-1 py-0.5 font-semibold">
-        {title}
-      </span>
+      <div className="text-token-text-secondary line-clamp-3 flex-1 py-0.5 font-semibold">
+        {startupConfig?.governancePilotEnabled && addedConvo.endpoint === GOVERNANCE_ENDPOINT ? (
+          <GovernanceModelSelector
+            endpoint={GOVERNANCE_ENDPOINT}
+            value={addedConvo.model ?? null}
+            trigger={<button type="button">{title}</button>}
+            onSelect={(model) =>
+              setAddedConvo((previous) => (previous ? { ...previous, model } : previous))
+            }
+          />
+        ) : (
+          title
+        )}
+      </div>
       <button
         className="text-token-text-secondary flex-shrink-0"
         type="button"

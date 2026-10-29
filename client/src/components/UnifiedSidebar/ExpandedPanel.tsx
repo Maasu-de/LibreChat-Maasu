@@ -180,7 +180,7 @@ function ExpandedPanel({
                   }
                 />
               )}
-              {startupConfig?.libreChatAdminUrl && (
+              {!startupConfig?.governancePilotEnabled && startupConfig?.libreChatAdminUrl && (
                 <TooltipAnchor
                   side="right"
                   description={localize('com_nav_librechat_admin')}

@@ -68,13 +68,13 @@ export function createRoleMethods(
 } {
   /**
    * Initialize default roles in the system.
-   * Creates the default roles (ADMIN, USER) if they don't exist in the database.
+   * Creates the default roles (ADMIN, USER, GOVERNANCE_ADMIN) if they don't exist in the database.
    * Updates existing roles with new permission types if they're missing.
    */
   async function initializeRoles(): Promise<void> {
     const Role = mongoose.models.Role;
 
-    for (const roleName of [SystemRoles.ADMIN, SystemRoles.USER]) {
+    for (const roleName of Object.values(SystemRoles)) {
       let role = await Role.findOne({ name: roleName });
       const defaultPerms = roleDefaults[roleName].permissions;
 
