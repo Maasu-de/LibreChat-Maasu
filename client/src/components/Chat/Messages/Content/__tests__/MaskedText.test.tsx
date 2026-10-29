@@ -44,6 +44,11 @@ const renderMessage = (message: TMessage) =>
     <RecoilRoot>
       <MessageContent
         text={message.text}
+        edit={false}
+        error={false}
+        unfinished={false}
+        isSubmitting={false}
+        isLast={false}
         message={message}
         isCreatedByUser={message.isCreatedByUser}
         ask={jest.fn()}
