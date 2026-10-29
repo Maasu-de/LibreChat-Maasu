@@ -14,7 +14,13 @@ import type {
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { ReactNode, SyntheticEvent } from 'react';
+import type { CategorizedFinding } from '~/components/Chat/Messages/Content/MaskedText';
 import type { TranslationKeys } from '~/hooks';
+import {
+  REDACTED,
+  REDACTION_BAR,
+  useCategoryLabel,
+} from '~/components/Chat/Messages/Content/MaskedText';
 import FilePreview from './Files/FilePreview';
 import { cn, getFileType } from '~/utils';
 import { useLocalize } from '~/hooks';
@@ -32,7 +38,6 @@ type FindingGroup = Pick<
 >;
 /** The findings in one attached file, whose MIME type picks its icon like in the composer. */
 type FileFindings = { id: string; filename: string; type?: string; groups: FindingGroup[] };
-type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
 type ActionStyle = { chip: string; highlight: string };
 
 /** How many matched values the popup of a finding badge lists; the rest are only counted. */
@@ -40,25 +45,6 @@ const VISIBLE_TERMS = 50;
 /** Grace period so moving the pointer from a badge to its popup doesn't close it. */
 const CLOSE_DELAY_MS = 120;
 const SEVERITY: GovernanceDecision[] = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
-
-const label = (category: string) => category.replaceAll('_', ' ');
-
-/**
- * Opaque keys of custom categories, which are never shown to the user. The gateway labels them
- * (`src/governance/category_labels.py` in ai-governance-gateway); this only covers reviews
- * without a label.
- */
-const CUSTOM_CATEGORY_PREFIX = 'CUSTOM_';
-
-const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
-  CLIENT_NAME: 'com_ui_dlp_category_client_name',
-  CODE_NAME: 'com_ui_dlp_category_code_name',
-  CREDIT_CARD: 'com_ui_dlp_category_credit_card',
-  EMAIL_ADDRESS: 'com_ui_dlp_category_email_address',
-  IBAN_CODE: 'com_ui_dlp_category_iban_code',
-  PHONE_NUMBER: 'com_ui_dlp_category_phone_number',
-  PROJECT_NAME: 'com_ui_dlp_category_project_name',
-};
 
 const DECISION_COPY: Record<GovernanceDecision, TranslationKeys> = {
   ALLOW: 'com_ui_dlp_decision_allow',
@@ -77,13 +63,11 @@ const COPY = {
 /** The box that holds the prompt, as it will be sent when the gateway masks it. */
 const PROMPT_BOX =
   'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
-/**
- * A value the gateway replaces, set in ink like a redaction bar. The bar never breaks across
- * lines, so a revealed value no wider than it takes exactly its place.
- */
-const REDACTION =
-  'inline-grid max-w-full justify-items-center rounded-sm px-1 py-0.5 leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy';
-const REDACTED = 'bg-text-primary text-surface-primary';
+/** A redaction bar the pointer or focus can reveal, unlike the bars of a sent message. */
+const REDACTION = cn(
+  REDACTION_BAR,
+  'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
+);
 /** A value the gateway keeps, readable on the color of its finding's action. */
 const FLAGGED = 'rounded-sm box-decoration-clone px-0.5 text-inherit';
 const BADGE =
@@ -317,18 +301,7 @@ export default function DlpInterventionDialog({
   const { decision } = result;
   const [revealed, setRevealed] = useState<RevealedValue | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
-    if (displayName) {
-      return displayName;
-    }
-    const key = CATEGORY_COPY[category];
-    if (key) {
-      return localize(key);
-    }
-    return category.startsWith(CUSTOM_CATEGORY_PREFIX)
-      ? localize('com_ui_dlp_category_custom_term')
-      : label(category);
-  };
+  const categoryLabel = useCategoryLabel();
   const findingLabel = (finding: CategorizedFinding & Pick<GovernanceFinding, 'action'>) =>
     `${categoryLabel(finding)} · ${localize(DECISION_COPY[finding.action])}`;
 

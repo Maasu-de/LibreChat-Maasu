@@ -6,6 +6,7 @@ import { NEW_CHAT_PATH, getAccessToken, messagesView, sendMessage } from '../moc
  * Text attachments in the governed pilot (#150), end to end through the fork's DLP review
  * against `e2e/setup/fake-governance-gateway.js`. The fake gateway masks IBANs, warns on email
  * addresses and blocks `PROJECT-NIGHTSHADE`, and its reply states what reached the model.
+ * A masked prompt keeps its replacements as bars in the chat history.
  */
 
 const GOVERNED_ENDPOINT = 'AI Governance Gateway';
@@ -215,5 +216,32 @@ test.describe('governed text attachments', () => {
     expect(result.status).toBe(400);
     expect(JSON.parse(result.body)).toEqual({ message: 'Unsupported file type: image/png' });
     expect(await listFileNames(page)).not.toContain('photo.png');
+  });
+});
+
+test.describe('governed prompts', () => {
+  test.beforeEach(async ({ page }) => {
+    await newGovernedChat(page);
+  });
+
+  test('mask: the sent message shows its replacements as bars, also after a reload', async ({
+    page,
+  }) => {
+    await sendMessage(page, `Pay ${IBAN} or ${IBAN} today`);
+    await page.getByRole('dialog').getByRole('button', { name: 'Send masked' }).click();
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+
+    const bars = messagesView(page).locator('mark', { hasText: '[IBAN]' });
+    await expect(bars).toHaveCount(2);
+    await expect(bars.first()).toHaveClass(/bg-text-primary/);
+    await expect(bars.first()).not.toHaveAttribute('tabindex');
+    await bars.first().hover();
+    await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
+
+    await page.reload();
+
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+    await expect(messagesView(page).locator('mark', { hasText: '[IBAN]' })).toHaveCount(2);
+    await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
   });
 });
