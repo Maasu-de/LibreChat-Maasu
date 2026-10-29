@@ -821,6 +821,20 @@ export const tMessageSchema = z.object({
    * request time and counted in the user message token count.
    */
   quotes: z.array(z.string()).optional(),
+  /**
+   * Where the Governance Backend replaced findings in a user message it masked, as code-point
+   * ranges of `text`, which is stored as sent. UI metadata that `MaskedText` shows as bars.
+   */
+  dlpMasks: z
+    .array(
+      z.object({
+        start: z.number(),
+        end: z.number(),
+        category: z.string(),
+        replacement: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type MemoryArtifact = {

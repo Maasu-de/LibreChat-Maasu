@@ -3,6 +3,7 @@ import type {
   GovernanceFinding,
   GovernanceDecision,
   GovernanceDlpReview,
+  GovernanceMaskedSpan,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
@@ -33,6 +34,8 @@ export interface StoredReview {
   dlpToken: string;
   /** Unix seconds at which the gateway's approval token expires. */
   expiresAt?: number;
+  /** Where `text` holds the gateway's replacements, kept on the sent message. */
+  masks?: GovernanceMaskedSpan[];
 }
 
 export interface ReviewStore {

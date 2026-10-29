@@ -788,6 +788,7 @@ class GenerationJobManagerClass {
             conversationId: jobData.conversationId,
             text: jobData.userMessage.text ?? '',
             quotes: jobData.userMessage.quotes,
+            dlpMasks: jobData.userMessage.dlpMasks,
             isCreatedByUser: true,
           }
         : null,
@@ -1369,6 +1370,7 @@ class GenerationJobManagerClass {
         conversationId: message.conversationId,
         text: message.text,
         quotes: message.quotes,
+        dlpMasks: message.dlpMasks,
       },
     };
 

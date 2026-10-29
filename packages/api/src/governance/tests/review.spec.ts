@@ -1,4 +1,8 @@
-import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-provider';
+import type {
+  GovernanceFinding,
+  GovernanceDlpReview,
+  GovernanceMaskedSpan,
+} from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
 import {
@@ -131,6 +135,7 @@ function setup({
   const onReview = jest.fn<void, [GovernanceDlpReview]>();
   const onSent = jest.fn();
   const onApprovalKept = jest.fn<void, [boolean]>();
+  const onApproved = jest.fn<void, [GovernanceMaskedSpan[] | undefined]>();
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
@@ -140,6 +145,7 @@ function setup({
     onReview,
     onSent,
     onApprovalKept,
+    onApproved,
     reviews,
   });
   const send = (messages: GovernanceChatMessage[]) =>
@@ -149,7 +155,7 @@ function setup({
       body: JSON.stringify({ model: 'governed-model', messages, stream: true, top_p: 0.5 }),
     });
   const sentBody = (call: number) => JSON.parse(String(upstream.mock.calls[call]?.[1]?.body));
-  return { upstream, onReview, onSent, onApprovalKept, reviews, send, sentBody };
+  return { upstream, onReview, onSent, onApprovalKept, onApproved, reviews, send, sentBody };
 }
 
 describe('readReview', () => {
@@ -549,6 +555,7 @@ describe('DLP approval flow', () => {
       messages: maskedMessages,
       dlpToken: 'approval-token',
       expiresAt,
+      masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }],
     });
     expect(onSent).not.toHaveBeenCalled();
   });
@@ -577,7 +584,13 @@ describe('DLP approval flow', () => {
 
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
     expect(onReview).toHaveBeenCalledTimes(1);
-    expect(reviews.entries.get('review-1')?.text).toBe('[TERM] [TERM]');
+    expect(reviews.entries.get('review-1')).toMatchObject({
+      text: '[TERM] [TERM]',
+      masks: [
+        { start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' },
+        { start: 7, end: 13, category: 'TENANT_TERM', replacement: '[TERM]' },
+      ],
+    });
   });
 
   it('rejects a review whose findings are all outside the submitted text, without approving it', async () => {
@@ -730,15 +743,17 @@ describe('DLP approval flow', () => {
   it('sends the stored approved request and token when the user confirms', async () => {
     const reviews = memoryStore();
     const approved = [{ role: 'user', content: MASKED }];
+    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
     reviews.entries.set('review-1', {
       userId: 'user-123',
       model: 'governed-model',
       text: MASKED,
       messages: approved,
       dlpToken: 'approval-token',
+      masks,
     });
     const completion = completionResponse();
-    const { onSent, send, sentBody } = setup({
+    const { onSent, onApproved, send, sentBody } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -758,6 +773,8 @@ describe('DLP approval flow', () => {
       require_user_approval: true,
       dlp_token: 'approval-token',
     });
+    expect(onApproved).toHaveBeenCalledWith(masks);
+    expect(onApproved.mock.invocationCallOrder[0]).toBeLessThan(onSent.mock.invocationCallOrder[0]);
     expect(onSent).toHaveBeenCalledTimes(1);
     expect(reviews.entries.has('review-1')).toBe(false);
   });

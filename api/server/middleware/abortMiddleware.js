@@ -190,6 +190,7 @@ async function abortMessage(req, res) {
           conversationId: jobData.userMessage.conversationId,
           text: jobData.userMessage.text,
           quotes: jobData.userMessage.quotes,
+          dlpMasks: jobData.userMessage.dlpMasks,
           isCreatedByUser: true,
         })
       : null,

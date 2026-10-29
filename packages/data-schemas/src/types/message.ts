@@ -1,4 +1,4 @@
-import type { TFeedbackRating, TFeedbackTag } from 'librechat-data-provider';
+import type { TFeedbackRating, TFeedbackTag, GovernanceMaskedSpan } from 'librechat-data-provider';
 import type { Document } from 'mongoose';
 
 // @ts-ignore
@@ -56,6 +56,8 @@ export interface IMessage extends Document {
   alwaysAppliedSkills?: string[];
   /** Verbatim excerpts the user quoted to reference on this turn. UI-only metadata for `MessageQuotes`. */
   quotes?: string[];
+  /** Where the Governance Backend masked `text`. UI-only metadata for `MaskedText`. */
+  dlpMasks?: GovernanceMaskedSpan[];
   expiredAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
