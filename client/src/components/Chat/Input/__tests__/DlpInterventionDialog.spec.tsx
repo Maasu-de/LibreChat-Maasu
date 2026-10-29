@@ -134,7 +134,7 @@ describe('DLP intervention text segmentation', () => {
     ]);
   });
 
-  it('groups the findings of each file by category and action, with distinct values', () => {
+  it('groups the findings of each file by category and action, with their values', () => {
     const files = groupFileFindings([
       {
         filename: 'report.pdf',
@@ -143,7 +143,7 @@ describe('DLP intervention text segmentation', () => {
         category: 'IBAN_CODE',
         action: 'MASK',
         count: 3,
-        terms: ['DE89370400440532013000', 'de89370400440532013000'],
+        terms: ['DE89370400440532013000'],
       },
       { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: 'WARN', count: 1 },
       {

@@ -104,22 +104,6 @@ const isInText = (chars: string[], f: GovernanceFinding) =>
   f.end > f.start &&
   f.start < chars.length;
 
-/** Names a value of a category, ignoring case and spacing, so a file lists it once. */
-const termKey = (category: string, term: string): string =>
-  `${category}\n${term.replace(/\s+/g, ' ').trim().toLowerCase()}`;
-
-const uniqueTerms = (category: string, terms: string[]) => {
-  const seen = new Set<string>();
-  return terms.filter((term) => {
-    const key = termKey(category, term);
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-};
-
 /**
  * Splits the text into what has no findings and a value per finding, in text order. A value the
  * gateway replaces takes the range the review gives it; any other finding takes what no
@@ -164,21 +148,14 @@ export function buildPromptSegments(
  */
 export function groupFileFindings(fileFindings: GovernanceFileFinding[] = []): FileFindings[] {
   const files = new Map<string, FileFindings>();
-  for (const finding of fileFindings) {
-    const { filename, fileId, type, category, label: displayName, action, count, terms } = finding;
+  for (const { filename, fileId, type, category, label, action, count, terms } of fileFindings) {
     const id = JSON.stringify([fileId ?? null, filename]);
     let file = files.get(id);
     if (!file) {
       file = { id, filename, type, groups: [] };
       files.set(id, file);
     }
-    file.groups.push({
-      category,
-      label: displayName,
-      action,
-      count,
-      terms: terms && uniqueTerms(category, terms),
-    });
+    file.groups.push({ category, label, action, count, terms });
   }
   return Array.from(files.values());
 }
