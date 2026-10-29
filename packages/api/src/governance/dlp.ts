@@ -1,4 +1,4 @@
-import { isEphemeralAgentId, getGovernanceMasking } from 'librechat-data-provider';
+import { isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
   TMessage,
@@ -20,6 +20,7 @@ import {
   findingsInSubmittedText,
 } from './review';
 import { isGovernancePilotEnabled } from './mode';
+import { getGovernanceMasking } from './mask';
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
@@ -382,8 +383,9 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     submitted,
     params.fileContexts(),
   );
+  const masking = getGovernanceMasking(params.text, findings);
   if (decision === 'BLOCK') {
-    params.onReview(toClientReview(review, decision, findings, undefined, fileFindings));
+    params.onReview(toClientReview(review, decision, findings, masking, fileFindings));
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
 
@@ -395,7 +397,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     return rejectCompletion('dlp_malformed_response');
   }
 
-  const { text: approvedText, masks } = getGovernanceMasking(params.text, findings);
+  const { text: approvedText, masks } = masking;
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
     return rejectCompletion('dlp_malformed_response');
   }
@@ -413,7 +415,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     },
     reviewTtl(review.expires_at),
   );
-  params.onReview(toClientReview(review, decision, findings, approvedText, fileFindings));
+  params.onReview(toClientReview(review, decision, findings, masking, fileFindings));
   return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 

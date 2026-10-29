@@ -11,11 +11,6 @@ export interface GovernanceFinding {
   replacement?: string;
 }
 
-export interface GovernanceMaskedContent {
-  location: string;
-  text: string;
-}
-
 /** A replacement the gateway put in a masked text, as the code-point range it takes there. */
 export interface GovernanceMaskedSpan {
   start: number;
@@ -23,6 +18,21 @@ export interface GovernanceMaskedSpan {
   category: string;
   /** The text of the range, so a text changed since then is not taken for masked. */
   replacement: string;
+}
+
+export interface GovernanceMaskedContent {
+  location: string;
+  text: string;
+  /** Where `text` holds the gateway's replacements, kept on the sent message. */
+  masks?: GovernanceMaskedSpan[];
+}
+
+/** A code-point range of the submitted text that the gateway replaces. */
+export interface GovernanceMaskedRange {
+  start: number;
+  end: number;
+  /** Index in the review's `findings` of the finding whose replacement takes the range. */
+  finding: number;
 }
 
 /**
@@ -47,6 +57,8 @@ export interface GovernanceDlpResult {
   decision: GovernanceDecision;
   policyVersion?: number;
   findings: GovernanceFinding[];
+  /** The ranges the gateway replaces, in text order, for every decision. */
+  maskedRanges?: GovernanceMaskedRange[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
 }

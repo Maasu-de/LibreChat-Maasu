@@ -14,7 +14,6 @@ import {
   isAgentsEndpoint,
   parseCompactConvo,
   replaceSpecialVars,
-  getGovernanceMasking,
   isAssistantsEndpoint,
   getDefaultParamsEndpoint,
 } from 'librechat-data-provider';
@@ -31,7 +30,7 @@ import type { SetterOrUpdater } from 'recoil';
 import type { TAskFunction, ExtendedFile } from '~/common';
 import {
   logger,
-  getApprovedDlpText,
+  getApprovedDlpPreview,
   hasStreamStartFailed,
   settleDlpReviewFiles,
   getRouteChatProjectId,
@@ -735,23 +734,19 @@ export default function useChatFunctions({
       return false;
     }
     const { result } = pendingDlpReview;
-    const approvedText = getApprovedDlpText(result);
-    if (approvedText == null) {
+    const approved = getApprovedDlpPreview(result);
+    if (!approved) {
       showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
       return false;
     }
-    const masking = getGovernanceMasking(pendingDlpReview.text, result.findings);
-    const dlpMasks =
-      masking.text === approvedText && masking.masks.length > 0 ? masking.masks : undefined;
-
     setDlpReview({ ...pendingDlpReview, status: 'sending' });
     /** The reviewed submit already drained the `$` queue, so its skills come from the review.
      *  An explicit list also keeps skills queued since then for the next message. */
     ask(
-      { text: approvedText },
+      { text: approved.text },
       {
         dlpReviewId: result.reviewId,
-        dlpMasks,
+        dlpMasks: approved.masks,
         overrideManualSkills: pendingDlpReview.manualSkills ?? [],
         overrideFiles: pendingDlpReview.files,
       },

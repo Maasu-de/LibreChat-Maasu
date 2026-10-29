@@ -1,10 +1,16 @@
 import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
-import type { BatchFile, GovernanceDlpResult } from 'librechat-data-provider';
+import type {
+  BatchFile,
+  GovernanceDlpResult,
+  GovernanceMaskedContent,
+} from 'librechat-data-provider';
 import type { ExtendedFile, TPendingDlpReview } from '~/common';
 
-/** The text a review approves: the masked preview of the typed message. */
-export const getApprovedDlpText = (result: GovernanceDlpResult): string | undefined =>
-  result.maskedPreview?.find((item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION)?.text;
+/** What a review approves: the masked preview of the typed message. */
+export const getApprovedDlpPreview = (
+  result: GovernanceDlpResult,
+): GovernanceMaskedContent | undefined =>
+  result.maskedPreview?.find((item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION);
 
 /**
  * Whether the composer still shows the unsent message a review is about. A turn that ends unsent
@@ -12,7 +18,7 @@ export const getApprovedDlpText = (result: GovernanceDlpResult): string | undefi
  * send failed. Any other text was typed for the next message.
  */
 export const isUnsentDlpText = (review: TPendingDlpReview, text: string): boolean =>
-  text === review.text || text === getApprovedDlpText(review.result);
+  text === review.text || text === getApprovedDlpPreview(review.result)?.text;
 
 /** True for a file uploaded for the message itself, unlike one attached from the user's files. */
 const isMessageUpload = (

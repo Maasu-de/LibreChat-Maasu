@@ -1,6 +1,6 @@
 import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type { TPendingDlpReview } from '~/common';
-import { getApprovedDlpText, isUnsentDlpText } from '../dlp';
+import { getApprovedDlpPreview, isUnsentDlpText } from '../dlp';
 
 const ORIGINAL = 'My IBAN is DE89370400440532013000';
 const MASKED = 'My IBAN is [IBAN]';
@@ -19,13 +19,13 @@ const review: TPendingDlpReview = {
   },
 };
 
-describe('getApprovedDlpText', () => {
+describe('getApprovedDlpPreview', () => {
   it('returns the masked preview of the typed message', () => {
-    expect(getApprovedDlpText(review.result)).toBe(MASKED);
+    expect(getApprovedDlpPreview(review.result)?.text).toBe(MASKED);
   });
 
   it('returns undefined when the review has no preview of the typed message', () => {
-    expect(getApprovedDlpText({ decision: 'WARN', findings: [] })).toBeUndefined();
+    expect(getApprovedDlpPreview({ decision: 'WARN', findings: [] })).toBeUndefined();
   });
 });
 
