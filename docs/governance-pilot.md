@@ -21,7 +21,7 @@ boundary immediately. Their persisted role migrates on the next login or refresh
 
 Set `GOVERNANCE_PILOT_ENABLED=true`, `GOVERNANCE_DLP_ENABLED=true`,
 `OPENID_REUSE_TOKENS=true`,
-`GOVERNANCE_API_BASE_URL` (the gateway's `/api/v1/dlp` base URL), and
+`GOVERNANCE_API_BASE_URL` (the gateway's `/v1` base URL), and
 `LIBRECHAT_SERVICE_CREDENTIAL`. Keep `OPENAI_MODERATION=false`.
 The gateway repository's Compose deployment fixes these switches for the pilot.
 
@@ -42,7 +42,7 @@ process to the same dedicated secret. The two read endpoints return 503 when it
 is absent and 401 for a missing or incorrect bearer credential.
 
 Group and membership auditing uses the same service credential. The audit endpoint
-defaults to the Gateway base URL with `/api/v1/dlp` replaced by
+defaults to the Gateway base URL with `/v1` replaced by
 `/api/v1/internal/group-audit`, preserving any reverse-proxy prefix. To use a
 different internal endpoint, set `GOVERNANCE_AUDIT_URL`, for example
 `http://governance-backend:8000/api/v1/internal/group-audit`. Apply the Gateway's

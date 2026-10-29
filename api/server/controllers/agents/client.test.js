@@ -271,7 +271,7 @@ describe('AgentClient - titleConvo', () => {
     });
 
     it('sends a governed title to the gateway without asking the user to approve it', async () => {
-      const gatewayUrl = 'http://governance.test/api/v1/dlp';
+      const gatewayUrl = 'http://governance.test/v1';
       const governanceEnv = {
         GOVERNANCE_DLP_ENABLED: 'true',
         GOVERNANCE_API_BASE_URL: gatewayUrl,

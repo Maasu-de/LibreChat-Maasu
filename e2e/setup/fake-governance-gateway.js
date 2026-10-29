@@ -4,7 +4,7 @@
  * Fake Governance Gateway for the governed-pilot e2e specs (`e2e/specs/governance`).
  *
  * Serves the two routes LibreChat's pilot mode calls under `GOVERNANCE_API_BASE_URL`:
- * `GET /api/v1/dlp/models` and `POST /api/v1/dlp/chat/completions`. It follows the real
+ * `GET /v1/models` and `POST /v1/chat/completions`. It follows the real
  * gateway's review protocol: with `require_user_approval`, findings in the last message
  * return a stage 1 review instead of a completion, and a stage 2 request with the review's
  * `dlp_token` completes the approved messages. Findings in earlier messages never open a
@@ -24,7 +24,7 @@ const { randomUUID } = require('crypto');
 
 const PORT = parseInt(process.env.E2E_GOVERNANCE_GATEWAY_PORT || '8766', 10);
 const HOST = '127.0.0.1';
-const BASE_PATH = '/api/v1/dlp';
+const BASE_PATH = '/v1';
 const MODEL = 'e2e-governed-model';
 const REVIEW_TTL_SECONDS = 600;
 
