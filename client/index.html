@@ -15,7 +15,9 @@
         const icon = document.getElementById('aimo-favicon');
         const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
         function updateIcon() {
-          const theme = localStorage.getItem('color-theme');
+          const theme =
+            document.cookie.match(/(?:^|;\s*)aimo-theme=(light|dark|system)(?:;|$)/)?.[1] ||
+            'system';
           const dark = theme === 'dark' || (theme !== 'light' && systemTheme.matches);
           const href = dark ? 'assets/logo_small_light.svg' : 'assets/logo_small.svg';
           if (icon.getAttribute('href') !== href) icon.setAttribute('href', href);
@@ -43,7 +45,8 @@
       }
     </style>
     <script>
-      const theme = localStorage.getItem('color-theme');
+      const theme =
+        document.cookie.match(/(?:^|;\s*)aimo-theme=(light|dark|system)(?:;|$)/)?.[1] || 'system';
       const loadingContainerStyle = document.createElement('style');
       let backgroundColor;
 
