@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const { logger } = require('@librechat/data-schemas');
 const {
   onDlpSent,
+  addDlpMasks,
   countTokens,
   isDlpUnsent,
   checkBalance,
@@ -405,6 +406,8 @@ class BaseClient {
       if (referencedQuotes != null) {
         userMessage.quotes = referencedQuotes;
       }
+      /** Registered before `onStart`, so the created event already carries the masks. */
+      addDlpMasks(this.options.req, userMessage);
     }
 
     if (typeof opts?.getReqData === 'function') {

@@ -1,4 +1,4 @@
-import type { GovernanceDlpReview } from 'librechat-data-provider';
+import type { GovernanceDlpReview, GovernanceMaskedSpan } from 'librechat-data-provider';
 
 /** SSE streaming event (on_run_step, on_message_delta, etc.) */
 export type StreamEvent = {
@@ -19,6 +19,8 @@ export type CreatedEvent = {
     /** Quoted excerpts referenced on this turn, carried through resumable job
      *  metadata so reconstructed user messages keep their `MessageQuotes`. */
     quotes?: string[];
+    /** Where the Governance Backend masked `text`, carried like `quotes` for `MaskedText`. */
+    dlpMasks?: GovernanceMaskedSpan[];
   };
   streamId: string;
 };

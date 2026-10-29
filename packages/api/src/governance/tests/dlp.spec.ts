@@ -1,9 +1,15 @@
 import { ContentTypes } from 'librechat-data-provider';
-import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
+import type {
+  TMessage,
+  TConversation,
+  TEditedContent,
+  TEphemeralAgent,
+} from 'librechat-data-provider';
 import type { GovernanceFetch, GovernanceSubmissionBody } from '../dlp';
 import type { ServerRequest } from '~/types/http';
 import {
   onDlpSent,
+  addDlpMasks,
   isDlpUnsent,
   hasSelectedTools,
   getDlpSideCallFetch,
@@ -425,6 +431,7 @@ describe('approved review to send again', () => {
   const reviewId = 'approved-review';
   const text = 'Please email [EMAIL] today';
   const messages = [{ role: 'user', content: text }];
+  const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
 
   const approvedRequest = (): ServerRequest =>
     ({
@@ -452,7 +459,14 @@ describe('approved review to send again', () => {
   beforeEach(async () => {
     await getReviewStore().set(
       reviewId,
-      { userId: 'user-123', model: 'governed-model', text, messages, dlpToken: 'approval-token' },
+      {
+        userId: 'user-123',
+        model: 'governed-model',
+        text,
+        messages,
+        dlpToken: 'approval-token',
+        masks,
+      },
       60_000,
     );
   });
@@ -487,6 +501,28 @@ describe('approved review to send again', () => {
 
     expect(isDlpUnsent(req)).toBe(false);
     expect(getRetryableDlpReviewId(req)).toBeUndefined();
+  });
+
+  it("puts the review's masks on the user message once the completion starts", async () => {
+    const req = approvedRequest();
+    const governedFetch = createRequestDlpFetch(req, gateway(503, 200));
+    const message: Partial<TMessage> = { text };
+    addDlpMasks(req, message);
+
+    await send(governedFetch);
+    expect(message.dlpMasks).toBeUndefined();
+
+    await send(governedFetch);
+    expect(message.dlpMasks).toEqual(masks);
+  });
+
+  it('puts no masks on the message of a turn that is not governed', () => {
+    const message: Partial<TMessage> = { text };
+
+    addDlpMasks(approvedRequest(), message);
+    addDlpMasks(undefined, message);
+
+    expect(message).toEqual({ text });
   });
 
   it('names no review for a turn that was not approved', () => {

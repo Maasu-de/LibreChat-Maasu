@@ -1,5 +1,5 @@
 import type { StandardGraph } from '@librechat/agents';
-import type { Agents } from 'librechat-data-provider';
+import type { Agents, GovernanceMaskedSpan } from 'librechat-data-provider';
 
 /**
  * Job status enum
@@ -28,6 +28,8 @@ export interface SerializableJobData {
     /** Quoted excerpts referenced on this turn, carried so resumable/aborted
      *  reconstructions of the user message keep their `MessageQuotes`. */
     quotes?: string[];
+    /** Where the Governance Backend masked `text`, carried like `quotes` for `MaskedText`. */
+    dlpMasks?: GovernanceMaskedSpan[];
   };
 
   /** Response message ID for reconnection */

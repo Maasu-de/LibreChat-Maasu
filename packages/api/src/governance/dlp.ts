@@ -1,9 +1,11 @@
-import { maskGovernanceText, isEphemeralAgentId } from 'librechat-data-provider';
+import { isEphemeralAgentId, getGovernanceMasking } from 'librechat-data-provider';
 import type {
   TPayload,
+  TMessage,
   TEphemeralAgent,
   GovernanceDecision,
   GovernanceDlpReview,
+  GovernanceMaskedSpan,
 } from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
 import type { FileContext } from '~/files/context';
@@ -76,6 +78,8 @@ export interface GovernanceFetchParams {
   onSent?: () => void;
   /** Told after each send of the approved review whether a failure put it back for another try. */
   onApprovalKept?: (kept: boolean) => void;
+  /** Receives where the gateway masked the approved review's text, before the review is sent. */
+  onApproved?: (masks: GovernanceMaskedSpan[] | undefined) => void;
   reviews?: ReviewStore;
 }
 
@@ -336,6 +340,7 @@ interface ApprovalParams {
   fileContexts: () => DlpFileContext[];
   onReview: (review: GovernanceDlpReview) => void;
   onApprovalKept?: (kept: boolean) => void;
+  onApproved?: (masks: GovernanceMaskedSpan[] | undefined) => void;
   fetch: GovernanceFetch;
   reviews: ReviewStore;
 }
@@ -390,7 +395,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     return rejectCompletion('dlp_malformed_response');
   }
 
-  const approvedText = maskGovernanceText(params.text, findings);
+  const { text: approvedText, masks } = getGovernanceMasking(params.text, findings);
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
     return rejectCompletion('dlp_malformed_response');
   }
@@ -404,6 +409,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
       messages,
       dlpToken,
       expiresAt: review.expires_at,
+      ...(masks.length > 0 && { masks }),
     },
     reviewTtl(review.expires_at),
   );
@@ -422,7 +428,7 @@ function isRetryableStatus(status: number): boolean {
  * retried, by the SDK or by the user, and not when the gateway rejects the approval itself.
  */
 async function sendApproved(params: ApprovalParams, reviewId: string): Promise<Response> {
-  const { request, userId, text, reviews, onApprovalKept } = params;
+  const { request, userId, text, reviews, onApprovalKept, onApproved } = params;
   const stored = await reviews.get(reviewId);
   if (
     !stored ||
@@ -435,6 +441,7 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
   }
 
   onApprovalKept?.(false);
+  onApproved?.(stored.masks);
   const restore = async () => {
     await reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
     onApprovalKept?.(true);
@@ -488,6 +495,7 @@ export function createGovernanceDlpFetch({
   onReview,
   onSent,
   onApprovalKept,
+  onApproved,
   reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
@@ -526,6 +534,7 @@ export function createGovernanceDlpFetch({
           fileContexts,
           onReview,
           onApprovalKept,
+          onApproved,
           fetch,
           reviews: reviews ?? getReviewStore(),
         })
@@ -597,6 +606,20 @@ export function addDlpFileContext(
   }
 }
 
+/**
+ * Puts where the gateway masked a governed turn's text on its user message once the gateway
+ * starts the completion. Callbacks run in order, so add this before those that store or announce
+ * the message.
+ */
+export function addDlpMasks(req: ServerRequest | undefined, message: Partial<TMessage>): void {
+  onDlpSent(req, () => {
+    const masks = req?.governanceDlpMasks;
+    if (masks && masks.length > 0) {
+      message.dlpMasks = masks;
+    }
+  });
+}
+
 /** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
 export function onDlpSent(req: ServerRequest | undefined, callback: () => void): void {
   if (!req || !isDlpUnsent(req)) {
@@ -641,6 +664,9 @@ export function createRequestDlpFetch(
     onSent: () => markDlpSent(req),
     onApprovalKept: (kept) => {
       req.governanceDlpApprovalKept = kept;
+    },
+    onApproved: (masks) => {
+      req.governanceDlpMasks = masks;
     },
   });
   sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));
