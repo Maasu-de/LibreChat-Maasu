@@ -49,7 +49,10 @@ export interface GovernanceFileFinding {
   label?: string;
   action: GovernanceDecision;
   count: number;
-  /** The distinct matched values, in the order they first appear in the file. */
+  /**
+   * The matched values, in the order they first appear in the file. A value that differs from an
+   * earlier one only in case or spacing is left out.
+   */
   terms?: string[];
 }
 

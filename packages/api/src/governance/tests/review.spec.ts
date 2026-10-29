@@ -256,9 +256,10 @@ describe('submitted text helpers', () => {
     ]);
   });
 
-  it('lists the distinct values of a file finding in the order they first appear', () => {
+  it('lists each value of a file finding once, whatever its case or spacing, in file order', () => {
     const text =
-      'Attached document(s):\n```md# "team.csv"\nann@example.com,max@example.com,ann@example.com\n```';
+      'Attached document(s):\n```md# "team.csv"\nann@example.com,max@example.com,ANN@example.com\n' +
+      'Project Phoenix,project  phoenix\n```';
     const fileContext: DlpFileContext = {
       text,
       current: true,
@@ -272,10 +273,14 @@ describe('submitted text helpers', () => {
       ],
     };
     const messages = [{ role: 'user', content: `${text}\n${SUBMITTED}` }];
+    const term = (value: string) =>
+      termFinding('/messages/0/content', text.indexOf(value), text.indexOf(value) + value.length);
     const findings = [
       emailFinding('/messages/0/content', text.indexOf('ann@')),
       emailFinding('/messages/0/content', text.indexOf('max@')),
-      emailFinding('/messages/0/content', text.lastIndexOf('ann@')),
+      emailFinding('/messages/0/content', text.indexOf('ANN@')),
+      term('Project Phoenix'),
+      term('project  phoenix'),
     ];
     const submitted = findSubmittedText(messages, SUBMITTED)!;
 
@@ -287,6 +292,14 @@ describe('submitted text helpers', () => {
         action: 'MASK',
         count: 3,
         terms: ['ann@example.com', 'max@example.com'],
+      },
+      {
+        filename: 'team.csv',
+        fileId: 'file-team',
+        category: 'TENANT_TERM',
+        action: 'MASK',
+        count: 2,
+        terms: ['Project Phoenix'],
       },
     ]);
   });

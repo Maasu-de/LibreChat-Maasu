@@ -261,7 +261,7 @@ export function findingsInFiles(
   fileContexts: DlpFileContext[] = [],
 ): GovernanceFileFinding[] {
   const filesByMessage = new Map<number, MessageFiles>();
-  const counted = new Map<string, { counter: GovernanceFileFinding; terms: Set<string> }>();
+  const counted = new Map<string, { counter: GovernanceFileFinding; terms: Map<string, string> }>();
   for (const finding of findings) {
     const match = MESSAGE_CONTENT_LOCATION.exec(finding.location);
     const messageIndex = match ? Number(match[1]) : -1;
@@ -289,7 +289,7 @@ export function findingsInFiles(
     const entry = counted.get(key);
     if (entry) {
       entry.counter.count += 1;
-      entry.terms.add(term);
+      addTerm(entry.terms, term);
       continue;
     }
     const counter: GovernanceFileFinding = {
@@ -307,12 +307,22 @@ export function findingsInFiles(
     if (type !== undefined) {
       counter.type = type;
     }
-    counted.set(key, { counter, terms: new Set([term]) });
+    const terms = new Map<string, string>();
+    addTerm(terms, term);
+    counted.set(key, { counter, terms });
   }
   return Array.from(counted.values(), ({ counter, terms }) => ({
     ...counter,
-    terms: [...terms].filter(Boolean),
+    terms: [...terms.values()],
   }));
+}
+
+/** Adds a matched value unless one that differs only in case or spacing is listed already. */
+function addTerm(terms: Map<string, string>, term: string): void {
+  const key = term.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (key && !terms.has(key)) {
+    terms.set(key, term);
+  }
 }
 
 type ReviewedUserMessage = FinalMessageFields & { quotes?: string[]; manualSkills?: string[] };
