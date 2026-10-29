@@ -9,6 +9,8 @@ const { CacheKeys, ErrorTypes, SystemRoles } = require('librechat-data-provider'
 const {
   isEnabled,
   isGovernancePilotEnabled,
+  applyGovernanceAdministratorRole,
+  assertOidcAdministratorConfigured,
   logHeaders,
   safeStringify,
   findOpenIDUser,
@@ -567,6 +569,7 @@ async function applyOpenIdRoleSync({
  * @returns {Promise<Object>} The authenticated user object with tokenset
  */
 async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
+  assertOidcAdministratorConfigured();
   const claims = tokenset.claims ? tokenset.claims() : tokenset;
   const userinfo = {
     ...claims,
@@ -718,7 +721,9 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   const adminRoleTokenKind = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND;
   let adminRoleGranted = false;
 
-  if (adminRole && adminRoleParameterPath && adminRoleTokenKind) {
+  if (isGovernancePilotEnabled()) {
+    adminRoleGranted = applyGovernanceAdministratorRole(user, claims);
+  } else if (adminRole && adminRoleParameterPath && adminRoleTokenKind) {
     const adminRoleObject = getRoleSource(adminRoleTokenKind, 'admin role', tokenset, userinfo);
 
     let adminRoles = get(adminRoleObject, adminRoleParameterPath);
