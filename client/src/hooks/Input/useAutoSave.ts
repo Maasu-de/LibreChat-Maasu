@@ -93,6 +93,10 @@ export const useAutoSave = ({
     [textAreaRef],
   );
 
+  /** Whether the user edited the composer since the draft key last changed. `input` fires for
+   * edits only: a send or a restored draft writes the value without it. */
+  const composerEditedRef = useRef(false);
+
   useEffect(() => {
     // This useEffect is responsible for setting up and cleaning up the auto-save functionality
     // for the text area input. It saves the text to localStorage with a debounce to prevent
@@ -112,6 +116,8 @@ export const useAutoSave = ({
     const handleInputSlow = debounce(saveLatest, 850);
 
     const eventListener = () => {
+      composerEditedRef.current = true;
+
       /** Cancel any pending operations to avoid conflicts */
       handleInputFast.cancel();
       handleInputSlow.cancel();
@@ -194,7 +200,9 @@ export const useAutoSave = ({
 
       /** A response starting or ending in this conversation is not a conversation switch: the
        * composer already holds the newest text, and the stored draft is only a debounced copy
-       * that may lag behind it. A new chat counts as the same one once it receives its id. */
+       * that may lag behind it. A new chat counts as the same one once it receives its id.
+       * An empty composer only holds the newest text if the user emptied it: left untouched it
+       * is still the one the send cleared, and an unsent turn has put its message in the draft. */
       const pendingSource = pendingSourceIdRef.current;
       const isOwnPendingSwap =
         currentConversationId != null &&
@@ -202,7 +210,7 @@ export const useAutoSave = ({
           (leavingPending &&
             (pendingSource === _conversationId || pendingSource === Constants.NEW_CONVO)));
       const liveText = textAreaRef?.current?.value ?? '';
-      if (isOwnPendingSwap && liveText !== '') {
+      if (isOwnPendingSwap && (liveText !== '' || composerEditedRef.current)) {
         setDraft({ id: conversationId, value: liveText });
       } else {
         restoreText(conversationId);
@@ -212,6 +220,7 @@ export const useAutoSave = ({
       console.error(e);
     }
 
+    composerEditedRef.current = false;
     pendingSourceIdRef.current =
       conversationId === Constants.PENDING_CONVO ? (_conversationId ?? null) : null;
     prevConversationIdRef.current = conversationId;
