@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { NEW_CHAT_PATH, messagesView, sendMessage } from '../mock/helpers';
+import { messagesView, sendMessage } from '../mock/helpers';
+import { newGovernedChat } from './helpers';
 
 /**
  * The composer around a DLP review (#235), against `e2e/setup/fake-governance-gateway.js`.
@@ -8,29 +9,12 @@ import { NEW_CHAT_PATH, messagesView, sendMessage } from '../mock/helpers';
  * typed for the next message while the review was pending stays.
  */
 
-const GOVERNED_ENDPOINT = 'AI Governance Gateway';
-const GOVERNED_MODEL = 'e2e-governed-model';
 const IBAN = 'DE89370400440532013000';
 
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message input' });
 
 const reply = (page: Page, state: string) =>
   messagesView(page).getByText(`E2E gateway reply [${state}]`);
-
-/** Opens a new chat on the governed endpoint, selecting its model if none is preselected. */
-async function newGovernedChat(page: Page) {
-  await page.goto(NEW_CHAT_PATH, { timeout: 30000 });
-  const trigger = page.getByRole('button', { name: 'Select a model' }).first();
-  await expect(composer(page)).toBeVisible();
-  if (await trigger.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await trigger.click();
-    await page.getByRole('option', { name: GOVERNED_ENDPOINT }).click();
-    const model = page.getByRole('option', { name: GOVERNED_MODEL, exact: true });
-    if (await model.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await model.click();
-    }
-  }
-}
 
 test.describe('governed composer drafts', () => {
   test.beforeEach(async ({ page }) => {
