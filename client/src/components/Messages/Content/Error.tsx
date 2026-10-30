@@ -76,6 +76,10 @@ const errorMessages = {
   },
   [ErrorTypes.GOOGLE_TOOL_CONFLICT]: 'com_error_google_tool_conflict',
   [ErrorTypes.STREAM_EXPIRED]: 'com_error_stream_expired',
+  [ErrorTypes.GOVERNANCE_MODEL_NOT_ALLOWED]: (json: TGenericError, localize: LocalizeFunction) =>
+    json.info
+      ? localize('com_error_governance_model_not_allowed', { 0: json.info })
+      : localize('com_error_governance_no_model_allowed'),
   /** Codes the governance SSO gateway (nginx) returns for background requests */
   AUTHENTICATION_REQUIRED: 'com_error_authentication_required',
   ACCESS_DENIED: 'com_error_access_denied',

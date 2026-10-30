@@ -64,6 +64,8 @@ export interface GovernanceDlpResult {
   maskedRanges?: GovernanceMaskedRange[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
+  /** Set when the content does not allow the selected model, which blocks the prompt. */
+  modelNotAllowed?: { model: string; allowedTiers: GovernanceTier[] };
 }
 
 /** Location that the findings and masked preview of a DLP review give for the submitted text. */

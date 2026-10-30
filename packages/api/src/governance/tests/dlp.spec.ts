@@ -161,6 +161,39 @@ describe('Governance DLP', () => {
     expect(headers.get('X-Existing-Header')).toBe('kept');
   });
 
+  describe('a model the content does not allow', () => {
+    const req = { user: { id: 'user-123' } } as unknown as ServerRequest;
+    const send = (response: Response) =>
+      createGovernanceAttributionFetch(req, async () => response)(
+        'http://governance.test/api/v1/dlp/chat/completions',
+        { method: 'POST' },
+      );
+
+    it('is restated as a typed error that names the allowed tiers', async () => {
+      const error = {
+        message: 'The selected model is not allowed for this content.',
+        type: 'governance_policy_violation',
+        code: 'governance_model_not_allowed',
+        allowed_tiers: [{ code: 'S1', name: 'EU Sovereign', description: 'Hosted in the EU.' }],
+      };
+
+      const response = await send(new Response(JSON.stringify({ error }), { status: 403 }));
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: {
+          ...error,
+          message: '{"type":"governance_model_not_allowed","info":"EU Sovereign"}',
+        },
+      });
+    });
+
+    it('leaves any other rejection unchanged', async () => {
+      const blocked = new Response('{"error":{"code":"governance_blocked"}}', { status: 403 });
+      expect(await send(blocked)).toBe(blocked);
+    });
+  });
+
   it('rejects an unsupported request to the DLP completions API instead of forwarding it', async () => {
     const upstreamFetch = jest.fn();
     const governedFetch = createGovernanceDlpFetch({

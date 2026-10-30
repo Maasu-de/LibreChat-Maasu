@@ -1,7 +1,11 @@
 import React from 'react';
 import userEvent from '@testing-library/user-event';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import type { GovernanceFinding, GovernanceMaskedRange } from 'librechat-data-provider';
+import type {
+  GovernanceTier,
+  GovernanceFinding,
+  GovernanceMaskedRange,
+} from 'librechat-data-provider';
 import DlpInterventionDialog, {
   groupFileFindings,
   buildPromptSegments,
@@ -240,6 +244,45 @@ describe('DlpInterventionDialog', () => {
 
     expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
+  });
+
+  describe('a model the content does not allow', () => {
+    const renderModelBlock = (findings: GovernanceFinding[], allowedTiers: GovernanceTier[]) =>
+      render(
+        <DlpInterventionDialog
+          result={{
+            decision: 'BLOCK',
+            findings,
+            modelNotAllowed: { model: 'public-s2', allowedTiers },
+          }}
+          originalText="Discuss Project Acme now"
+          onCancel={jest.fn()}
+          onConfirm={jest.fn()}
+        />,
+      );
+
+    it('names the model and the allowed tiers, with every value shown unmasked', () => {
+      const tier = { code: 'S1', name: 'EU Sovereign', description: 'Hosted in the EU.' };
+      renderModelBlock([finding({ replacement: undefined })], [tier]);
+
+      expect(screen.getByRole('dialog', { name: 'com_ui_dlp_model_blocked_title' })).toBeVisible();
+      expect(screen.getByText('com_ui_dlp_model_blocked_description public-s2')).toBeVisible();
+      const tiers = screen.getByRole('region', { name: 'com_ui_dlp_allowed_tiers' });
+      expect(tiers).toHaveTextContent('EU Sovereign · Hosted in the EU.');
+      const prompt = screen.getByRole('region', { name: 'com_ui_dlp_original_prompt' });
+      const value = within(prompt).getByText('Project Acme', { selector: 'mark' });
+      expect(value).toHaveClass(MASK_HIGHLIGHT);
+      expect(value).not.toHaveClass(...REDACTED);
+      expect(screen.getByRole('button', { name: 'com_ui_close' })).toBeVisible();
+      expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
+    });
+
+    it('says when no model may take it, and leaves out a prompt without findings', () => {
+      renderModelBlock([], []);
+
+      expect(screen.getByText('com_ui_dlp_model_blocked_no_tier')).toBeVisible();
+      expect(screen.queryByRole('region', { name: 'com_ui_dlp_original_prompt' })).toBeNull();
+    });
   });
 
   it('shows a card per attached file above the prompt', () => {
