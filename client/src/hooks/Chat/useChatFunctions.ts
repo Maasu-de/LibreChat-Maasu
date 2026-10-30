@@ -16,7 +16,6 @@ import {
   replaceSpecialVars,
   isAssistantsEndpoint,
   getDefaultParamsEndpoint,
-  GOVERNANCE_DLP_TEXT_LOCATION,
 } from 'librechat-data-provider';
 import type {
   TMessage,
@@ -31,6 +30,7 @@ import type { SetterOrUpdater } from 'recoil';
 import type { TAskFunction, ExtendedFile } from '~/common';
 import {
   logger,
+  getApprovedDlpText,
   hasStreamStartFailed,
   settleDlpReviewFiles,
   getRouteChatProjectId,
@@ -728,10 +728,8 @@ export default function useChatFunctions({
       return false;
     }
     const { result } = pendingDlpReview;
-    const approved = result.maskedPreview?.find(
-      (item) => item.location === GOVERNANCE_DLP_TEXT_LOCATION,
-    );
-    if (!approved) {
+    const approvedText = getApprovedDlpText(result);
+    if (approvedText == null) {
       showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
       return false;
     }
@@ -740,7 +738,7 @@ export default function useChatFunctions({
     /** The reviewed submit already drained the `$` queue, so its skills come from the review.
      *  An explicit list also keeps skills queued since then for the next message. */
     ask(
-      { text: approved.text },
+      { text: approvedText },
       {
         dlpReviewId: result.reviewId,
         overrideManualSkills: pendingDlpReview.manualSkills ?? [],

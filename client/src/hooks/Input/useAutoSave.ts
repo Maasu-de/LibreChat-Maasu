@@ -93,29 +93,30 @@ export const useAutoSave = ({
     [textAreaRef],
   );
 
+  /** Whether the user edited the composer since the draft key last changed. `input` fires for
+   * edits only: a send or a restored draft writes the value without it. */
+  const composerEditedRef = useRef(false);
+
   useEffect(() => {
     // This useEffect is responsible for setting up and cleaning up the auto-save functionality
     // for the text area input. It saves the text to localStorage with a debounce to prevent
     // excessive writes.
-    if (!saveDrafts || conversationId == null || conversationId === '') {
+    const textArea = textAreaRef?.current;
+    if (!saveDrafts || conversationId == null || conversationId === '' || !textArea) {
       return;
     }
 
+    /** Reads the composer when the write lands, so a send that cleared it meanwhile is saved as cleared */
+    const saveLatest = () => setDraft({ id: conversationId, value: textArea.value });
+
     /** Use shorter debounce for saving text (25ms) to capture rapid typing */
-    const handleInputFast = debounce(
-      (value: string) => setDraft({ id: conversationId, value }),
-      25,
-    );
+    const handleInputFast = debounce(saveLatest, 25);
 
     /** Use longer debounce for clearing empty values (850ms) to prevent accidental draft loss */
-    const handleInputSlow = debounce(
-      (value: string) => setDraft({ id: conversationId, value }),
-      850,
-    );
+    const handleInputSlow = debounce(saveLatest, 850);
 
-    const eventListener = (e: Event) => {
-      const target = e.target as HTMLTextAreaElement;
-      const value = target.value;
+    const eventListener = () => {
+      composerEditedRef.current = true;
 
       /** Cancel any pending operations to avoid conflicts */
       handleInputFast.cancel();
@@ -123,28 +124,26 @@ export const useAutoSave = ({
 
       /** If empty, use long delay to prevent accidental clearing
        * Otherwise use short delay to capture rapid typing */
-      if (value === '') {
-        handleInputSlow(value);
+      if (textArea.value === '') {
+        handleInputSlow();
       } else {
-        handleInputFast(value);
+        handleInputFast();
       }
     };
 
-    const textArea = textAreaRef?.current;
-    if (textArea) {
-      textArea.addEventListener('input', eventListener);
-    }
+    textArea.addEventListener('input', eventListener);
 
     return () => {
-      if (textArea) {
-        textArea.removeEventListener('input', eventListener);
-      }
-      handleInputFast.cancel();
-      handleInputSlow.cancel();
+      textArea.removeEventListener('input', eventListener);
+      /** Land pending writes: the key changes the moment a response starts or ends */
+      handleInputFast.flush();
+      handleInputSlow.flush();
     };
   }, [conversationId, saveDrafts, textAreaRef]);
 
   const prevConversationIdRef = useRef<string | null>(null);
+  /** The conversation a response was generating for, while the draft is parked on PENDING_CONVO */
+  const pendingSourceIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     // This useEffect is responsible for saving the current conversation's draft and
@@ -163,12 +162,9 @@ export const useAutoSave = ({
     setFiles(new Map());
 
     try {
+      const leavingPending = prevConversationIdRef.current === Constants.PENDING_CONVO;
       // Check for transition from PENDING_CONVO to a valid conversationId
-      if (
-        prevConversationIdRef.current === Constants.PENDING_CONVO &&
-        conversationId !== Constants.PENDING_CONVO &&
-        conversationId.length > 3
-      ) {
+      if (leavingPending && conversationId.length > 3) {
         const pendingDraft = localStorage.getItem(
           `${LocalStorageKeys.TEXT_DRAFT}${Constants.PENDING_CONVO}`,
         );
@@ -196,19 +192,41 @@ export const useAutoSave = ({
             restoreFiles(conversationId);
           }
         }
+      } else if (leavingPending) {
+        localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${Constants.PENDING_CONVO}`);
       } else if (currentConversationId != null && currentConversationId) {
         saveText(currentConversationId);
       }
 
-      restoreText(conversationId);
+      /** A response starting or ending in this conversation is not a conversation switch: the
+       * composer already holds the newest text, and the stored draft is only a debounced copy
+       * that may lag behind it. A new chat counts as the same one once it receives its id.
+       * An empty composer only holds the newest text if the user emptied it: left untouched it
+       * is still the one the send cleared, and an unsent turn has put its message in the draft. */
+      const pendingSource = pendingSourceIdRef.current;
+      const isOwnPendingSwap =
+        currentConversationId != null &&
+        (conversationId === Constants.PENDING_CONVO ||
+          (leavingPending &&
+            (pendingSource === _conversationId || pendingSource === Constants.NEW_CONVO)));
+      const liveText = textAreaRef?.current?.value ?? '';
+      if (isOwnPendingSwap && (liveText !== '' || composerEditedRef.current)) {
+        setDraft({ id: conversationId, value: liveText });
+      } else {
+        restoreText(conversationId);
+      }
       restoreFiles(conversationId);
     } catch (e) {
       console.error(e);
     }
 
+    composerEditedRef.current = false;
+    pendingSourceIdRef.current =
+      conversationId === Constants.PENDING_CONVO ? (_conversationId ?? null) : null;
     prevConversationIdRef.current = conversationId;
     setCurrentConversationId(conversationId);
   }, [
+    _conversationId,
     currentConversationId,
     conversationId,
     restoreFiles,
