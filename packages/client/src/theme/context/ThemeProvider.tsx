@@ -7,11 +7,11 @@ import React, {
   useState,
   useRef,
 } from 'react';
-import { JSX } from 'react/jsx-runtime';
+import type { JSX } from 'react/jsx-runtime';
+import type { IThemeRGB } from '../types';
+import { readThemePreference, writeThemePreference, subscribeToTheme } from '../utils/preference';
 import applyTheme from '../utils/applyTheme';
-import { IThemeRGB } from '../types';
 
-const THEME_KEY = 'color-theme';
 const THEME_COLORS_KEY = 'theme-colors';
 const THEME_NAME_KEY = 'theme-name';
 
@@ -68,22 +68,6 @@ const isValidThemeColors = (value: unknown): value is IThemeRGB => {
 };
 
 /**
- * Get initial theme from localStorage or default to 'system'
- */
-const getInitialTheme = (): string => {
-  if (typeof window === 'undefined') return 'system';
-  try {
-    const stored = localStorage.getItem(THEME_KEY);
-    if (stored && ['light', 'dark', 'system'].includes(stored)) {
-      return stored;
-    }
-  } catch {
-    // localStorage not available
-  }
-  return 'system';
-};
-
-/**
  * Get initial theme colors from localStorage
  */
 const getInitialThemeColors = (): IThemeRGB | undefined => {
@@ -117,7 +101,7 @@ const getInitialThemeName = (): string | undefined => {
 
 /**
  * ThemeProvider component that handles both dark/light mode switching
- * and dynamic color themes via CSS variables with localStorage persistence
+ * and dynamic color themes via CSS variables with persisted preferences
  */
 export function ThemeProvider({
   children,
@@ -125,11 +109,12 @@ export function ThemeProvider({
   themeName: propThemeName,
   initialTheme,
 }: ThemeProviderProps): JSX.Element {
-  const [theme, setThemeState] = useState<string>(getInitialTheme);
+  const [theme, setThemeState] = useState<string>(readThemePreference);
   const [themeRGB, setThemeRGBState] = useState<IThemeRGB | undefined>(getInitialThemeColors);
   const [themeName, setThemeNameState] = useState<string | undefined>(getInitialThemeName);
-  const [systemDark, setSystemDark] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
+  const [systemDark, setSystemDark] = useState(
+    () =>
+      typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
   );
   const darkMode = theme === 'dark' || (theme === 'system' && systemDark);
 
@@ -138,12 +123,14 @@ export function ThemeProvider({
 
   const setTheme = useCallback((newTheme: string) => {
     setThemeState(newTheme);
-    if (typeof window === 'undefined') return;
-    try {
-      localStorage.setItem(THEME_KEY, newTheme);
-    } catch {
-      // localStorage not available
-    }
+    writeThemePreference(newTheme);
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setThemeState(readThemePreference());
+    const unsubscribe = subscribeToTheme(sync);
+    sync();
+    return unsubscribe;
   }, []);
 
   const setThemeRGB = useCallback((colors?: IThemeRGB) => {
