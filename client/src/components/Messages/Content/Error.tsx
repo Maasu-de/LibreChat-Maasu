@@ -37,6 +37,12 @@ type TGenericError = {
 };
 
 const errorMessages = {
+  budget_exceeded: (json: { scope?: string }, localize: LocalizeFunction) =>
+    localize(
+      json.scope === 'group'
+        ? 'com_error_group_budget_exceeded'
+        : 'com_error_tenant_budget_exceeded',
+    ),
   [ErrorTypes.MODERATION]: 'com_error_moderation',
   [ErrorTypes.NO_USER_KEY]: 'com_error_no_user_key',
   [ErrorTypes.INVALID_USER_KEY]: 'com_error_invalid_user_key',

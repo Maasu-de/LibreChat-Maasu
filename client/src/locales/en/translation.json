@@ -1,4 +1,6 @@
 {
+  "com_error_tenant_budget_exceeded": "Your organization has reached its monthly spending limit. Contact your administrator or try again next month.",
+  "com_error_group_budget_exceeded": "One of your groups has reached its monthly spending limit. Contact your administrator or try again next month.",
   "com_ui_governance_models_unavailable": "Models are unavailable. Please try again later.",
   "com_ui_governance_tier_unavailable": "Tier unavailable",
   "com_ui_governance_tier_unavailable_description": "Governance tier information is unavailable for these models.",
