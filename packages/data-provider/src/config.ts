@@ -2382,6 +2382,10 @@ export enum ErrorTypes {
    * SSE stream 404 — job completed, expired, or was deleted before the subscriber connected
    */
   STREAM_EXPIRED = 'stream_expired',
+  /**
+   * The AI Governance Gateway does not allow the selected model for the content
+   */
+  GOVERNANCE_MODEL_NOT_ALLOWED = 'governance_model_not_allowed',
 }
 
 /**

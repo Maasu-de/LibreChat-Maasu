@@ -1,24 +1,28 @@
-import { isEphemeralAgentId } from 'librechat-data-provider';
+import { ErrorTypes, isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
+  TMessage,
+  GovernanceTier,
   TEphemeralAgent,
   GovernanceDecision,
   GovernanceDlpReview,
+  GovernanceMaskedSpan,
 } from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
 import type { FileContext } from '~/files/context';
 import type { ServerRequest } from '~/types/http';
 import {
-  maskText,
   readReview,
   reviewTtl,
   getReviewStore,
   toClientReview,
   findSubmittedText,
   findingsInFiles,
+  toModelBlockReview,
   findingsInSubmittedText,
 } from './review';
 import { isGovernancePilotEnabled } from './mode';
+import { getGovernanceMasking } from './mask';
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
@@ -77,6 +81,8 @@ export interface GovernanceFetchParams {
   onSent?: () => void;
   /** Told after each send of the approved review whether a failure put it back for another try. */
   onApprovalKept?: (kept: boolean) => void;
+  /** Receives where the gateway masked the approved review's text, before the review is sent. */
+  onApproved?: (masks: GovernanceMaskedSpan[] | undefined) => void;
   reviews?: ReviewStore;
 }
 
@@ -337,6 +343,7 @@ interface ApprovalParams {
   fileContexts: () => DlpFileContext[];
   onReview: (review: GovernanceDlpReview) => void;
   onApprovalKept?: (kept: boolean) => void;
+  onApproved?: (masks: GovernanceMaskedSpan[] | undefined) => void;
   fetch: GovernanceFetch;
   reviews: ReviewStore;
 }
@@ -378,8 +385,13 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     submitted,
     params.fileContexts(),
   );
+  const masking = getGovernanceMasking(params.text, findings);
   if (decision === 'BLOCK') {
-    params.onReview(toClientReview(review, decision, findings, undefined, fileFindings));
+    params.onReview(
+      review.block_reason === 'model_not_allowed'
+        ? toModelBlockReview(review, params.request.model, findings, fileFindings)
+        : toClientReview(review, decision, findings, masking, fileFindings),
+    );
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
 
@@ -391,7 +403,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     return rejectCompletion('dlp_malformed_response');
   }
 
-  const approvedText = maskText(params.text, findings);
+  const { text: approvedText, masks } = masking;
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
     return rejectCompletion('dlp_malformed_response');
   }
@@ -405,10 +417,11 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
       messages,
       dlpToken,
       expiresAt: review.expires_at,
+      ...(masks.length > 0 && { masks }),
     },
     reviewTtl(review.expires_at),
   );
-  params.onReview(toClientReview(review, decision, findings, approvedText, fileFindings));
+  params.onReview(toClientReview(review, decision, findings, masking, fileFindings));
   return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
@@ -423,7 +436,7 @@ function isRetryableStatus(status: number): boolean {
  * retried, by the SDK or by the user, and not when the gateway rejects the approval itself.
  */
 async function sendApproved(params: ApprovalParams, reviewId: string): Promise<Response> {
-  const { request, userId, text, reviews, onApprovalKept } = params;
+  const { request, userId, text, reviews, onApprovalKept, onApproved } = params;
   const stored = await reviews.get(reviewId);
   if (
     !stored ||
@@ -436,6 +449,7 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
   }
 
   onApprovalKept?.(false);
+  onApproved?.(stored.masks);
   const restore = async () => {
     await reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
     onApprovalKept?.(true);
@@ -489,6 +503,7 @@ export function createGovernanceDlpFetch({
   onReview,
   onSent,
   onApprovalKept,
+  onApproved,
   reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
@@ -527,6 +542,7 @@ export function createGovernanceDlpFetch({
           fileContexts,
           onReview,
           onApprovalKept,
+          onApproved,
           fetch,
           reviews: reviews ?? getReviewStore(),
         })
@@ -538,20 +554,51 @@ export function createGovernanceDlpFetch({
   };
 }
 
+/** The gateway's 403 for a selected model that the content does not allow. */
+interface ModelNotAllowedBody {
+  error?: { code?: string; allowed_tiers?: GovernanceTier[] };
+}
+
+/**
+ * Restates the gateway's rejection of a model the content does not allow as a typed error, so the
+ * chat explains it in the user's language with the allowed tiers. The SDK puts the message in the
+ * error it throws, so the type travels as that message.
+ */
+async function explainModelRejection(response: Response): Promise<Response> {
+  if (response.status !== 403) {
+    return response;
+  }
+  const body: ModelNotAllowedBody | undefined = await response
+    .clone()
+    .json()
+    .catch(() => undefined);
+  if (body?.error?.code !== ErrorTypes.GOVERNANCE_MODEL_NOT_ALLOWED) {
+    return response;
+  }
+  const info = (body.error.allowed_tiers ?? []).map((tier) => tier.name).join(', ');
+  const message = JSON.stringify({ type: ErrorTypes.GOVERNANCE_MODEL_NOT_ALLOWED, info });
+  return new Response(JSON.stringify({ error: { ...body.error, message } }), {
+    status: response.status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 /**
  * Adds server-resolved identity and group context to every gateway request. This deliberately
  * does not perform DLP parsing or approval, so completions that the DLP flow cannot govern
  * (files, tools, regenerations, and DLP-disabled deployments) still have accurate usage
- * attribution at the gateway.
+ * attribution at the gateway. A rejected model is explained on every one of these paths.
  */
 export function createGovernanceAttributionFetch(
   req: ServerRequest,
   fetch: GovernanceFetch = globalThis.fetch,
 ): GovernanceFetch {
   return async (input, init) =>
-    fetch(
-      input,
-      withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
+    explainModelRejection(
+      await fetch(
+        input,
+        withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
+      ),
     );
 }
 
@@ -598,6 +645,20 @@ export function addDlpFileContext(
   }
 }
 
+/**
+ * Puts where the gateway masked a governed turn's text on its user message once the gateway
+ * starts the completion. Callbacks run in order, so add this before those that store or announce
+ * the message.
+ */
+export function addDlpMasks(req: ServerRequest | undefined, message: Partial<TMessage>): void {
+  onDlpSent(req, () => {
+    const masks = req?.governanceDlpMasks;
+    if (masks && masks.length > 0) {
+      message.dlpMasks = masks;
+    }
+  });
+}
+
 /** Runs `callback` once the gateway starts this turn's completion, or at once if not governed. */
 export function onDlpSent(req: ServerRequest | undefined, callback: () => void): void {
   if (!req || !isDlpUnsent(req)) {
@@ -642,6 +703,9 @@ export function createRequestDlpFetch(
     onSent: () => markDlpSent(req),
     onApprovalKept: (kept) => {
       req.governanceDlpApprovalKept = kept;
+    },
+    onApproved: (masks) => {
+      req.governanceDlpMasks = masks;
     },
   });
   sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));

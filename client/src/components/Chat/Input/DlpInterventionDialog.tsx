@@ -1,41 +1,47 @@
-import { Fragment, useMemo } from 'react';
+import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
+import { ChevronDown } from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
-import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
-import type { ReactNode } from 'react';
+import { FileSources, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
   GovernanceDlpResult,
   GovernanceFinding,
   GovernanceDecision,
+  GovernanceMaskedRange,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
+import type { ReactNode, KeyboardEvent, SyntheticEvent } from 'react';
+import type { CategorizedFinding } from '~/components/Chat/Messages/Content/MaskedText';
 import type { TranslationKeys } from '~/hooks';
+import {
+  REDACTED,
+  REDACTION_BAR,
+  useCategoryLabel,
+} from '~/components/Chat/Messages/Content/MaskedText';
+import FilePreview from './Files/FilePreview';
+import { cn, getFileType } from '~/utils';
 import { useLocalize } from '~/hooks';
-import { cn } from '~/utils';
 
-/** A finding covering a text segment, underlined on row `lane`; `ends` marks its last segment. */
-type SegmentFinding = { finding: GovernanceFinding; lane: number; ends: boolean };
-type TextSegment = { text: string; findings?: SegmentFinding[]; replacement?: boolean };
-type FindingTerm = { finding: GovernanceFinding; term?: string };
-type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
+/** An original value in the prompt, with the finding that took it. */
+type FoundValue = { text: string; finding: GovernanceFinding };
+/** The prompt: text without findings, and found values. */
+type PromptSegment = { text: string } | FoundValue;
+/** The redacted value shown in the text, and the place its bar took before the text reflowed. */
+type RevealedValue = { index: number; bar: DOMRect[]; element: HTMLElement };
+/** The findings of one category and action in a file, with the distinct values they matched. */
+type FindingGroup = Pick<
+  GovernanceFileFinding,
+  'category' | 'label' | 'action' | 'count' | 'terms'
+>;
+/** The findings in one attached file, whose MIME type picks its icon like in the composer. */
+type FileFindings = { id: string; filename: string; type?: string; groups: FindingGroup[] };
+type ActionStyle = { chip: string; highlight: string };
 
-const label = (category: string) => category.replaceAll('_', ' ');
-
-/**
- * Opaque keys of custom categories, which are never shown to the user. The gateway labels them
- * (`src/governance/category_labels.py` in ai-governance-gateway); this only covers reviews
- * without a label.
- */
-const CUSTOM_CATEGORY_PREFIX = 'CUSTOM_';
-
-const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
-  CLIENT_NAME: 'com_ui_dlp_category_client_name',
-  CODE_NAME: 'com_ui_dlp_category_code_name',
-  CREDIT_CARD: 'com_ui_dlp_category_credit_card',
-  EMAIL_ADDRESS: 'com_ui_dlp_category_email_address',
-  IBAN_CODE: 'com_ui_dlp_category_iban_code',
-  PHONE_NUMBER: 'com_ui_dlp_category_phone_number',
-  PROJECT_NAME: 'com_ui_dlp_category_project_name',
-};
+/** How many matched values the popup of a finding badge lists; the rest are only counted. */
+const VISIBLE_TERMS = 50;
+/** Grace period so moving the pointer from a badge to its popup doesn't close it. */
+const CLOSE_DELAY_MS = 120;
+const SEVERITY: GovernanceDecision[] = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
 
 const DECISION_COPY: Record<GovernanceDecision, TranslationKeys> = {
   ALLOW: 'com_ui_dlp_decision_allow',
@@ -51,15 +57,51 @@ const COPY = {
   BLOCK: { title: 'com_ui_dlp_block_title', description: 'com_ui_dlp_block_description' },
 } as const satisfies Record<GovernanceDecision, { title: string; description: string }>;
 
-const ACTION_CLASS: Record<GovernanceDecision, string> = {
-  ALLOW: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
-  MASK: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
-  WARN: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
-  BLOCK: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
+const MODEL_BLOCK_COPY = {
+  title: 'com_ui_dlp_model_blocked_title',
+  description: 'com_ui_dlp_model_blocked_description',
+} as const;
+
+/** The box that holds the prompt, as it will be sent when the gateway masks it. */
+const PROMPT_BOX =
+  'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
+/** A redaction bar the pointer or focus can reveal, unlike the bars of a sent message. */
+const REDACTION = cn(
+  REDACTION_BAR,
+  'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
+);
+/** A value the gateway keeps, readable on the color of its finding's action. */
+const FLAGGED = 'rounded-sm box-decoration-clone px-0.5 text-inherit';
+const BADGE =
+  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em] transition-colors';
+
+const ACTION_STYLE: Record<GovernanceDecision, ActionStyle> = {
+  ALLOW: {
+    chip: 'border-aimo-green bg-aimo-green-soft text-aimo-green-ink',
+    highlight: 'bg-aimo-green/30',
+  },
+  MASK: {
+    chip: 'border-aimo-mask bg-aimo-mask-soft text-aimo-mask-ink',
+    highlight: 'bg-aimo-mask/35',
+  },
+  WARN: {
+    chip: 'border-aimo-warn bg-aimo-warn-soft text-aimo-warn-ink',
+    highlight: 'bg-aimo-warn/40',
+  },
+  BLOCK: {
+    chip: 'border-aimo-block bg-aimo-block-soft text-aimo-block-ink',
+    highlight: 'bg-aimo-block/30',
+  },
 };
+
+const isAt = (x: number, y: number) => (rect: DOMRect) =>
+  x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 
 const byPosition = (a: GovernanceFinding, b: GovernanceFinding) =>
   a.start - b.start || b.end - a.end;
+
+const bySeverity = (a: GovernanceFinding, b: GovernanceFinding) =>
+  SEVERITY.indexOf(b.action) - SEVERITY.indexOf(a.action) || byPosition(a, b);
 
 const isInText = (chars: string[], f: GovernanceFinding) =>
   f.location === GOVERNANCE_DLP_TEXT_LOCATION &&
@@ -68,88 +110,153 @@ const isInText = (chars: string[], f: GovernanceFinding) =>
   f.start < chars.length;
 
 /**
- * Splits the text at every finding boundary. Each finding keeps its whole span on the first
- * underline row that is free there, so overlapping findings are each underlined in full.
+ * Splits the text into what has no findings and a value per finding, in text order. A value the
+ * gateway replaces takes the range the review gives it; any other finding takes what no
+ * replaced, more severe or earlier finding took.
  */
-export function buildFindingSegments(text: string, findings: GovernanceFinding[]): TextSegment[] {
+export function buildPromptSegments(
+  text: string,
+  findings: GovernanceFinding[],
+  maskedRanges: GovernanceMaskedRange[] = [],
+): PromptSegment[] {
   const chars = Array.from(text);
-  const laneEnds: number[] = [];
-  const laned = findings
-    .filter((f) => isInText(chars, f))
-    .map((f) => (f.end > chars.length ? { ...f, end: chars.length } : f))
-    .sort(byPosition)
-    .map((finding) => {
-      const free = laneEnds.findIndex((end) => end <= finding.start);
-      const lane = free === -1 ? laneEnds.length : free;
-      laneEnds[lane] = finding.end;
-      return { finding, lane };
-    });
-  if (laned.length === 0) {
-    return [{ text }];
+  const owners = new Array<GovernanceFinding | undefined>(chars.length);
+  for (const { start, end, finding } of maskedRanges) {
+    owners.fill(findings[finding], start, end);
+  }
+  const kept = findings
+    .filter((finding) => finding.replacement === undefined && isInText(chars, finding))
+    .sort(bySeverity);
+  for (const finding of kept) {
+    for (let i = finding.start; i < Math.min(finding.end, chars.length); i++) {
+      owners[i] ??= finding;
+    }
   }
 
-  const boundaries = [
-    ...new Set([0, chars.length, ...laned.flatMap(({ finding }) => [finding.start, finding.end])]),
-  ].sort((a, b) => a - b);
-
-  const segments: TextSegment[] = [];
-  let active: Omit<SegmentFinding, 'ends'>[] = [];
-  let next = 0;
-  for (let i = 1; i < boundaries.length; i++) {
-    const from = boundaries[i - 1];
-    const to = boundaries[i];
-    active = active.filter(({ finding }) => finding.end > from);
-    while (next < laned.length && laned[next].finding.start === from) {
-      active.push(laned[next++]);
+  const segments: PromptSegment[] = [];
+  let from = 0;
+  for (let i = 1; i <= chars.length; i++) {
+    if (i < chars.length && owners[i] === owners[from]) {
+      continue;
     }
-    const segment: TextSegment = { text: chars.slice(from, to).join('') };
-    if (active.length) {
-      segment.findings = active
-        .map((f) => ({ ...f, ends: f.finding.end === to }))
-        .sort((a, b) => a.lane - b.lane);
-    }
-    segments.push(segment);
+    const segment = chars.slice(from, i).join('');
+    const finding = owners[from];
+    segments.push(finding ? { text: segment, finding } : { text: segment });
+    from = i;
   }
   return segments;
 }
 
-/** Every finding in text order, with the submitted text it covers when it lies in that text. */
-export function buildFindingTerms(text: string, findings: GovernanceFinding[]): FindingTerm[] {
-  const chars = Array.from(text);
-  return [...findings].sort(byPosition).map((finding) => ({
-    finding,
-    term: isInText(chars, finding) ? chars.slice(finding.start, finding.end).join('') : undefined,
-  }));
+/**
+ * The findings in each attached file, grouped by category and action, each group with its
+ * distinct values. Files keep the order in which they first appear.
+ */
+export function groupFileFindings(fileFindings: GovernanceFileFinding[] = []): FileFindings[] {
+  const files = new Map<string, FileFindings>();
+  for (const { filename, fileId, type, category, label, action, count, terms } of fileFindings) {
+    const id = JSON.stringify([fileId ?? null, filename]);
+    let file = files.get(id);
+    if (!file) {
+      file = { id, filename, type, groups: [] };
+      files.set(id, file);
+    }
+    file.groups.push({ category, label, action, count, terms });
+  }
+  return Array.from(files.values());
 }
 
-/** Groups file findings by file, keeping the order in which the files first appear. */
-export function groupFileFindings(
-  fileFindings: GovernanceFileFinding[] = [],
-): [string, GovernanceFileFinding[]][] {
-  const byFile = new Map<string, GovernanceFileFinding[]>();
-  for (const finding of fileFindings) {
-    byFile.set(finding.filename, [...(byFile.get(finding.filename) ?? []), finding]);
-  }
-  return Array.from(byFile.entries());
-}
+/**
+ * A finding badge whose popup shows what was found. Hovering opens the popup until the pointer
+ * leaves; a click, tap or Enter keeps it open until Escape or a click outside. The popup stays
+ * inside the dialog and never takes focus: the dialog's Radix copy has its own layer and focus
+ * stacks, and it ignores Escape only while an expanded trigger has focus.
+ */
+function FindingBadge({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  /** The popup was opened by hovering, so it closes when the pointer leaves it. */
+  const [byHover, setByHover] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cancelClose = useCallback(() => {
+    if (closeTimer.current != null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+  useEffect(() => cancelClose, [cancelClose]);
 
-export function buildReplacementSegments(
-  text: string,
-  findings: GovernanceFinding[],
-): TextSegment[] {
-  const tokens = [
-    ...new Set(findings.map((f) => f.replacement).filter((r): r is string => Boolean(r))),
-  ].sort((a, b) => b.length - a.length);
-  if (!tokens.length) {
-    return [{ text }];
-  }
-  const pattern = new RegExp(`(${tokens.map(escapeRegExp).join('|')})`, 'g');
-  return text
-    .split(pattern)
-    .filter(Boolean)
-    .map((segment) => ({ text: segment, replacement: tokens.includes(segment) }));
+  const show = () => {
+    cancelClose();
+    if (!open) {
+      setByHover(true);
+      setOpen(true);
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    if (open && byHover) {
+      closeTimer.current = setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
+    }
+  };
+  const keepFocus = (event: Event) => event.preventDefault();
+
+  return (
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        cancelClose();
+        setOpen(next);
+      }}
+    >
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className={cn(
+            BADGE,
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
+            className,
+          )}
+          onMouseEnter={show}
+          onMouseLeave={scheduleClose}
+          onClick={(event) => {
+            event.preventDefault();
+            cancelClose();
+            setByHover(false);
+            setOpen(byHover || !open);
+          }}
+        >
+          {label}
+          <ChevronDown
+            className={cn('size-3 shrink-0 transition-transform', open && 'rotate-180')}
+            aria-hidden="true"
+          />
+        </button>
+      </Popover.Trigger>
+      <Popover.Content
+        side="top"
+        align="start"
+        sideOffset={6}
+        collisionPadding={16}
+        aria-label={label}
+        onOpenAutoFocus={keepFocus}
+        onCloseAutoFocus={keepFocus}
+        onEscapeKeyDown={() => setOpen(false)}
+        onMouseEnter={cancelClose}
+        onMouseLeave={scheduleClose}
+        className="z-10 max-h-60 w-max max-w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border-light bg-surface-secondary p-2 text-sm text-text-primary shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+      >
+        {children}
+      </Popover.Content>
+    </Popover.Root>
+  );
 }
 
 export default function DlpInterventionDialog({
@@ -167,78 +274,198 @@ export default function DlpInterventionDialog({
   onConfirm: () => void;
 }) {
   const localize = useLocalize();
-  const { decision } = result;
-  const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
-    if (displayName) {
-      return displayName;
-    }
-    const key = CATEGORY_COPY[category];
-    if (key) {
-      return localize(key);
-    }
-    return category.startsWith(CUSTOM_CATEGORY_PREFIX)
-      ? localize('com_ui_dlp_category_custom_term')
-      : label(category);
-  };
-  const findingLabel = (finding: GovernanceFinding) =>
-    `${categoryLabel(finding)}${finding.replacement ? ` → ${finding.replacement}` : ''}`;
-  const originalSegments = useMemo(
-    () => buildFindingSegments(originalText, result.findings),
-    [originalText, result.findings],
-  );
-  const findingTerms = useMemo(
-    () => buildFindingTerms(originalText, result.findings),
-    [originalText, result.findings],
-  );
-  const maskedText = result.maskedPreview?.find(
-    (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
-  )?.text;
+  const { decision, modelNotAllowed } = result;
+  const copy = modelNotAllowed ? MODEL_BLOCK_COPY : COPY[decision];
+  const [revealed, setRevealed] = useState<RevealedValue | null>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const categoryLabel = useCategoryLabel();
+  const findingLabel = (finding: CategorizedFinding & Pick<GovernanceFinding, 'action'>) =>
+    `${categoryLabel(finding)} · ${localize(DECISION_COPY[finding.action])}`;
+
   const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
-  const maskedSegments = useMemo(
-    () => buildReplacementSegments(maskedText ?? '', result.findings),
-    [maskedText, result.findings],
+  /** The prompt with its findings, each value the gateway replaces where the review puts it. */
+  const promptSegments = useMemo(
+    () => buildPromptSegments(originalText, result.findings, result.maskedRanges),
+    [originalText, result.findings, result.maskedRanges],
   );
 
-  const textBlock = (
-    heading: string,
-    className: string,
-    segments: TextSegment[],
-    highlight: (segment: TextSegment, index: number) => ReactNode,
-  ) => (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold tracking-[-0.01em] text-text-secondary">
-        {heading}
-      </h3>
-      <div
+  /** The text reflows around a revealed value, so it stays until the pointer leaves both places. */
+  useEffect(() => {
+    if (revealed === null) {
+      return;
+    }
+    const { index, bar, element } = revealed;
+    const conceal = ({ clientX, clientY }: MouseEvent) => {
+      const at = isAt(clientX, clientY);
+      if (bar.some(at) || Array.from(element.getClientRects()).some(at)) {
+        return;
+      }
+      setRevealed((current) => (current?.index === index ? null : current));
+    };
+    document.addEventListener('mousemove', conceal);
+    return () => document.removeEventListener('mousemove', conceal);
+  }, [revealed]);
+
+  /**
+   * A value the gateway replaces is set like a redaction bar with its replacement. While the
+   * pointer is on it, or it has focus, the original value takes its place, centered on the bar's
+   * width when it is shorter, so the text after it doesn't move. Only that bar lights up.
+   */
+  const renderRedacted = ({ text, finding }: FoundValue, index: number) => {
+    const shown = revealed?.index === index;
+    const reveal = ({ currentTarget }: SyntheticEvent<HTMLElement>) => {
+      const bar = Array.from(currentTarget.getClientRects());
+      setRevealed((current) =>
+        current?.index === index ? current : { index, bar, element: currentTarget },
+      );
+    };
+    return (
+      <mark
+        key={index}
+        tabIndex={0}
+        onMouseEnter={reveal}
+        onFocus={reveal}
+        onBlur={() => setRevealed((current) => (current?.index === index ? null : current))}
         className={cn(
-          'whitespace-pre-wrap rounded-xl border px-4 py-3 text-[17px] leading-[1.47]',
-          className,
+          REDACTION,
+          shown ? [ACTION_STYLE[finding.action].highlight, 'text-inherit'] : REDACTED,
         )}
       >
-        {segments.map((segment, index) =>
-          segment.findings || segment.replacement ? (
-            highlight(segment, index)
-          ) : (
-            <span key={index}>{segment.text}</span>
-          ),
-        )}
-      </div>
-    </section>
+        <span
+          aria-hidden={shown || undefined}
+          className={cn('font-semibold [grid-area:1/1]', shown && 'invisible')}
+        >
+          {finding.replacement}
+        </span>
+        {shown && <span className="[grid-area:1/1]">{text}</span>}
+        <span className="sr-only">{` (${findingLabel(finding)})`}</span>
+      </mark>
+    );
+  };
+
+  /**
+   * Enter sends, unless another button has focus, which keeps its own action. A held Enter never
+   * does, so a key still down from the composer can't send a prompt nobody has seen.
+   */
+  const sendOnEnter = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (decision === 'BLOCK' || event.key !== 'Enter') {
+      return;
+    }
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    if (event.target instanceof Element && event.target.closest('button')) {
+      return;
+    }
+    event.preventDefault();
+    onConfirm();
+  };
+
+  const renderFlagged = ({ text, finding }: FoundValue, index: number) => (
+    <mark key={index} className={cn(FLAGGED, ACTION_STYLE[finding.action].highlight)}>
+      {text}
+      <span className="sr-only">{` (${findingLabel(finding)})`}</span>
+    </mark>
   );
+
+  const renderSegment = (segment: PromptSegment, index: number) => {
+    if (!('finding' in segment)) {
+      return <span key={index}>{segment.text}</span>;
+    }
+    return segment.finding.replacement === undefined
+      ? renderFlagged(segment, index)
+      : renderRedacted(segment, index);
+  };
+
+  /** A badge per finding group, whose popup only lists its values: nothing lights up with them. */
+  const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
+    const id = `${category}\n${action}`;
+    const caption = findingLabel({ category, label: displayName, action });
+    const listed = terms ?? [];
+    if (listed.length === 0) {
+      return (
+        <span key={id} className={cn(BADGE, ACTION_STYLE[action].chip)}>
+          {caption}
+          {terms === undefined && count > 1 ? ` × ${count}` : ''}
+        </span>
+      );
+    }
+    const hidden = listed.length - VISIBLE_TERMS;
+    return (
+      <FindingBadge key={id} label={caption} className={ACTION_STYLE[action].chip}>
+        <ul className="flex flex-col gap-0.5">
+          {listed.slice(0, VISIBLE_TERMS).map((term) => (
+            <li key={term} className="break-words px-1">
+              {term}
+            </li>
+          ))}
+          {hidden > 0 && (
+            <li className="px-1 text-xs text-text-secondary">
+              {localize('com_ui_dlp_more_terms', { 0: String(hidden) })}
+            </li>
+          )}
+        </ul>
+      </FindingBadge>
+    );
+  };
+
+  /**
+   * Every file in a review was sent as extracted text, which its source badge shows. A card grows
+   * to fit its badges two to a row from the `sm` breakpoint, and its filename never widens it.
+   */
+  const renderFile = ({ id, filename, type, groups }: FileFindings) => {
+    const fileType = getFileType(type);
+    return (
+      <li
+        key={id}
+        className="w-full min-w-0 overflow-hidden rounded-2xl border border-border-light bg-surface-hover-alt text-sm text-text-primary sm:w-auto sm:min-w-56 sm:max-w-full"
+      >
+        <div className="flex flex-row items-center gap-2 p-1.5">
+          <FilePreview
+            file={{ filename, type, source: FileSources.text }}
+            fileType={fileType}
+            className="relative"
+          />
+          <div className="w-0 flex-1">
+            <div className="w-fit max-w-full overflow-hidden text-center">
+              <h3 className="truncate font-medium" title={filename}>
+                {filename}
+              </h3>
+              <div className="truncate text-text-secondary" title={fileType.title}>
+                {fileType.title}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div
+          className={cn(
+            'grid justify-items-start gap-1.5 px-2.5 pb-3 pt-1',
+            groups.length > 1 && 'sm:grid-cols-[repeat(2,minmax(0,auto))]',
+          )}
+        >
+          {groups.map(renderGroup)}
+        </div>
+      </li>
+    );
+  };
 
   return (
     <OGDialog open onOpenChange={(open) => !open && onCancel()}>
       <OGDialogTemplate
-        title={localize(COPY[decision].title)}
-        description={localize(COPY[decision].description)}
-        className="max-w-[640px]"
+        title={localize(copy.title)}
+        description={localize(copy.description, modelNotAllowed && { 0: modelNotAllowed.model })}
+        className="max-w-[760px]"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          (confirmRef.current ?? cancelRef.current)?.focus();
+        }}
+        onKeyDown={sendOnEnter}
         main={
-          <div
-            className="flex max-h-[65vh] flex-col gap-[18px] overflow-y-auto px-1"
-            role="document"
-          >
+          <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto px-1" role="document">
             {sendFailed && (
               <p
                 role="alert"
@@ -247,127 +474,58 @@ export default function DlpInterventionDialog({
                 {localize('com_ui_dlp_send_failed')}
               </p>
             )}
-            {textBlock(
-              localize('com_ui_dlp_original_prompt'),
-              'border-transparent bg-aimo-fill leading-7 text-text-primary',
-              originalSegments,
-              (segment, index) => (
-                <Fragment key={index}>
-                  {segment.findings!.reduce<ReactNode>(
-                    (content, { lane }) => (
-                      <span
-                        className="border-b-2 border-aimo-warn"
-                        style={{ paddingBottom: 1 + lane * 4 }}
-                      >
-                        {content}
-                      </span>
-                    ),
-                    <mark
-                      title={segment
-                        .findings!.map(({ finding }) => findingLabel(finding))
-                        .join('\n')}
-                      className="bg-aimo-warn-soft text-aimo-warn-ink"
-                    >
-                      {segment.text}
-                      {segment.findings!.map(({ finding, ends }, i) =>
-                        ends ? (
-                          <span key={i} className="sr-only">
-                            {` (${categoryLabel(finding)})`}
-                          </span>
-                        ) : null,
-                      )}
-                    </mark>,
-                  )}
-                </Fragment>
-              ),
-            )}
 
-            {result.findings.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-xs font-semibold tracking-[-0.01em] text-text-secondary">
-                  {localize('com_ui_dlp_findings')}
-                </h3>
-                <ul className="flex flex-col gap-2">
-                  {findingTerms.map(({ finding, term }, index) => (
-                    <li key={index} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                      <span
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-xs font-semibold tracking-[-0.01em]',
-                          ACTION_CLASS[finding.action],
-                        )}
-                      >
-                        {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
-                      </span>
-                      {term && <span className="break-all text-text-primary">{term}</span>}
-                      {finding.replacement && (
-                        <span className="font-mono text-text-secondary">
-                          → {finding.replacement}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+            {modelNotAllowed && (
+              <section
+                aria-label={localize('com_ui_dlp_allowed_tiers')}
+                className="flex flex-col gap-2 text-sm text-text-primary"
+              >
+                {modelNotAllowed.allowedTiers.length > 0 ? (
+                  <>
+                    <p>{localize('com_ui_dlp_model_blocked_tiers')}</p>
+                    <ul className="flex flex-col gap-1">
+                      {modelNotAllowed.allowedTiers.map(({ code, name, description }) => (
+                        <li key={code}>
+                          <span className="font-semibold">{name}</span>
+                          <span className="text-text-secondary">{` · ${description}`}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p>{localize('com_ui_dlp_model_blocked_no_tier')}</p>
+                )}
               </section>
             )}
 
             {files.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-sm font-semibold text-text-primary">
-                  {localize('com_ui_dlp_file_findings')}
-                </h3>
-                <ul className="flex flex-col gap-3">
-                  {files.map(([filename, findings]) => (
-                    <li key={filename}>
-                      <p className="mb-1 break-all text-sm text-text-primary">{filename}</p>
-                      <ul className="flex flex-wrap gap-2">
-                        {findings.map((finding) => (
-                          <li
-                            key={`${finding.category}-${finding.action}`}
-                            className={cn(
-                              'rounded-full border px-2.5 py-1 text-xs font-medium',
-                              ACTION_CLASS[finding.action],
-                            )}
-                          >
-                            {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
-                            {finding.count > 1 ? ` × ${finding.count}` : ''}
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
+              <section aria-label={localize('com_ui_dlp_file_findings')}>
+                <ul className="flex flex-wrap gap-2">{files.map(renderFile)}</ul>
               </section>
             )}
 
-            {decision === 'MASK' && maskedText && result.findings.length > 0 && (
-              <>
-                {textBlock(
-                  localize('com_ui_dlp_masked_prompt'),
-                  'border-aimo-line-solid bg-surface-dialog text-text-primary',
-                  maskedSegments,
-                  (segment, index) => (
-                    <span
-                      key={index}
-                      className="rounded-md bg-aimo-mask-soft px-1 font-mono text-[15px] font-semibold text-aimo-mask-ink"
-                    >
-                      {segment.text}
-                    </span>
-                  ),
+            {(!modelNotAllowed || result.findings.length > 0) && (
+              <section
+                aria-label={localize(
+                  decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
                 )}
-                <p className="text-xs text-text-secondary">
-                  {localize('com_ui_dlp_replacement_explanation')}
-                </p>
-              </>
+              >
+                <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
+              </section>
             )}
           </div>
         }
         buttons={
           <>
-            <Button variant="outline" onClick={onCancel}>
+            <Button ref={cancelRef} variant="outline" onClick={onCancel}>
               {localize(decision === 'BLOCK' ? 'com_ui_close' : 'com_ui_cancel')}
             </Button>
             {decision !== 'BLOCK' && (
-              <Button variant={decision === 'WARN' ? 'default' : 'submit'} onClick={onConfirm}>
+              <Button
+                ref={confirmRef}
+                variant={decision === 'WARN' ? 'default' : 'submit'}
+                onClick={onConfirm}
+              >
                 {localize(decision === 'MASK' ? 'com_ui_dlp_send_masked' : 'com_ui_dlp_continue')}
               </Button>
             )}

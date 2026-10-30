@@ -39,7 +39,10 @@ import {
   queueTitleGeneration,
   streamStatusQueryKey,
 } from '~/data-provider';
-import useEventHandlers, { buildCreatedInitialResponse } from './useEventHandlers';
+import useEventHandlers, {
+  buildCreatedInitialResponse,
+  isInitialNewConversationSubmission,
+} from './useEventHandlers';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useUsageHandler from './useUsageHandler';
 import store from '~/store';
@@ -579,10 +582,14 @@ export default function useResumableSSE(
             try {
               finalHandler(data, currentSubmission as EventSubmission);
               if (data.dlpReview != null) {
+                /** An unsent first message leaves the chat new, not on its stream's optimistic ID. */
+                const conversationId = isInitialNewConversationSubmission(currentSubmission)
+                  ? null
+                  : (currentSubmission.conversation?.conversationId ?? null);
                 setDlpReview({
                   result: data.dlpReview,
                   text: data.requestMessage?.text ?? userMessage.text,
-                  conversationId: currentSubmission.conversation?.conversationId ?? null,
+                  conversationId,
                   manualSkills: data.requestMessage?.manualSkills ?? currentSubmission.manualSkills,
                   files: userMessage.files,
                 });

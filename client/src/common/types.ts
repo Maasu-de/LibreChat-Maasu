@@ -376,6 +376,8 @@ export type TOptions = {
   addedConvo?: t.TConversation;
   /** Governance DLP review the user approved for this message */
   dlpReviewId?: string;
+  /** Where the approved text holds the gateway's replacements, shown on the message at once */
+  dlpMasks?: t.GovernanceMaskedSpan[];
 };
 
 export type TAskFunction = (props: TAskProps, options?: TOptions) => false | void;

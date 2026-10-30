@@ -3,7 +3,8 @@ import translation from '~/locales/en/translation.json';
 import Error from '../Error';
 
 jest.mock('~/hooks', () => ({
-  useLocalize: () => (key: string) => key,
+  useLocalize: () => (key: string, values?: Record<string, string>) =>
+    [key, ...Object.values(values ?? {})].join(' '),
 }));
 
 describe('Error', () => {
@@ -15,6 +16,17 @@ describe('Error', () => {
     render(<>{Error({ text: JSON.stringify({ code }) })}</>);
 
     expect(screen.getByText(key)).toBeInTheDocument();
+    expect(translation).toHaveProperty(key);
+  });
+
+  it.each([
+    ['EU Sovereign, EU Hosted', 'com_error_governance_model_not_allowed'],
+    ['', 'com_error_governance_no_model_allowed'],
+  ])('explains a model the content does not allow, given the tiers "%s"', (info, key) => {
+    const text = `403 ${JSON.stringify({ type: 'governance_model_not_allowed', info })}`;
+    render(<>{Error({ text })}</>);
+
+    expect(screen.getByText(`${key} ${info}`.trim())).toBeInTheDocument();
     expect(translation).toHaveProperty(key);
   });
 

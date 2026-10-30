@@ -1,9 +1,15 @@
 import { ContentTypes } from 'librechat-data-provider';
-import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
+import type {
+  TMessage,
+  TConversation,
+  TEditedContent,
+  TEphemeralAgent,
+} from 'librechat-data-provider';
 import type { GovernanceFetch, GovernanceSubmissionBody } from '../dlp';
 import type { ServerRequest } from '~/types/http';
 import {
   onDlpSent,
+  addDlpMasks,
   isDlpUnsent,
   hasSelectedTools,
   getDlpSideCallFetch,
@@ -153,6 +159,39 @@ describe('Governance DLP', () => {
     expect(headers.get('X-LibreChat-User-ID')).toBe('user-123');
     expect(headers.get('X-LibreChat-Group-IDs')).toBe('["group-1","group-2"]');
     expect(headers.get('X-Existing-Header')).toBe('kept');
+  });
+
+  describe('a model the content does not allow', () => {
+    const req = { user: { id: 'user-123' } } as unknown as ServerRequest;
+    const send = (response: Response) =>
+      createGovernanceAttributionFetch(req, async () => response)(
+        'http://governance.test/api/v1/dlp/chat/completions',
+        { method: 'POST' },
+      );
+
+    it('is restated as a typed error that names the allowed tiers', async () => {
+      const error = {
+        message: 'The selected model is not allowed for this content.',
+        type: 'governance_policy_violation',
+        code: 'governance_model_not_allowed',
+        allowed_tiers: [{ code: 'S1', name: 'EU Sovereign', description: 'Hosted in the EU.' }],
+      };
+
+      const response = await send(new Response(JSON.stringify({ error }), { status: 403 }));
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: {
+          ...error,
+          message: '{"type":"governance_model_not_allowed","info":"EU Sovereign"}',
+        },
+      });
+    });
+
+    it('leaves any other rejection unchanged', async () => {
+      const blocked = new Response('{"error":{"code":"governance_blocked"}}', { status: 403 });
+      expect(await send(blocked)).toBe(blocked);
+    });
   });
 
   it('rejects an unsupported request to the DLP completions API instead of forwarding it', async () => {
@@ -425,6 +464,7 @@ describe('approved review to send again', () => {
   const reviewId = 'approved-review';
   const text = 'Please email [EMAIL] today';
   const messages = [{ role: 'user', content: text }];
+  const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
 
   const approvedRequest = (): ServerRequest =>
     ({
@@ -452,7 +492,14 @@ describe('approved review to send again', () => {
   beforeEach(async () => {
     await getReviewStore().set(
       reviewId,
-      { userId: 'user-123', model: 'governed-model', text, messages, dlpToken: 'approval-token' },
+      {
+        userId: 'user-123',
+        model: 'governed-model',
+        text,
+        messages,
+        dlpToken: 'approval-token',
+        masks,
+      },
       60_000,
     );
   });
@@ -487,6 +534,28 @@ describe('approved review to send again', () => {
 
     expect(isDlpUnsent(req)).toBe(false);
     expect(getRetryableDlpReviewId(req)).toBeUndefined();
+  });
+
+  it("puts the review's masks on the user message once the completion starts", async () => {
+    const req = approvedRequest();
+    const governedFetch = createRequestDlpFetch(req, gateway(503, 200));
+    const message: Partial<TMessage> = { text };
+    addDlpMasks(req, message);
+
+    await send(governedFetch);
+    expect(message.dlpMasks).toBeUndefined();
+
+    await send(governedFetch);
+    expect(message.dlpMasks).toEqual(masks);
+  });
+
+  it('puts no masks on the message of a turn that is not governed', () => {
+    const message: Partial<TMessage> = { text };
+
+    addDlpMasks(approvedRequest(), message);
+    addDlpMasks(undefined, message);
+
+    expect(message).toEqual({ text });
   });
 
   it('names no review for a turn that was not approved', () => {

@@ -6,6 +6,7 @@ import { NEW_CHAT_PATH, getAccessToken, messagesView, sendMessage } from '../moc
  * Text attachments in the governed pilot (#150), end to end through the fork's DLP review
  * against `e2e/setup/fake-governance-gateway.js`. The fake gateway masks IBANs, warns on email
  * addresses and blocks `PROJECT-NIGHTSHADE`, and its reply states what reached the model.
+ * A masked prompt keeps its replacements as bars in the chat history.
  */
 
 const GOVERNED_ENDPOINT = 'AI Governance Gateway';
@@ -93,9 +94,12 @@ test.describe('governed text attachments', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Sensitive information detected')).toBeVisible();
-    await expect(dialog.getByText('Findings in attached files')).toBeVisible();
-    await expect(dialog.getByText('contacts.csv')).toBeVisible();
-    await expect(dialog.getByText('Email address · Warn')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'contacts.csv' })).toBeVisible();
+    await expect(dialog.getByText('max@example.com')).not.toBeVisible();
+    await dialog.getByRole('button', { name: 'Email address · Warn' }).hover();
+    await expect(
+      dialog.getByRole('dialog', { name: 'Email address · Warn' }).getByText('max@example.com'),
+    ).toBeVisible();
     await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
 
     await dialog.getByRole('button', { name: 'Continue anyway' }).click();
@@ -114,8 +118,14 @@ test.describe('governed text attachments', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Sensitive information will be masked')).toBeVisible();
-    await expect(dialog.getByText('invoice.md')).toBeVisible();
-    await expect(dialog.getByText('IBAN · Mask × 2')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'invoice.md' })).toBeVisible();
+    const badge = dialog.getByRole('button', { name: 'IBAN · Mask', exact: true });
+    await badge.click();
+    await page.mouse.move(0, 0);
+    await expect(dialog.getByRole('dialog', { name: 'IBAN · Mask' }).getByText(IBAN)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog.getByText(IBAN)).not.toBeVisible();
+    await expect(dialog.getByText('Sensitive information will be masked')).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Send masked' }).click();
 
@@ -206,5 +216,60 @@ test.describe('governed text attachments', () => {
     expect(result.status).toBe(400);
     expect(JSON.parse(result.body)).toEqual({ message: 'Unsupported file type: image/png' });
     expect(await listFileNames(page)).not.toContain('photo.png');
+  });
+});
+
+test.describe('governed prompts', () => {
+  test.beforeEach(async ({ page }) => {
+    await newGovernedChat(page);
+  });
+
+  test('mask: the sent message shows its replacements as bars, also after a reload', async ({
+    page,
+  }) => {
+    await sendMessage(page, `Pay ${IBAN} or ${IBAN} today`);
+    await page.getByRole('dialog').getByRole('button', { name: 'Send masked' }).click();
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+
+    const bars = messagesView(page).locator('mark', { hasText: '[IBAN]' });
+    await expect(bars).toHaveCount(2);
+    await expect(bars.first()).toHaveClass(/bg-text-primary/);
+    await expect(bars.first()).not.toHaveAttribute('tabindex');
+    await bars.first().hover();
+    await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
+
+    await page.reload();
+
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+    await expect(messagesView(page).locator('mark', { hasText: '[IBAN]' })).toHaveCount(2);
+    await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
+  });
+
+  test('keyboard: Escape puts the prompt back, Enter sends it, a held Enter does not', async ({
+    page,
+  }) => {
+    const prompt = `Pay ${IBAN} today`;
+    const composer = page.getByRole('textbox', { name: 'Message input' });
+    const dialog = page.getByRole('dialog');
+    const send = dialog.getByRole('button', { name: 'Send masked' });
+
+    await sendMessage(page, prompt);
+    await expect(send).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(composer).toHaveValue(prompt);
+
+    await composer.focus();
+    await page.keyboard.down('Enter');
+    await expect(send).toBeFocused();
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    await expect(dialog).toBeVisible();
+    await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
+
+    await dialog.locator('mark', { hasText: '[IBAN]' }).click();
+    await page.keyboard.press('Enter');
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+    await expect(dialog).not.toBeVisible();
   });
 });

@@ -13,6 +13,8 @@ const FILE_CONTEXT_END = '\n```';
 export interface FileContextSpan {
   fileId: string;
   filename: string;
+  /** The file's MIME type. */
+  type?: string;
   start: number;
   end: number;
 }
@@ -82,7 +84,13 @@ export async function buildFileContext({
     const start = length + codePointLength(prefix);
     length = start + codePointLength(entry);
     resultText += prefix + entry;
-    files.push({ fileId: file.file_id, filename: file.filename, start, end: length });
+    files.push({
+      fileId: file.file_id,
+      filename: file.filename,
+      type: file.type,
+      start,
+      end: length,
+    });
   }
 
   if (resultText) {

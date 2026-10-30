@@ -1,8 +1,12 @@
-import type { GovernanceDlpReview, GovernanceFinding } from 'librechat-data-provider';
+import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
+import type {
+  GovernanceFinding,
+  GovernanceDlpReview,
+  GovernanceMaskedSpan,
+} from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
 import {
-  maskText,
   readReview,
   createReviewEvent,
   findingsInFiles,
@@ -132,6 +136,7 @@ function setup({
   const onReview = jest.fn<void, [GovernanceDlpReview]>();
   const onSent = jest.fn();
   const onApprovalKept = jest.fn<void, [boolean]>();
+  const onApproved = jest.fn<void, [GovernanceMaskedSpan[] | undefined]>();
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
@@ -141,6 +146,7 @@ function setup({
     onReview,
     onSent,
     onApprovalKept,
+    onApproved,
     reviews,
   });
   const send = (messages: GovernanceChatMessage[]) =>
@@ -150,7 +156,7 @@ function setup({
       body: JSON.stringify({ model: 'governed-model', messages, stream: true, top_p: 0.5 }),
     });
   const sentBody = (call: number) => JSON.parse(String(upstream.mock.calls[call]?.[1]?.body));
-  return { upstream, onReview, onSent, onApprovalKept, reviews, send, sentBody };
+  return { upstream, onReview, onSent, onApprovalKept, onApproved, reviews, send, sentBody };
 }
 
 describe('readReview', () => {
@@ -208,7 +214,7 @@ describe('submitted text helpers', () => {
     ]);
   });
 
-  it('counts findings in attached files per file, category and action', () => {
+  it('counts findings in attached files per file, category and action, with their values', () => {
     const messages = [
       { role: 'user', content: ATTACHED },
       { role: 'assistant', content: `ok ${IBAN}` },
@@ -231,13 +237,14 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-report',
         category: 'IBAN_CODE',
         action: 'MASK',
         count: 2,
+        terms: [IBAN],
       },
       {
         filename: 'notes.txt',
@@ -245,6 +252,55 @@ describe('submitted text helpers', () => {
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
         count: 1,
+        terms: ['max@example.com'],
+      },
+    ]);
+  });
+
+  it('lists each value of a file finding once, whatever its case or spacing, in file order', () => {
+    const text =
+      'Attached document(s):\n```md# "team.csv"\nann@example.com,max@example.com,ANN@example.com\n' +
+      'Project Phoenix,project  phoenix\n```';
+    const fileContext: DlpFileContext = {
+      text,
+      current: true,
+      files: [
+        {
+          fileId: 'file-team',
+          filename: 'team.csv',
+          start: text.indexOf('# "'),
+          end: text.lastIndexOf('\n```') + 1,
+        },
+      ],
+    };
+    const messages = [{ role: 'user', content: `${text}\n${SUBMITTED}` }];
+    const term = (value: string) =>
+      termFinding('/messages/0/content', text.indexOf(value), text.indexOf(value) + value.length);
+    const findings = [
+      emailFinding('/messages/0/content', text.indexOf('ann@')),
+      emailFinding('/messages/0/content', text.indexOf('max@')),
+      emailFinding('/messages/0/content', text.indexOf('ANN@')),
+      term('Project Phoenix'),
+      term('project  phoenix'),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(findingsInFiles(messages, findings, submitted, [fileContext])).toEqual([
+      {
+        filename: 'team.csv',
+        fileId: 'file-team',
+        category: 'EMAIL_ADDRESS',
+        action: 'MASK',
+        count: 3,
+        terms: ['ann@example.com', 'max@example.com'],
+      },
+      {
+        filename: 'team.csv',
+        fileId: 'file-team',
+        category: 'TENANT_TERM',
+        action: 'MASK',
+        count: 2,
+        terms: ['Project Phoenix'],
       },
     ]);
   });
@@ -268,14 +324,22 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
-      { filename: 'report.pdf', fileId: 'file-1', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
+      {
+        filename: 'report.pdf',
+        fileId: 'file-1',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 1,
+        terms: [IBAN],
+      },
       {
         filename: 'report.pdf',
         fileId: 'file-2',
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
         count: 1,
+        terms: ['max@example.com'],
       },
     ]);
   });
@@ -297,13 +361,14 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-report',
         category: 'IBAN_CODE',
         action: 'MASK',
         count: 1,
+        terms: [IBAN],
       },
     ]);
   });
@@ -328,7 +393,35 @@ describe('submitted text helpers', () => {
     const submitted = findSubmittedText(messages, SUBMITTED)!;
 
     expect(findingsInFiles(messages, findings, submitted, [fileContext])).toEqual([
-      { filename: 'real.md', fileId: 'file-real', category: 'IBAN_CODE', action: 'MASK', count: 1 },
+      {
+        filename: 'real.md',
+        fileId: 'file-real',
+        category: 'IBAN_CODE',
+        action: 'MASK',
+        count: 1,
+        terms: [IBAN],
+      },
+    ]);
+  });
+
+  it("names each file's MIME type when its attached-document block records one", () => {
+    const fileContext = attachedContext(true);
+    fileContext.files[0].type = 'application/pdf';
+    const messages = [{ role: 'user', content: WITH_FILES }];
+    const findings = [
+      ibanFinding('/messages/0/content', ATTACHED.indexOf(IBAN)),
+      emailFinding('/messages/0/content', ATTACHED.indexOf('max@')),
+    ];
+    const submitted = findSubmittedText(messages, SUBMITTED)!;
+
+    expect(
+      findingsInFiles(messages, findings, submitted, [fileContext]).map(({ filename, type }) => [
+        filename,
+        type,
+      ]),
+    ).toEqual([
+      ['report.pdf', 'application/pdf'],
+      ['notes.txt', undefined],
     ]);
   });
 
@@ -360,33 +453,9 @@ describe('submitted text helpers', () => {
         label: 'Project Names',
         action: 'MASK',
         count: 1,
+        terms: [IBAN],
       },
     ]);
-  });
-
-  it('masks by code point like the gateway', () => {
-    const text = '🙂 max@example.com and max@example.com';
-    const findings = [
-      emailFinding('/messages/0/content', 2),
-      emailFinding('/messages/0/content', 22),
-    ];
-    expect(maskText(text, findings)).toBe('🙂 [EMAIL] and [EMAIL]');
-  });
-
-  it('masks the rest of a crossing finding like the gateway', () => {
-    const findings = [
-      termFinding('/messages/0/content', 0, 15),
-      termFinding('/messages/0/content', 8, 22),
-    ];
-    expect(maskText(CROSSING_TERMS, findings)).toBe('[TERM] [TERM]');
-  });
-
-  it('drops a finding inside an earlier one like the gateway', () => {
-    const findings = [
-      termFinding('/messages/0/content', 0, 7),
-      termFinding('/messages/0/content', 0, 15),
-    ];
-    expect(maskText('Project Phoenix', findings)).toBe('[TERM]');
   });
 });
 
@@ -485,12 +554,14 @@ describe('DLP approval flow', () => {
 
     expect(response.status).toBe(400);
     expect(upstream).toHaveBeenCalledTimes(1);
+    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
     expect(onReview).toHaveBeenCalledWith({
       reviewId: 'review-1',
       decision: 'MASK',
       policyVersion: 5,
       findings: [emailFinding('/messages/0/content', 13)],
-      maskedPreview: [{ location: '/messages/0/content', text: MASKED }],
+      maskedRanges: [{ start: 13, end: 28, finding: 0 }],
+      maskedPreview: [{ location: '/messages/0/content', text: MASKED, masks }],
       expiresAt,
     });
     expect(reviews.entries.get('review-1')).toEqual({
@@ -500,6 +571,7 @@ describe('DLP approval flow', () => {
       messages: maskedMessages,
       dlpToken: 'approval-token',
       expiresAt,
+      masks,
     });
     expect(onSent).not.toHaveBeenCalled();
   });
@@ -526,9 +598,20 @@ describe('DLP approval flow', () => {
 
     const response = await send(crossing);
 
+    const masks = [
+      { start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' },
+      { start: 7, end: 13, category: 'TENANT_TERM', replacement: '[TERM]' },
+    ];
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
     expect(onReview).toHaveBeenCalledTimes(1);
-    expect(reviews.entries.get('review-1')?.text).toBe('[TERM] [TERM]');
+    expect(onReview.mock.calls[0]?.[0]).toMatchObject({
+      maskedRanges: [
+        { start: 0, end: 15, finding: 0 },
+        { start: 16, end: 22, finding: 1 },
+      ],
+      maskedPreview: [{ text: '[TERM] [TERM]', masks }],
+    });
+    expect(reviews.entries.get('review-1')).toMatchObject({ text: '[TERM] [TERM]', masks });
   });
 
   it('rejects a review whose findings are all outside the submitted text, without approving it', async () => {
@@ -609,6 +692,7 @@ describe('DLP approval flow', () => {
             category: 'IBAN_CODE',
             action: 'MASK',
             count: 2,
+            terms: [IBAN],
           },
         ],
         maskedPreview: [{ location: '/messages/0/content', text: SUBMITTED }],
@@ -621,12 +705,49 @@ describe('DLP approval flow', () => {
   });
 
   it('hands a BLOCK review to the user without storing an approval', async () => {
+    const blocked = 'Discuss Project Acme, mail max@example.com';
     const { upstream, onReview, onSent, reviews, send } = setup({
+      text: blocked,
       responses: [
         reviewResponse({
           review_id: 'review-3',
           action: 'BLOCK',
-          findings: [{ ...emailFinding('/messages/1/content', 13), action: 'BLOCK' }],
+          findings: [
+            {
+              ...termFinding('/messages/1/content', 8, 20),
+              action: 'BLOCK',
+              replacement: undefined,
+            },
+            emailFinding('/messages/1/content', blocked.indexOf('max@')),
+          ],
+        }),
+      ],
+    });
+
+    const response = await send([messages[0], { role: 'user', content: blocked }]);
+
+    expect(response.status).toBe(400);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(onReview.mock.calls[0]?.[0]).toMatchObject({
+      reviewId: 'review-3',
+      decision: 'BLOCK',
+      maskedRanges: [{ start: 27, end: 42, finding: 1 }],
+    });
+    expect(onReview.mock.calls[0]?.[0].maskedPreview).toBeUndefined();
+    expect(onSent).not.toHaveBeenCalled();
+    expect(reviews.entries.size).toBe(0);
+  });
+
+  it('hands a model the content does not allow to the user, with nothing masked', async () => {
+    const tier = { code: 'S1', name: 'EU Sovereign', description: 'Hosted in the EU.' };
+    const { onReview, reviews, send } = setup({
+      responses: [
+        reviewResponse({
+          review_id: 'review-model',
+          action: 'BLOCK',
+          block_reason: 'model_not_allowed',
+          allowed_tiers: [tier],
+          findings: [emailFinding('/messages/1/content', 13)],
         }),
       ],
     });
@@ -634,10 +755,12 @@ describe('DLP approval flow', () => {
     const response = await send(messages);
 
     expect(response.status).toBe(400);
-    expect(upstream).toHaveBeenCalledTimes(1);
-    expect(onReview.mock.calls[0]?.[0]).toMatchObject({ reviewId: 'review-3', decision: 'BLOCK' });
-    expect(onReview.mock.calls[0]?.[0].maskedPreview).toBeUndefined();
-    expect(onSent).not.toHaveBeenCalled();
+    expect(onReview.mock.calls[0]?.[0]).toEqual({
+      reviewId: 'review-model',
+      decision: 'BLOCK',
+      findings: [{ ...emailFinding(GOVERNANCE_DLP_TEXT_LOCATION, 13), replacement: undefined }],
+      modelNotAllowed: { model: 'governed-model', allowedTiers: [tier] },
+    });
     expect(reviews.entries.size).toBe(0);
   });
 
@@ -680,15 +803,17 @@ describe('DLP approval flow', () => {
   it('sends the stored approved request and token when the user confirms', async () => {
     const reviews = memoryStore();
     const approved = [{ role: 'user', content: MASKED }];
+    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
     reviews.entries.set('review-1', {
       userId: 'user-123',
       model: 'governed-model',
       text: MASKED,
       messages: approved,
       dlpToken: 'approval-token',
+      masks,
     });
     const completion = completionResponse();
-    const { onSent, send, sentBody } = setup({
+    const { onSent, onApproved, send, sentBody } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -708,6 +833,8 @@ describe('DLP approval flow', () => {
       require_user_approval: true,
       dlp_token: 'approval-token',
     });
+    expect(onApproved).toHaveBeenCalledWith(masks);
+    expect(onApproved.mock.invocationCallOrder[0]).toBeLessThan(onSent.mock.invocationCallOrder[0]);
     expect(onSent).toHaveBeenCalledTimes(1);
     expect(reviews.entries.has('review-1')).toBe(false);
   });

@@ -1693,8 +1693,8 @@ describe('useResumableSSE - approved DLP review on its way', () => {
     return typeof update === 'function' ? update(review) : update;
   };
 
-  const openStream = async () => {
-    const { unmount } = renderHook(() => useResumableSSE(buildSubmission(), buildChatHelpers()));
+  const openStream = async (submission = buildSubmission()) => {
+    const { unmount } = renderHook(() => useResumableSSE(submission, buildChatHelpers()));
     await act(async () => {
       await Promise.resolve();
     });
@@ -1772,6 +1772,37 @@ describe('useResumableSSE - approved DLP review on its way', () => {
     });
 
     expect(mockSetSubmittedFiles).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  const userMessage = (conversationId: string | null, parentMessageId: string) => ({
+    messageId: 'msg-1',
+    conversationId,
+    text: 'Hello',
+    isCreatedByUser: true,
+    sender: 'User',
+    parentMessageId,
+  });
+
+  it.each([
+    [
+      'a saved conversation with that conversation',
+      { userMessage: userMessage(CONV_ID, 'msg-0') },
+      CONV_ID,
+    ],
+    [
+      "a new chat's first message with the new chat, not with its stream's optimistic ID",
+      { conversation: {}, userMessage: userMessage(null, Constants.NO_PARENT) },
+      null,
+    ],
+  ])('keeps the new review of %s', async (_, overrides, conversationId) => {
+    const { sse, unmount } = await openStream(buildSubmission(overrides));
+
+    await emitFinal(sse, { dlpReview: { reviewId: 'review-2', decision: 'WARN', findings: [] } });
+
+    expect(mockSetDlpReview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ conversationId, text: 'Hello' }),
+    );
     unmount();
   });
 
