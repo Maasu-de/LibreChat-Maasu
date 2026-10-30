@@ -1,3 +1,4 @@
+import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
   GovernanceFinding,
   GovernanceDlpReview,
@@ -734,6 +735,32 @@ describe('DLP approval flow', () => {
     });
     expect(onReview.mock.calls[0]?.[0].maskedPreview).toBeUndefined();
     expect(onSent).not.toHaveBeenCalled();
+    expect(reviews.entries.size).toBe(0);
+  });
+
+  it('hands a model the content does not allow to the user, with nothing masked', async () => {
+    const tier = { code: 'S1', name: 'EU Sovereign', description: 'Hosted in the EU.' };
+    const { onReview, reviews, send } = setup({
+      responses: [
+        reviewResponse({
+          review_id: 'review-model',
+          action: 'BLOCK',
+          block_reason: 'model_not_allowed',
+          allowed_tiers: [tier],
+          findings: [emailFinding('/messages/1/content', 13)],
+        }),
+      ],
+    });
+
+    const response = await send(messages);
+
+    expect(response.status).toBe(400);
+    expect(onReview.mock.calls[0]?.[0]).toEqual({
+      reviewId: 'review-model',
+      decision: 'BLOCK',
+      findings: [{ ...emailFinding(GOVERNANCE_DLP_TEXT_LOCATION, 13), replacement: undefined }],
+      modelNotAllowed: { model: 'governed-model', allowedTiers: [tier] },
+    });
     expect(reviews.entries.size).toBe(0);
   });
 

@@ -1,5 +1,6 @@
 import { CacheKeys, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
+  GovernanceTier,
   GovernanceFinding,
   GovernanceDecision,
   GovernanceDlpReview,
@@ -24,6 +25,10 @@ export interface GatewayReview {
   messages?: GovernanceChatMessage[];
   dlp_token?: string;
   expires_at?: number;
+  /** Why a BLOCK review cannot be sent: `policy_blocked` or `model_not_allowed`. */
+  block_reason?: string;
+  /** For `model_not_allowed`: the tiers whose models may take the content. */
+  allowed_tiers?: GovernanceTier[];
 }
 
 /** A review the user can still approve: the exact stage 2 request, bound to its user and text. */
@@ -394,5 +399,25 @@ export function toClientReview(
         ? undefined
         : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text, ...(masks.length > 0 && { masks }) }],
     expiresAt: review.expires_at,
+  };
+}
+
+/**
+ * A review blocked because its content does not allow the selected model. Nothing is masked when
+ * nothing can be sent, so its findings carry no replacements.
+ */
+export function toModelBlockReview(
+  review: GatewayReview,
+  model: string,
+  findings: GovernanceFinding[],
+  fileFindings: GovernanceFileFinding[],
+): GovernanceDlpReview {
+  return {
+    reviewId: review.review_id,
+    decision: 'BLOCK',
+    policyVersion: review.policy_version,
+    findings: findings.map((finding) => ({ ...finding, replacement: undefined })),
+    fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
+    modelNotAllowed: { model, allowedTiers: review.allowed_tiers ?? [] },
   };
 }

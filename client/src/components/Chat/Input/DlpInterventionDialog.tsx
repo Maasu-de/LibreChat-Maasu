@@ -57,6 +57,11 @@ const COPY = {
   BLOCK: { title: 'com_ui_dlp_block_title', description: 'com_ui_dlp_block_description' },
 } as const satisfies Record<GovernanceDecision, { title: string; description: string }>;
 
+const MODEL_BLOCK_COPY = {
+  title: 'com_ui_dlp_model_blocked_title',
+  description: 'com_ui_dlp_model_blocked_description',
+} as const;
+
 /** The box that holds the prompt, as it will be sent when the gateway masks it. */
 const PROMPT_BOX =
   'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
@@ -269,7 +274,8 @@ export default function DlpInterventionDialog({
   onConfirm: () => void;
 }) {
   const localize = useLocalize();
-  const { decision } = result;
+  const { decision, modelNotAllowed } = result;
+  const copy = modelNotAllowed ? MODEL_BLOCK_COPY : COPY[decision];
   const [revealed, setRevealed] = useState<RevealedValue | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -448,8 +454,8 @@ export default function DlpInterventionDialog({
   return (
     <OGDialog open onOpenChange={(open) => !open && onCancel()}>
       <OGDialogTemplate
-        title={localize(COPY[decision].title)}
-        description={localize(COPY[decision].description)}
+        title={localize(copy.title)}
+        description={localize(copy.description, modelNotAllowed && { 0: modelNotAllowed.model })}
         className="max-w-[760px]"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
@@ -469,19 +475,44 @@ export default function DlpInterventionDialog({
               </p>
             )}
 
+            {modelNotAllowed && (
+              <section
+                aria-label={localize('com_ui_dlp_allowed_tiers')}
+                className="flex flex-col gap-2 text-sm text-text-primary"
+              >
+                {modelNotAllowed.allowedTiers.length > 0 ? (
+                  <>
+                    <p>{localize('com_ui_dlp_model_blocked_tiers')}</p>
+                    <ul className="flex flex-col gap-1">
+                      {modelNotAllowed.allowedTiers.map(({ code, name, description }) => (
+                        <li key={code}>
+                          <span className="font-semibold">{name}</span>
+                          <span className="text-text-secondary">{` · ${description}`}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p>{localize('com_ui_dlp_model_blocked_no_tier')}</p>
+                )}
+              </section>
+            )}
+
             {files.length > 0 && (
               <section aria-label={localize('com_ui_dlp_file_findings')}>
                 <ul className="flex flex-wrap gap-2">{files.map(renderFile)}</ul>
               </section>
             )}
 
-            <section
-              aria-label={localize(
-                decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
-              )}
-            >
-              <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
-            </section>
+            {(!modelNotAllowed || result.findings.length > 0) && (
+              <section
+                aria-label={localize(
+                  decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
+                )}
+              >
+                <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
+              </section>
+            )}
           </div>
         }
         buttons={
