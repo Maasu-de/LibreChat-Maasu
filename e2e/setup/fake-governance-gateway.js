@@ -13,7 +13,8 @@
  * Detection is deterministic, so specs choose the outcome through their content:
  * - an IBAN (`DE` + 20 digits) is masked as `[IBAN]`;
  * - an email address is a warning;
- * - `PROJECT-NIGHTSHADE` is a blocked confidential term.
+ * - `PROJECT-NIGHTSHADE` is a blocked confidential term;
+ * - a message containing `E2E-SLOW` gets its review two seconds late, so specs can type meanwhile.
  *
  * Each completion reports what reached the model, so specs can assert on it:
  * `E2E gateway reply [attachment=yes iban=masked email=no history-iban=none]`.
@@ -27,6 +28,8 @@ const HOST = '127.0.0.1';
 const BASE_PATH = '/api/v1/dlp';
 const MODEL = 'e2e-governed-model';
 const REVIEW_TTL_SECONDS = 600;
+const SLOW_MARKER = 'E2E-SLOW';
+const SLOW_REVIEW_MS = 2000;
 
 const IBAN = /DE\d{20}/g;
 const EMAIL = /[\w.+-]+@[\w-]+\.[a-z]{2,}/gi;
@@ -197,7 +200,9 @@ function handleCompletion(res, body) {
   const decision = decide(findings);
   const lastLocation = `/messages/${messages.length - 1}/content`;
   if (body.require_user_approval === true && findings.some((f) => f.location === lastLocation)) {
-    review(res, messages, findings, decision);
+    const content = messages.at(-1)?.content;
+    const delay = typeof content === 'string' && content.includes(SLOW_MARKER) ? SLOW_REVIEW_MS : 0;
+    setTimeout(() => review(res, messages, findings, decision), delay);
     return;
   }
   if (decision === 'BLOCK') {
