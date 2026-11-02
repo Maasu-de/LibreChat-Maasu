@@ -1791,6 +1791,14 @@ describe('useResumableSSE - approved DLP review on its way', () => {
       CONV_ID,
     ],
     [
+      "a saved conversation's edited first message with that conversation",
+      {
+        userMessage: userMessage(CONV_ID, Constants.NO_PARENT),
+        messages: [{ messageId: 'msg-0' } as TMessage],
+      },
+      CONV_ID,
+    ],
+    [
       "a new chat's first message with the new chat, not with its stream's optimistic ID",
       { conversation: {}, userMessage: userMessage(null, Constants.NO_PARENT) },
       null,

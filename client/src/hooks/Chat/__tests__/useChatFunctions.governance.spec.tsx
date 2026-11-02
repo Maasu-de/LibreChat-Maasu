@@ -551,6 +551,15 @@ it('drops a review for another conversation as soon as it arrives', () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
+it("keeps a saved chat's review and its uploads while that chat stays open", () => {
+  renderChat(savedConversation, fileReview(savedConversation.conversationId));
+
+  sendWithFilesForReview();
+
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(mockDeleteFiles).not.toHaveBeenCalled();
+});
+
 it('puts all files of a cancelled review without blocked findings back', () => {
   renderChat(savedConversation, fileReview(savedConversation.conversationId));
 
