@@ -28,7 +28,7 @@ const originalEnvironment = new Map<string, string | undefined>(
 );
 
 beforeEach(() => {
-  process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/api/v1/dlp';
+  process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/v1';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'server-only-credential';
   delete process.env.GOVERNANCE_DLP_ENABLED;
   delete process.env.GOVERNANCE_PILOT_ENABLED;
@@ -47,9 +47,9 @@ afterAll(() => {
 
 describe('Governance DLP', () => {
   it.each([
-    ['http://governance.test/api/v1/dlp', 'http://governance.test/api/v1/dlp/', true],
-    ['http://governance.test/api/v1/dlp', 'http://other.test/api/v1/dlp', false],
-    ['http://governance.test/v1', 'http://governance.test/api/v1/dlp', false],
+    ['http://governance.test/v1', 'http://governance.test/v1/', true],
+    ['http://governance.test/v1', 'http://other.test/v1', false],
+    ['http://governance.test/v2', 'http://governance.test/v1', false],
   ])('matches completion base URL %s against configured %s', (baseURL, configured, expected) => {
     process.env.GOVERNANCE_API_BASE_URL = configured;
     expect(isGovernanceGatewayUrl(baseURL)).toBe(expected);
@@ -59,7 +59,7 @@ describe('Governance DLP', () => {
     process.env.GOVERNANCE_DLP_ENABLED = 'true';
     delete process.env.LIBRECHAT_SERVICE_CREDENTIAL;
 
-    expect(() => isGovernanceGatewayUrl('http://governance.test/api/v1/dlp')).toThrow(
+    expect(() => isGovernanceGatewayUrl('http://governance.test/v1')).toThrow(
       'The message could not be checked against the data loss prevention policy.',
     );
   });
@@ -74,7 +74,7 @@ describe('Governance DLP', () => {
       fetch: upstreamFetch,
     });
 
-    const result = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+    const result = await governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -150,7 +150,7 @@ describe('Governance DLP', () => {
       );
       const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
 
-      await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      await governedFetch('http://governance.test/v1/chat/completions', {
         method: 'POST',
         body: JSON.stringify({
           model,
@@ -195,7 +195,7 @@ describe('Governance DLP', () => {
         max_tokens: 512,
       };
 
-      await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      await governedFetch('http://governance.test/v1/chat/completions', {
         method: 'POST',
         body: JSON.stringify(request),
       });
@@ -214,7 +214,7 @@ describe('Governance DLP', () => {
     process.env.GOVERNANCE_PILOT_ENABLED = 'true';
     const upstreamFetch = jest.fn();
     const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
-    const response = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+    const response = await governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       body: JSON.stringify({
         model: 'gemini-3.6-flash',
@@ -238,7 +238,7 @@ describe('Governance DLP', () => {
   ])('rejects invalid numeric model parameters %j before sending', async (parameters) => {
     const upstreamFetch = jest.fn();
     const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
-    const response = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+    const response = await governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       body: JSON.stringify({
         model: 'governed-model',
@@ -262,7 +262,7 @@ describe('Governance DLP', () => {
       governanceGroupIds: ['group-1', 'group-2'],
     } as unknown as ServerRequest;
     const send = (governedFetch: GovernanceFetch) =>
-      governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      governedFetch('http://governance.test/v1/chat/completions', {
         method: 'POST',
         body: JSON.stringify({
           model: 'governed-model',
@@ -292,7 +292,7 @@ describe('Governance DLP', () => {
     } as unknown as ServerRequest;
 
     await createGovernanceAttributionFetch(req, upstreamFetch)(
-      'http://governance.test/api/v1/dlp/chat/completions',
+      'http://governance.test/v1/chat/completions',
       {
         method: 'POST',
         headers: { 'X-Existing-Header': 'kept' },
@@ -313,7 +313,7 @@ describe('Governance DLP', () => {
       fetch: upstreamFetch,
     });
 
-    const response = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+    const response = await governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -334,7 +334,7 @@ describe('Governance DLP', () => {
       fetch: upstreamFetch,
     });
 
-    const response = await governedFetch('http://governance.test/api/v1/dlp/responses', {
+    const response = await governedFetch('http://governance.test/v1/responses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -354,7 +354,7 @@ describe('Governance DLP', () => {
   });
 
   it('passes a non-completion request through untouched', async () => {
-    const url = 'http://governance.test/api/v1/dlp/models';
+    const url = 'http://governance.test/v1/models';
     const init: RequestInit = { method: 'GET' };
     const upstreamResponse = new Response('[]');
     const upstreamFetch = jest.fn(
@@ -386,7 +386,7 @@ describe('governed turn sent state', () => {
     });
 
   const send = (governedFetch: GovernanceFetch) =>
-    governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+    governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -594,7 +594,7 @@ describe('approved review to send again', () => {
     });
 
   const send = (governedFetch: GovernanceFetch) =>
-    governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+    governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'governed-model', messages, stream: true }),

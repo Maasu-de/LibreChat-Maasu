@@ -54,8 +54,8 @@ function getGovernanceGroupAuditUrl(): string | undefined {
       return;
     if (!explicit) {
       const path = url.pathname.replace(/\/+$/, '');
-      if (!path.endsWith('/api/v1/dlp')) return;
-      url.pathname = path.replace(/\/dlp$/, '/internal/group-audit');
+      if (!path.endsWith('/v1')) return;
+      url.pathname = path.replace(/\/v1$/, '/api/v1/internal/group-audit');
     }
     return url.href;
   } catch {

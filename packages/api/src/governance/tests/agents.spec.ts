@@ -12,12 +12,12 @@ import { GOVERNANCE_ENDPOINT } from '../mode';
 import { assertGovernanceAgent, governanceAgentMaxSteps } from '../agents';
 
 const savedEnv = { ...process.env };
-const url = 'http://gateway.test/api/v1/dlp/chat/completions';
+const url = 'http://gateway.test/v1/chat/completions';
 
 beforeEach(() => {
   process.env.GOVERNANCE_PILOT_ENABLED = 'true';
   process.env.GOVERNANCE_DLP_ENABLED = 'true';
-  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
+  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.GOVERNANCE_AGENT_MAX_STEPS = '10';
   process.env.OPENAI_API_KEY = 'test';
