@@ -116,7 +116,7 @@ describe('fetchModels', () => {
               {
                 name: 'AI Governance Gateway',
                 apiKey: 'service-key',
-                baseURL: 'https://gateway.test/api/v1/dlp',
+                baseURL: 'https://gateway.test/v1',
                 models: { fetch: true, default: ['not-in-gateway-catalog'] },
               },
             ],
@@ -149,7 +149,7 @@ describe('fetchModels', () => {
     const onModels = jest.fn();
     const models = await fetchModels({
       apiKey: 'service-key',
-      baseURL: 'https://gateway.test/api/v1/dlp',
+      baseURL: 'https://gateway.test/v1',
       onModels,
     });
 
