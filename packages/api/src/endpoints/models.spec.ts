@@ -155,6 +155,12 @@ describe('fetchModels', () => {
 
     expect(models).toEqual(['s1-model', 's2-model', 'missing-tier']);
     expect(onModels).toHaveBeenCalledWith(data);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://gateway.test/v1/models',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer service-key' }),
+      }),
+    );
     expect(mockCacheGet).not.toHaveBeenCalled();
   });
 
