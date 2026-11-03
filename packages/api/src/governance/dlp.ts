@@ -21,9 +21,9 @@ import {
 import { isGovernancePilotEnabled } from './mode';
 import { isEnabled } from '~/utils/common';
 
-const DLP_CHAT_COMPLETIONS_PATH = '/api/v1/dlp/chat/completions';
+const DLP_CHAT_COMPLETIONS_PATH = '/v1/chat/completions';
 /** Base path under which the gateway serves completions and models. */
-const GATEWAY_BASE_PATH = /\/api\/v1\/dlp$/;
+const GATEWAY_BASE_PATH = /\/v1$/;
 const LIBRECHAT_USER_HEADER = 'X-LibreChat-User-ID';
 const LIBRECHAT_GROUPS_HEADER = 'X-LibreChat-Group-IDs';
 
