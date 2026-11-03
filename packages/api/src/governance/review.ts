@@ -8,6 +8,7 @@ import type {
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
 import type { FileContext } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
+import type { GovernanceAgentRequest } from './agents';
 import { standardCache } from '~/cache';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
@@ -33,6 +34,7 @@ export interface StoredReview {
   dlpToken: string;
   /** Unix seconds at which the gateway's approval token expires. */
   expiresAt?: number;
+  agentRequest?: GovernanceAgentRequest;
 }
 
 export interface ReviewStore {

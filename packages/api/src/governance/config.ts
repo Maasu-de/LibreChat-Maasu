@@ -7,6 +7,7 @@ import {
 } from './mode';
 import { assertOidcAdministratorConfigured } from '../auth/administrator';
 import { isEnabled } from '~/utils/common';
+import { governanceAgentMaxSteps } from './agents';
 
 /** The only attachment types the pilot accepts: txt, md, csv, pdf and docx, all parsed to text. */
 export const GOVERNANCE_ATTACHMENT_MIME_TYPES: string[] = [
@@ -51,7 +52,7 @@ function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']
     parameters: false,
     presets: false,
     multiConvo: false,
-    agents: false,
+    agents: { use: true, create: true, share: false, public: false },
     remoteAgents: disabled,
     mcpServers: disabled,
     marketplace: { use: false },
@@ -136,7 +137,12 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
           ...getGovernanceTitleConfig(config),
         },
       ],
-      agents: { capabilities: [], allowedProviders: [GOVERNANCE_ENDPOINT] },
+      agents: {
+        capabilities: [],
+        allowedProviders: [GOVERNANCE_ENDPOINT],
+        recursionLimit: governanceAgentMaxSteps(),
+        maxRecursionLimit: governanceAgentMaxSteps(),
+      },
     },
     interface: restrictGovernanceInterface(config.interface),
     fileConfig: {

@@ -12,10 +12,12 @@ import {
   SettingDefinition,
   agentParamSettings,
   applyModelAwareDefaults,
+  GOVERNANCE_AGENT_MODEL_PARAMETERS,
+  getGovernanceAgentModelParameters,
 } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
 import type { AgentForm, AgentModelPanelProps, StringOption } from '~/common';
-import { useGetEndpointsQuery } from '~/data-provider';
+import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import { useLiveAnnouncer } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { Panel } from '~/common';
@@ -65,6 +67,27 @@ export default function ModelPanel({
   }, [provider, models, modelsData, setValue, model]);
 
   const { data: endpointsConfig = {} } = useGetEndpointsQuery();
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
+  const governedParameterKeys = useMemo(
+    () => new Set<string>(getGovernanceAgentModelParameters(model ?? '')),
+    [model],
+  );
+
+  useEffect(() => {
+    if (!governancePilot || !modelParameters) {
+      return;
+    }
+    const unsupportedKeys = GOVERNANCE_AGENT_MODEL_PARAMETERS.filter(
+      (key) => !governedParameterKeys.has(key) && modelParameters[key] !== undefined,
+    );
+    if (unsupportedKeys.length === 0) {
+      return;
+    }
+    const nextParameters = { ...modelParameters };
+    unsupportedKeys.forEach((key) => delete nextParameters[key]);
+    setValue('model_parameters', nextParameters, { shouldDirty: true });
+  }, [governancePilot, governedParameterKeys, modelParameters, setValue]);
 
   const bedrockRegions = useMemo(() => {
     return endpointsConfig?.[provider]?.availableRegions ?? [];
@@ -88,10 +111,13 @@ export default function ModelPanel({
       overriddenEndpointKey,
       model ?? '',
     );
-    return modelAwareParams.map(
+    const resolvedParams = modelAwareParams.map(
       (param) => (overriddenParamsMap[param.key] as SettingDefinition) ?? param,
     );
-  }, [endpointType, endpointsConfig, model, provider]);
+    return governancePilot
+      ? resolvedParams.filter((param) => governedParameterKeys.has(param.key))
+      : resolvedParams;
+  }, [endpointType, endpointsConfig, model, provider, governancePilot, governedParameterKeys]);
 
   const setOption = (optionKey: keyof t.AgentModelParameters) => (value: t.AgentParameterValue) => {
     setValue(`model_parameters.${optionKey}`, value);
@@ -104,23 +130,21 @@ export default function ModelPanel({
 
   return (
     <div className="mb-1 flex w-full flex-col gap-2 text-sm">
-      <div className="model-panel relative flex flex-col items-center px-16 pt-2 text-center">
-        <div className="absolute left-0 top-4">
-          <button
-            type="button"
-            className="btn btn-neutral relative"
-            onClick={() => {
-              setActivePanel(Panel.builder);
-            }}
-            aria-label={localize('com_ui_back_to_builder')}
-          >
-            <div className="model-panel-content flex w-full items-center justify-center gap-2">
-              <ChevronLeft />
-            </div>
-          </button>
-        </div>
-
-        <div className="mb-2 mt-2 text-xl font-medium">{localize('com_ui_model_parameters')}</div>
+      <div className="model-panel mb-2 flex items-center gap-2 pt-2">
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+          onClick={() => {
+            setActivePanel(Panel.builder);
+          }}
+          aria-label={localize('com_ui_back_to_builder')}
+          title={localize('com_ui_back_to_builder')}
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <h2 className="min-w-0 text-base font-semibold text-text-primary">
+          {localize('com_ui_model_parameters')}
+        </h2>
       </div>
       <div>
         {/* Endpoint aka Provider for Agents */}
@@ -159,6 +183,7 @@ export default function ModelPanel({
                       value: typeof provider === 'string' ? provider : provider.value,
                     }))}
                     className={cn(error ? 'border-2 border-red-500' : '')}
+                    containerClassName="px-0"
                     ariaLabel={localize('com_ui_provider')}
                     isCollapsed={false}
                     showCarat={true}
@@ -207,6 +232,7 @@ export default function ModelPanel({
                     }))}
                     disabled={!provider}
                     className={cn('disabled:opacity-50', error ? 'border-2 border-red-500' : '')}
+                    containerClassName="px-0"
                     ariaLabel={localize('com_ui_model')}
                     isCollapsed={false}
                     showCarat={true}
@@ -225,9 +251,7 @@ export default function ModelPanel({
       {/* Model Parameters */}
       {parameters && (
         <div className="h-auto max-w-full">
-          <div className="grid grid-cols-2 gap-4">
-            {/* This is the parent element containing all settings */}
-            {/* Below is an example of an applied dynamic setting, each be contained by a div with the column span specified */}
+          <div className="flex flex-col gap-4">
             {parameters.map((setting) => {
               const Component = componentMapping[setting.component];
               if (!Component) {
@@ -245,6 +269,7 @@ export default function ModelPanel({
                   settingKey={key}
                   defaultValue={defaultValue}
                   {...rest}
+                  columnSpan={1}
                   setOption={setOption as t.TSetOption}
                   conversation={modelParameters as Partial<t.TConversation>}
                 />

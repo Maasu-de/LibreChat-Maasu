@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { TooltipAnchor } from '@librechat/client';
 import { CheckCircle2, Info } from 'lucide-react';
 import { useGetGovernanceModelsQuery } from 'librechat-data-provider/react-query';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { CustomMenu as Menu, CustomMenuItem as MenuItem } from './CustomMenu';
 import { groupGovernanceModels } from './governance';
 import { useLocalize } from '~/hooks';
@@ -12,11 +12,13 @@ export default function GovernanceModelSelector({
   value,
   onSelect,
   trigger,
+  children,
 }: {
   endpoint: string;
   value: string | null;
   onSelect: (model: string) => void;
   trigger?: ReactElement;
+  children?: ReactNode;
 }) {
   const localize = useLocalize();
   const { data, isLoading, isFetching, isError, refetch } = useGetGovernanceModelsQuery();
@@ -33,6 +35,7 @@ export default function GovernanceModelSelector({
       combobox={<input placeholder=" " />}
       comboboxLabel={localize('com_endpoint_search_models')}
     >
+      {children}
       {(isLoading || isError || groups.length === 0) && (
         <div className="px-3 py-2 text-sm text-text-secondary">
           <p role="status">

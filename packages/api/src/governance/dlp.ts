@@ -1,4 +1,5 @@
-import { isEphemeralAgentId } from 'librechat-data-provider';
+import { randomUUID } from 'crypto';
+import { isEphemeralAgentId, getGovernanceAgentModelParameters } from 'librechat-data-provider';
 import type {
   TPayload,
   TEphemeralAgent,
@@ -8,6 +9,8 @@ import type {
 import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
 import type { FileContext } from '~/files/context';
 import type { ServerRequest } from '~/types/http';
+import type { GovernanceAgentRequest } from './agents';
+import { createGovernanceAgentFetch, agentRequestHeaders } from './agents';
 import {
   maskText,
   readReview,
@@ -52,6 +55,10 @@ export interface GovernanceChatCompletionRequest {
   messages: GovernanceChatMessage[];
   stream?: boolean;
   temperature?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  max_tokens?: number;
   /** Return a review instead of calling the model when DLP finds anything. */
   require_user_approval?: boolean;
   /** Approval token of the stage 1 review being completed. */
@@ -78,6 +85,8 @@ export interface GovernanceFetchParams {
   /** Told after each send of the approved review whether a failure put it back for another try. */
   onApprovalKept?: (kept: boolean) => void;
   reviews?: ReviewStore;
+  agentRequest?: (init?: RequestInit) => GovernanceAgentRequest | undefined;
+  onAgentApproval?: (context: GovernanceAgentRequest) => void;
 }
 
 /** Raised when the DLP integration cannot be set up. A rejected completion is a 400 instead. */
@@ -253,6 +262,10 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     messages?: unknown;
     stream?: unknown;
     temperature?: unknown;
+    top_p?: unknown;
+    frequency_penalty?: unknown;
+    presence_penalty?: unknown;
+    max_tokens?: unknown;
   };
   if (
     (isGovernancePilotEnabled() &&
@@ -272,12 +285,54 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     return undefined;
   }
 
-  return {
+  const parameters: Pick<
+    GovernanceChatCompletionRequest,
+    'top_p' | 'frequency_penalty' | 'presence_penalty' | 'max_tokens'
+  > = {};
+  for (const [key, min, max, integer] of [
+    ['top_p', 0, 1, false],
+    ['frequency_penalty', -2, 2, false],
+    ['presence_penalty', -2, 2, false],
+    ['max_tokens', 1, Infinity, true],
+  ] as const) {
+    const parameter = request[key];
+    if (parameter === undefined) continue;
+    if (
+      typeof parameter !== 'number' ||
+      !Number.isFinite(parameter) ||
+      parameter < min ||
+      parameter > max ||
+      (integer && !Number.isInteger(parameter))
+    ) {
+      return undefined;
+    }
+    parameters[key] = parameter;
+  }
+
+  const normalizedRequest: GovernanceChatCompletionRequest = {
     model: request.model,
     messages: request.messages,
+    ...parameters,
     ...(typeof request.stream === 'boolean' ? { stream: request.stream } : {}),
     ...(typeof request.temperature === 'number' ? { temperature: request.temperature } : {}),
   };
+
+  if (isGovernancePilotEnabled()) {
+    const supportedParameters = new Set(getGovernanceAgentModelParameters(request.model));
+    for (const key of [
+      'temperature',
+      'top_p',
+      'frequency_penalty',
+      'presence_penalty',
+      'max_tokens',
+    ] as const) {
+      if (!supportedParameters.has(key)) {
+        delete normalizedRequest[key];
+      }
+    }
+  }
+
+  return normalizedRequest;
 }
 
 function withGovernanceRequest(
@@ -339,6 +394,8 @@ interface ApprovalParams {
   onApprovalKept?: (kept: boolean) => void;
   fetch: GovernanceFetch;
   reviews: ReviewStore;
+  agentRequest?: (init?: RequestInit) => GovernanceAgentRequest | undefined;
+  onAgentApproval?: (context: GovernanceAgentRequest) => void;
 }
 
 function withApproval(
@@ -405,6 +462,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
       messages,
       dlpToken,
       expiresAt: review.expires_at,
+      agentRequest: params.agentRequest?.(params.init),
     },
     reviewTtl(review.expires_at),
   );
@@ -430,12 +488,21 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
     stored.userId !== userId ||
     stored.model !== request.model ||
     stored.text !== text ||
+    stored.agentRequest?.agentId !== params.agentRequest?.(params.init)?.agentId ||
     !(await reviews.delete(reviewId))
   ) {
     return rejectCompletion('dlp_approval_invalid', DLP_APPROVAL_INVALID_MESSAGE);
   }
 
   onApprovalKept?.(false);
+  if (stored.agentRequest) {
+    params.onAgentApproval?.(stored.agentRequest);
+    const headers = new Headers(params.init?.headers);
+    for (const [key, value] of Object.entries(agentRequestHeaders(stored.agentRequest))) {
+      headers.set(key, value);
+    }
+    params = { ...params, init: { ...params.init, headers } };
+  }
   const restore = async () => {
     await reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
     onApprovalKept?.(true);
@@ -490,7 +557,10 @@ export function createGovernanceDlpFetch({
   onSent,
   onApprovalKept,
   reviews,
+  agentRequest,
+  onAgentApproval,
 }: GovernanceFetchParams): GovernanceFetch {
+  let pendingReviewId = reviewId;
   return async (input, init) => {
     if (isGovernancePilotEnabled()) {
       const base = process.env.GOVERNANCE_API_BASE_URL?.replace(/\/+$/, '');
@@ -523,15 +593,20 @@ export function createGovernanceDlpFetch({
           userId,
           groupIds,
           text,
-          reviewId,
+          reviewId: pendingReviewId,
           fileContexts,
           onReview,
           onApprovalKept,
           fetch,
           reviews: reviews ?? getReviewStore(),
+          agentRequest,
+          onAgentApproval,
         })
       : await fetch(input, withGovernanceRequest(input, init, request, userId, groupIds));
     if (response.ok) {
+      if (agentRequest?.(init)) {
+        pendingReviewId = undefined;
+      }
       onSent?.();
     }
     return response;
@@ -621,31 +696,75 @@ export function createRequestDlpFetch(
   approval: boolean = true,
 ): GovernanceFetch {
   if (!approval) {
-    return createGovernanceDlpFetch({
-      userId: req.user?.id ?? '',
-      groupIds: req.governanceGroupIds,
-      fetch,
-    });
+    return createGovernanceAgentFetch(
+      req,
+      createGovernanceDlpFetch({
+        userId: req.user?.id ?? '',
+        groupIds: req.governanceGroupIds,
+        fetch,
+      }),
+    );
   }
   const { text, dlpReviewId } = req.body ?? {};
   req.governanceDlpSent ??= false;
-  const governedFetch = createGovernanceDlpFetch({
-    userId: req.user?.id ?? '',
-    groupIds: req.governanceGroupIds,
-    fetch,
-    text: typeof text === 'string' ? text : '',
-    reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
-    fileContexts: () => req.governanceDlpFileContexts ?? [],
-    onReview: (review) => {
-      req.governanceDlpReview = review;
-    },
-    onSent: () => markDlpSent(req),
-    onApprovalKept: (kept) => {
-      req.governanceDlpApprovalKept = kept;
-    },
-  });
+  const governedFetch = createGovernanceAgentFetch(
+    req,
+    createGovernanceDlpFetch({
+      userId: req.user?.id ?? '',
+      groupIds: req.governanceGroupIds,
+      fetch,
+      text: typeof text === 'string' ? text : '',
+      reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
+      agentRequest: (init) => {
+        const context = req.governanceAgentRequest;
+        if (!context) return undefined;
+        const headers = new Headers(init?.headers);
+        return {
+          ...context,
+          runId: headers.get('X-LibreChat-Run-ID') ?? context.runId,
+          stepId: headers.get('X-LibreChat-Step-ID') ?? context.stepId,
+          requestId: headers.get('X-LibreChat-Request-ID') ?? context.requestId,
+        };
+      },
+      onAgentApproval: (context) => {
+        if (req.governanceAgentRun) {
+          Object.assign(req.governanceAgentRun, context);
+        }
+        req.governanceAgentRequest = context;
+      },
+      fileContexts: () => req.governanceDlpFileContexts ?? [],
+      onReview: (review) => {
+        req.governanceDlpReview = review;
+      },
+      onSent: () => markDlpSent(req),
+      onApprovalKept: (kept) => {
+        req.governanceDlpApprovalKept = kept;
+      },
+    }),
+  );
   sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));
   return governedFetch;
+}
+
+export async function prepareGovernanceAgentRun(req: ServerRequest): Promise<void> {
+  if (
+    !isGovernancePilotEnabled() ||
+    !req.body.agent_id ||
+    isEphemeralAgentId(req.body.agent_id) ||
+    req.governanceAgentRun
+  ) {
+    return;
+  }
+  const review = req.body.dlpReviewId
+    ? await getReviewStore().get(req.body.dlpReviewId)
+    : undefined;
+  const previous =
+    review?.userId === req.user?.id && review?.agentRequest?.agentId === req.body.agent_id
+      ? review.agentRequest
+      : undefined;
+  req.governanceAgentRun = previous
+    ? { agentId: previous.agentId, runId: previous.runId, steps: 0 }
+    : { agentId: req.body.agent_id, runId: randomUUID(), steps: 0 };
 }
 
 /**

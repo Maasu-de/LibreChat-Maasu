@@ -2,6 +2,7 @@ import type { TConversation, TEndpointOption, GovernanceDlpReview } from 'librec
 import type { IUser, AppConfig } from '@librechat/data-schemas';
 import type { Request } from 'express';
 import type { DlpFileContext } from '~/governance/review';
+import type { GovernanceAgentRun, GovernanceAgentRequest } from '~/governance/agents';
 
 /**
  * LibreChat-specific request body type that extends Express Request body
@@ -13,6 +14,7 @@ export type RequestBody = {
   conversationId?: string;
   parentMessageId?: string;
   endpoint?: string;
+  agent_id?: string;
   endpointType?: string;
   model?: string;
   key?: string;
@@ -35,6 +37,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   authStrategy?: string;
   /** Set for plain-text sends, whose completion goes through the governed DLP approval flow. */
   governanceDlpEligible?: boolean;
+  governanceAgentRun?: GovernanceAgentRun;
+  governanceAgentRequest?: GovernanceAgentRequest;
   /** Server-resolved LibreChat group IDs used by the governed completion. */
   governanceGroupIds?: string[];
   /** The attached-document blocks this turn added to messages, for naming files in DLP findings. */

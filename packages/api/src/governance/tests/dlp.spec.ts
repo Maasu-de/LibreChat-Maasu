@@ -20,6 +20,7 @@ const environmentKeys = [
   'GOVERNANCE_API_BASE_URL',
   'LIBRECHAT_SERVICE_CREDENTIAL',
   'GOVERNANCE_DLP_ENABLED',
+  'GOVERNANCE_PILOT_ENABLED',
 ] as const;
 
 const originalEnvironment = new Map<string, string | undefined>(
@@ -30,6 +31,7 @@ beforeEach(() => {
   process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/api/v1/dlp';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'server-only-credential';
   delete process.env.GOVERNANCE_DLP_ENABLED;
+  delete process.env.GOVERNANCE_PILOT_ENABLED;
 });
 
 afterAll(() => {
@@ -83,6 +85,9 @@ describe('Governance DLP', () => {
         user: 'user-123',
         stream_options: { include_usage: true },
         top_p: 0.8,
+        frequency_penalty: 0.2,
+        presence_penalty: -0.1,
+        max_tokens: 512,
       }),
     });
 
@@ -93,11 +98,157 @@ describe('Governance DLP', () => {
       JSON.stringify({
         model: 'governed-model',
         messages: [{ role: 'user', content: 'sensitive text' }],
+        top_p: 0.8,
+        frequency_penalty: 0.2,
+        presence_penalty: -0.1,
+        max_tokens: 512,
         stream: true,
         temperature: 0.4,
       }),
     );
     expect(result).toBe(upstreamResponse);
+  });
+
+  it.each([
+    {
+      model: 'gemini-3.6-flash',
+      expectedParameters: { max_tokens: 512 },
+    },
+    ...[
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-pro-preview',
+      'gemini-3-flash-preview',
+      'gemini-3.1-flash-lite',
+    ].map((model) => ({
+      model,
+      expectedParameters: { temperature: 0.4, top_p: 0.8, max_tokens: 512 },
+    })),
+    ...[
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemma-4-26b-a4b-it-maas',
+      'governed-model',
+    ].map((model) => ({
+      model,
+      expectedParameters: {
+        temperature: 0.4,
+        top_p: 0.8,
+        frequency_penalty: 0.2,
+        presence_penalty: -0.1,
+        max_tokens: 512,
+      },
+    })),
+  ])(
+    'strips unsupported parameters from the SDK request for $model',
+    async ({ model, expectedParameters }) => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const upstreamFetch = jest.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+          new Response('ok'),
+      );
+      const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+
+      await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'Hello' }],
+          stream: true,
+          temperature: 0.4,
+          top_p: 0.8,
+          frequency_penalty: 0.2,
+          presence_penalty: -0.1,
+          max_tokens: 512,
+        }),
+      });
+
+      expect(upstreamFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+        model,
+        messages: [{ role: 'user', content: 'Hello' }],
+        stream: true,
+        ...expectedParameters,
+      });
+    },
+  );
+
+  it.each([undefined, 'false'])(
+    'preserves model parameters outside the pilot (%s)',
+    async (enabled) => {
+      if (enabled !== undefined) {
+        process.env.GOVERNANCE_PILOT_ENABLED = enabled;
+      }
+      const upstreamFetch = jest.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+          new Response('ok'),
+      );
+      const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+      const request = {
+        model: 'gemini-3.6-flash',
+        messages: [{ role: 'user', content: 'Hello' }],
+        temperature: 0.4,
+        top_p: 0.8,
+        frequency_penalty: 0.2,
+        presence_penalty: -0.1,
+        max_tokens: 512,
+      };
+
+      await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify(request),
+      });
+
+      expect(upstreamFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual(request);
+    },
+  );
+
+  it.each([
+    { temperature: 'secret text' },
+    { top_p: 1.1 },
+    { frequency_penalty: -2.1 },
+    { presence_penalty: 'secret text' },
+  ])('validates unsupported numeric parameters %j before stripping', async (parameters) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    const upstreamFetch = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+    const response = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gemini-3.6-flash',
+        messages: [{ role: 'user', content: 'Hello' }],
+        ...parameters,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { top_p: 'secret text' },
+    { top_p: -0.1 },
+    { top_p: 1.1 },
+    { frequency_penalty: -2.1 },
+    { presence_penalty: 2.1 },
+    { max_tokens: 0 },
+    { max_tokens: 1.5 },
+  ])('rejects invalid numeric model parameters %j before sending', async (parameters) => {
+    const upstreamFetch = jest.fn();
+    const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+    const response = await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'Hello' }],
+        ...parameters,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it('sends the server-resolved group IDs with every governed request', async () => {

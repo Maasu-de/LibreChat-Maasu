@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { TooltipAnchor } from '@librechat/client';
-import { getConfigDefaults, GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
+import { getConfigDefaults, GOVERNANCE_ENDPOINT, isAgentsEndpoint } from 'librechat-data-provider';
 import type { ModelSelectorProps } from '~/common';
 import {
   renderModelSpecs,
@@ -105,7 +105,11 @@ function ModelSelectorContent({ governancePilot }: { governancePilot: boolean })
             model,
           )
         }
-      />
+      >
+        {renderEndpoints(
+          (mappedEndpoints ?? []).filter((endpoint) => isAgentsEndpoint(endpoint.value)),
+        )}
+      </GovernanceModelSelector>
     );
   }
 
