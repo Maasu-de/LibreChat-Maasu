@@ -3,11 +3,14 @@ import { z } from 'zod';
 import { FakeChatModel } from '@librechat/agents';
 import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
 import { HumanMessage } from '@librechat/agents/langchain/messages';
+import { Constants } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types/http';
 import { createRun } from '~/agents/run';
+import { resolveRecursionLimit } from '~/agents/config';
 import { createRequestDlpFetch, prepareGovernanceAgentRun } from '../dlp';
 import { getReviewStore } from '../review';
+import { restrictGovernanceConfig } from '../config';
 import { GOVERNANCE_ENDPOINT } from '../mode';
 import { assertGovernanceAgent, governanceAgentMaxSteps } from '../agents';
 
@@ -21,6 +24,10 @@ beforeEach(() => {
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.GOVERNANCE_AGENT_MAX_STEPS = '10';
   process.env.OPENAI_API_KEY = 'test';
+  process.env.OPENID_REUSE_TOKENS = 'true';
+  process.env.OPENID_ADMIN_ROLE = 'governance-admin';
+  process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'realm_access.roles';
+  process.env.OPENAI_MODERATION = 'false';
 });
 afterEach(() => {
   process.env = { ...savedEnv };
@@ -77,11 +84,19 @@ it.each([
 });
 
 /** The deterministic tool exists only in this test module; the application never registers it. */
-async function agentLoop(maxSteps = '10', cancelAfterTool = false) {
+async function agentLoop(
+  maxSteps = '10',
+  { cancelAfterTool = false, agentId = 'agent_test', useTool = true } = {},
+) {
   process.env.GOVERNANCE_AGENT_MAX_STEPS = maxSteps;
+  const config = restrictGovernanceConfig({});
   const controller = new AbortController();
   const request = {
-    body: { endpoint: 'agents', agent_id: 'agent_test', text: 'echo please' },
+    body: {
+      endpoint: agentId === Constants.EPHEMERAL_AGENT_ID ? GOVERNANCE_ENDPOINT : 'agents',
+      agent_id: agentId,
+      text: 'echo please',
+    },
     user: { id: 'user-1' },
   } as ServerRequest;
   const calls: Array<{ headers: Headers; messages: Array<{ role: string; content: string }> }> = [];
@@ -114,10 +129,10 @@ async function agentLoop(maxSteps = '10', cancelAfterTool = false) {
     agents: [
       {
         ...modelOnlyAgent,
-        id: 'agent_test',
+        id: agentId,
         provider: 'openAI',
         model: 'logical-model',
-        tools: [tool],
+        tools: useTool ? [tool] : [],
         model_parameters: { ...modelOnlyAgent.model_parameters, model: 'logical-model' },
         maxContextTokens: 32000,
       },
@@ -125,8 +140,10 @@ async function agentLoop(maxSteps = '10', cancelAfterTool = false) {
     summarizationConfig: { enabled: false },
   });
   const model = new FakeChatModel({
-    responses: ['Checking', 'Done'],
-    toolCalls: [{ name: tool.name, args: { text: 'deterministic result' }, id: 'call_test' }],
+    responses: useTool ? ['Checking', 'Done'] : ['Done'],
+    toolCalls: useTool
+      ? [{ name: tool.name, args: { text: 'deterministic result' }, id: 'call_test' }]
+      : undefined,
   });
   const stream = model._streamResponseChunks.bind(model);
   jest
@@ -158,7 +175,7 @@ async function agentLoop(maxSteps = '10', cancelAfterTool = false) {
       { messages },
       {
         configurable: { thread_id: 'governance-test' },
-        recursionLimit: 20,
+        recursionLimit: resolveRecursionLimit(config.endpoints?.agents, modelOnlyAgent),
         version: 'v2',
         signal: controller.signal,
       },
@@ -193,8 +210,19 @@ it('stops the native loop at the configured model-step limit', async () => {
   expect(error?.message).toContain('agent_max_steps');
 });
 
+it.each(['agent_test', Constants.EPHEMERAL_AGENT_ID])(
+  'completes a model-only %s run when the configured maximum is one model request',
+  async (agentId) => {
+    const { calls, echo, error, run } = await agentLoop('1', { agentId, useTool: false });
+    expect(error).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(echo).not.toHaveBeenCalled();
+    expect(run.getRunMessages()?.at(-1)?.content).toBe('Done');
+  },
+);
+
 it('cancels the native loop before the next model request', async () => {
-  const { calls, echo, error } = await agentLoop('10', true);
+  const { calls, echo, error } = await agentLoop('10', { cancelAfterTool: true });
   expect(echo).toHaveBeenCalledTimes(1);
   expect(calls).toHaveLength(1);
   expect(error).toBeDefined();

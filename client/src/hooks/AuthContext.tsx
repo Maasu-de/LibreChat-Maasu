@@ -14,7 +14,6 @@ import {
   apiBaseUrl,
   SystemRoles,
   setTokenHeader,
-  isSystemRoleName,
   buildLoginRedirectUrl,
 } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
@@ -53,7 +52,11 @@ const AuthContextProvider = ({
   const setQueriesEnabled = useSetRecoilState<boolean>(store.queriesEnabled);
 
   const userRoleName = user?.role ?? '';
-  const isCustomRole = isAuthenticated && !!user?.role && !isSystemRoleName(user.role);
+  const loadActiveRole =
+    isAuthenticated &&
+    !!userRoleName &&
+    userRoleName !== SystemRoles.USER &&
+    userRoleName !== SystemRoles.ADMIN;
 
   const { data: userRole = null } = useGetRole(SystemRoles.USER, {
     enabled: !!(isAuthenticated && (user?.role ?? '')),
@@ -61,8 +64,8 @@ const AuthContextProvider = ({
   const { data: adminRole = null } = useGetRole(SystemRoles.ADMIN, {
     enabled: !!(isAuthenticated && user?.role === SystemRoles.ADMIN),
   });
-  const { data: customRole = null } = useGetRole(isCustomRole ? userRoleName : '_', {
-    enabled: isCustomRole,
+  const { data: activeRole = null } = useGetRole(loadActiveRole ? userRoleName : '_', {
+    enabled: loadActiveRole,
   });
 
   const navigate = useNavigate();
@@ -278,7 +281,7 @@ const AuthContextProvider = ({
       roles: {
         [SystemRoles.USER]: userRole,
         [SystemRoles.ADMIN]: adminRole,
-        ...(isCustomRole && customRole ? { [userRoleName]: customRole } : {}),
+        ...(loadActiveRole && activeRole ? { [userRoleName]: activeRole } : {}),
       },
       isAuthenticated,
     }),
@@ -290,9 +293,9 @@ const AuthContextProvider = ({
       token,
       userRole,
       adminRole,
-      isCustomRole,
+      loadActiveRole,
       userRoleName,
-      customRole,
+      activeRole,
     ],
   );
 

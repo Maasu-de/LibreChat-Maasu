@@ -124,6 +124,8 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
   if (!isEnabled(process.env.GOVERNANCE_DLP_ENABLED) || isEnabled(process.env.OPENAI_MODERATION)) {
     throw new Error('Governed pilot requires DLP and forbids external moderation');
   }
+  // Model/tool transitions need their own graph steps; retain the classic-chat budget too.
+  const recursionLimit = Math.max(50, governanceAgentMaxSteps() * 2 + 1);
   return {
     ...config,
     endpoints: {
@@ -140,8 +142,8 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
       agents: {
         capabilities: [],
         allowedProviders: [GOVERNANCE_ENDPOINT],
-        recursionLimit: governanceAgentMaxSteps(),
-        maxRecursionLimit: governanceAgentMaxSteps(),
+        recursionLimit,
+        maxRecursionLimit: recursionLimit,
       },
     },
     interface: restrictGovernanceInterface(config.interface),
