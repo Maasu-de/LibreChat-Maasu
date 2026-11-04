@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { NEW_CHAT_PATH, getAccessToken, messagesView, sendMessage } from '../mock/helpers';
+import { getAccessToken, messagesView, sendMessage } from '../mock/helpers';
+import { newGovernedChat } from './helpers';
 
 /**
  * Text attachments in the governed pilot (#150), end to end through the fork's DLP review
@@ -8,8 +9,6 @@ import { NEW_CHAT_PATH, getAccessToken, messagesView, sendMessage } from '../moc
  * addresses and blocks `PROJECT-NIGHTSHADE`, and its reply states what reached the model.
  */
 
-const GOVERNED_ENDPOINT = 'AI Governance Gateway';
-const GOVERNED_MODEL = 'e2e-governed-model';
 const IBAN = 'DE89370400440532013000';
 
 type UploadFile = { name: string; mimeType: string; buffer: Buffer };
@@ -28,21 +27,6 @@ const composerFile = (page: Page, filename: string) =>
 
 const isUpload = (url: string, method: string) =>
   method === 'POST' && new URL(url).pathname === '/api/files';
-
-/** Opens a new chat on the governed endpoint, selecting its model if none is preselected. */
-async function newGovernedChat(page: Page) {
-  await page.goto(NEW_CHAT_PATH, { timeout: 30000 });
-  const trigger = page.getByRole('button', { name: 'Select a model' }).first();
-  await expect(page.getByRole('textbox', { name: 'Message input' })).toBeVisible();
-  if (await trigger.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await trigger.click();
-    await page.getByRole('option', { name: GOVERNED_ENDPOINT }).click();
-    const model = page.getByRole('option', { name: GOVERNED_MODEL, exact: true });
-    if (await model.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await model.click();
-    }
-  }
-}
 
 async function chooseUploadFile(page: Page, file: UploadFile) {
   await page.getByRole('button', { name: 'Attach File Options' }).click();

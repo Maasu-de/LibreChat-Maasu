@@ -21,8 +21,8 @@ import {
   useAddedChatContext,
   useAssistantsMapContext,
 } from '~/Providers';
+import { cn, getModelSpec, isUnsentDlpText, removeFocusRings } from '~/utils';
 import PendingManualSkillsChips from './PendingManualSkillsChips';
-import { cn, getModelSpec, removeFocusRings } from '~/utils';
 import DlpInterventionDialog from './DlpInterventionDialog';
 import { useGetStartupConfig } from '~/data-provider';
 import { mainTextareaId, BadgeItem } from '~/common';
@@ -187,11 +187,16 @@ const ChatForm = memo(function ChatForm({
     return () => clearTimeout(timer);
   }, [dlpReviewExpiresAt, handleCancelDlpIntervention, showToast, localize]);
 
+  /** Clears the composer only while it shows the message being sent, not one typed meanwhile. */
   const handleConfirmDlpIntervention = useCallback(() => {
-    if (confirmDlpIntervention()) {
+    const review = pendingDlpReview;
+    if (!review || !confirmDlpIntervention()) {
+      return;
+    }
+    if (isUnsentDlpText(review, methods.getValues('text'))) {
       methods.reset();
     }
-  }, [confirmDlpIntervention, methods]);
+  }, [confirmDlpIntervention, methods, pendingDlpReview]);
 
   const handleContainerClick = useCallback(() => {
     /** Check if the device is a touchscreen */

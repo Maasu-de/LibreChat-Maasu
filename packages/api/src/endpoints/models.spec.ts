@@ -116,7 +116,7 @@ describe('fetchModels', () => {
               {
                 name: 'AI Governance Gateway',
                 apiKey: 'service-key',
-                baseURL: 'https://gateway.test/api/v1/dlp',
+                baseURL: 'https://gateway.test/v1',
                 models: { fetch: true, default: ['not-in-gateway-catalog'] },
               },
             ],
@@ -149,12 +149,18 @@ describe('fetchModels', () => {
     const onModels = jest.fn();
     const models = await fetchModels({
       apiKey: 'service-key',
-      baseURL: 'https://gateway.test/api/v1/dlp',
+      baseURL: 'https://gateway.test/v1',
       onModels,
     });
 
     expect(models).toEqual(['s1-model', 's2-model', 'missing-tier']);
     expect(onModels).toHaveBeenCalledWith(data);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://gateway.test/v1/models',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer service-key' }),
+      }),
+    );
     expect(mockCacheGet).not.toHaveBeenCalled();
   });
 

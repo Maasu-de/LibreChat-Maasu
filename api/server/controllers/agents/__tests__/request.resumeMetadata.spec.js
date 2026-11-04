@@ -90,6 +90,8 @@ jest.mock('@librechat/api', () => ({
   isDlpUnsent: (...args) => jest.requireActual('@librechat/api').isDlpUnsent(...args),
   getRetryableDlpReviewId: (...args) =>
     jest.requireActual('@librechat/api').getRetryableDlpReviewId(...args),
+  getBudgetErrorMessage: (...args) =>
+    jest.requireActual('@librechat/api').getBudgetErrorMessage(...args),
   createApprovalRetryEvent: (...args) =>
     jest.requireActual('@librechat/api').createApprovalRetryEvent(...args),
   getViolationInfo: jest.fn(),
@@ -200,6 +202,48 @@ describe('ResumableAgentController resume metadata', () => {
     mockGenerationJobManager.emitDone.mockResolvedValue(undefined);
     mockSaveMessage.mockResolvedValue({});
   });
+
+  it.each(['tenant', 'group'])(
+    'streams a readable %s budget rejection from the provider SDK',
+    async (scope) => {
+      const { APIError } = require('openai');
+      const conversationId = 'conversation-123';
+      const providerError = APIError.generate(
+        403,
+        {
+          error: { code: 'budget_exceeded', scope, message: 'Monthly limit reached.' },
+        },
+        undefined,
+        new Headers(),
+      );
+      const initializeClient = jest.fn(async () => ({
+        client: {
+          sendMessage: async () => {
+            throw providerError;
+          },
+        },
+      }));
+      const req = {
+        user: { id: 'user-123' },
+        body: {
+          text: 'hello',
+          messageId: 'user-message',
+          parentMessageId: 'parent-message',
+          conversationId,
+          endpointOption: { endpoint: 'agents', modelOptions: { model: 'governed-model' } },
+        },
+        config: {},
+      };
+      await AgentController(req, createResumableResponse(), jest.fn(), initializeClient, null);
+      for (let i = 0; i < 50 && mockGenerationJobManager.emitError.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(mockGenerationJobManager.emitError).toHaveBeenCalledWith(
+        conversationId,
+        JSON.stringify({ code: 'budget_exceeded', scope }),
+      );
+    },
+  );
 
   it('rejects an underscore-suffixed parent that is not persisted', async () => {
     const conversationId = 'conversation-123';
@@ -652,7 +696,7 @@ describe('ResumableAgentController resume metadata', () => {
       const sendMessage = async (_text, opts) => {
         opts.onStart(userMessage, 'response-message');
         chunksBeforeSent = mockGenerationJobManager.emitChunk.mock.calls.length;
-        await governedFetch('http://governance.test/api/v1/dlp/chat/completions', {
+        await governedFetch('http://governance.test/v1/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -759,7 +803,7 @@ describe('ResumableAgentController resume metadata', () => {
       const initializeClient = jest.fn(async ({ req }) => {
         const modelFetch = governed ? createRequestDlpFetch(req, completion) : completion;
         const sendMessage = async () => {
-          await modelFetch('http://governance.test/api/v1/dlp/chat/completions', {
+          await modelFetch('http://governance.test/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
