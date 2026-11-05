@@ -281,7 +281,7 @@ export async function storeAndStripChallenge(
  * @param redirectUri - The redirect URI to check.
  * @param adminPanelUrl - The admin panel URL (defaults to ADMIN_PANEL_URL env var)
  * @param domainClient - The main client domain
- * @returns True if redirecting to admin panel (different origin from main client).
+ * @returns True if redirecting to the admin panel rather than the main client.
  */
 export function isAdminPanelRedirect(
   redirectUri: string,
@@ -289,12 +289,23 @@ export function isAdminPanelRedirect(
   domainClient: string,
 ): boolean {
   try {
-    const redirectOrigin = new URL(redirectUri).origin;
-    const adminOrigin = new URL(adminPanelUrl).origin;
-    const clientOrigin = new URL(domainClient).origin;
+    const redirect = new URL(redirectUri);
+    const admin = new URL(adminPanelUrl);
+    const client = new URL(domainClient);
 
-    /** Redirect is for admin panel if it matches admin origin but not main client origin */
-    return redirectOrigin === adminOrigin && redirectOrigin !== clientOrigin;
+    if (redirect.origin !== admin.origin) {
+      return false;
+    }
+    if (admin.origin !== client.origin) {
+      return true;
+    }
+
+    const containsPath = (basePath: string): boolean => {
+      const path = basePath.replace(/\/$/, '');
+      return redirect.pathname === path || redirect.pathname.startsWith(`${path}/`);
+    };
+
+    return containsPath(admin.pathname) && !containsPath(client.pathname);
   } catch {
     /** If URL parsing fails, fall back to simple string comparison */
     return redirectUri.startsWith(adminPanelUrl) && !redirectUri.startsWith(domainClient);
