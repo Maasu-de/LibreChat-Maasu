@@ -1,3 +1,4 @@
+import { logger } from '@librechat/data-schemas';
 import { isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
@@ -41,6 +42,8 @@ const DLP_UNSUPPORTED_MESSAGE =
 const COMPARISON_BLOCKED_MESSAGE =
   "This model was not called: your organization's AI governance policy blocks this message.";
 const COMPARISON_FAILURE_MESSAGE = 'This model could not respond. Please try again later.';
+const COMPARISON_INTERRUPTED_MESSAGE =
+  '\n\nThis model stopped responding, so its answer is incomplete. Please try again later.';
 const COMPARISON_REVIEW_MESSAGE =
   'This model was not called: the message needs your review first. Send it to this model alone to review it.';
 const comparisonRestrictedMessage = ({ categories }: GovernanceModelRestriction): string =>
@@ -641,13 +644,82 @@ export function onDlpSent(req: ServerRequest | undefined, callback: () => void):
 /** The approval-off fetch of each turn's governed fetch, for side calls made with its options. */
 const sideCallFetches = new WeakMap<GovernanceFetch, GovernanceFetch>();
 
-/** A streamed completion whose only text is `message`, for a comparison model that was not called. */
-function comparisonNotice(message: string): Response {
+/** The server-sent events of a completion whose only text is `message`. */
+function noticeEvents(message: string): string {
   const chunk = {
     choices: [{ index: 0, delta: { role: 'assistant', content: message }, finish_reason: 'stop' }],
   };
-  return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+  return `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`;
+}
+
+/** A streamed completion whose only text is `message`, for a comparison model that was not called. */
+function comparisonNotice(message: string): Response {
+  return new Response(noticeEvents(message), {
     headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+/**
+ * Passes a compared model's completion stream on in whole lines, and ends it with a notice instead
+ * of an error when it breaks partway, as an error would also end the other model's response. Only
+ * whole lines are passed on, so the notice never lands inside a cut-off event. A stream broken by
+ * the user stopping the turn still errors.
+ */
+function isolateStreamFailure(response: Response, signal?: AbortSignal | null): Response {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return response;
+  }
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let pending = '';
+  /** The stream's next whole lines, then its unterminated rest, then `undefined` once it ended. */
+  const readLines = async (): Promise<string | undefined> => {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        const rest = pending + decoder.decode();
+        pending = '';
+        return rest === '' ? undefined : rest;
+      }
+      pending += decoder.decode(value, { stream: true });
+      const end = pending.lastIndexOf('\n') + 1;
+      if (end > 0) {
+        const lines = pending.slice(0, end);
+        pending = pending.slice(end);
+        return lines;
+      }
+    }
+  };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const lines = await readLines();
+        if (lines === undefined) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(encoder.encode(lines));
+      } catch (error) {
+        if (signal?.aborted) {
+          controller.error(error);
+          return;
+        }
+        logger.warn('[GovernanceDlp] A compared model stream broke; ended it with a notice', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        controller.enqueue(encoder.encode(`\n${noticeEvents(COMPARISON_INTERRUPTED_MESSAGE)}`));
+        controller.close();
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
   });
 }
 
@@ -740,9 +812,10 @@ function showComparisonReview(
  * call on its own. A review that ends the turn waits for the other model's call, so the review
  * shown is chosen from both: when the findings do not allow a model, that is shown and nothing is
  * sent. A review the user can approve ends the turn as for a single model; once approved, each
- * model's own review is approved with it. A block or failure becomes that model's response text
- * instead of an error, because an error would also end the other model's response. So does a
- * review once the other model already answered, as the turn then can no longer end with it.
+ * model's own review is approved with it. A block or failure, also one partway through the stream,
+ * becomes that model's response text instead of an error, because an error would also end the
+ * other model's response. So does a review once the other model already answered, as the turn then
+ * can no longer end with it.
  */
 function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
   req.governanceDlpSent ??= false;
@@ -772,12 +845,16 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
       const response = await send();
       if (response.ok || !review) {
         settle();
-        return response.ok ? response : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+        return response.ok
+          ? isolateStreamFailure(response, init?.signal)
+          : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
       }
       if (review.decision !== 'BLOCK' && (await claimComparisonApproval(req))) {
         settle();
         const approved = await send(review.reviewId);
-        return approved.ok ? approved : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+        return approved.ok
+          ? isolateStreamFailure(approved, init?.signal)
+          : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
       }
       showComparisonReview(req, review, restriction);
       if (review.decision === 'BLOCK' && !restriction) {

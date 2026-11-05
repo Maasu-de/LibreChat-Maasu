@@ -456,6 +456,34 @@ describe('two-model comparison', () => {
     JSON.parse((await response.text()).split('\n\n')[0].replace('data: ', '')).choices[0].delta
       .content;
 
+  const streamEvents = async (response: Response): Promise<string[]> =>
+    (await response.text())
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.slice('data: '.length));
+
+  /** A completion that streams its first answer, then breaks partway through the next event. */
+  const broken = (error: Error = new TypeError('terminated'), onBreak = () => {}): Response => {
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(
+              encoder.encode('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\ndata: {"choi'),
+            );
+            return;
+          }
+          onBreak();
+          controller.error(error);
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    );
+  };
+
   it('streams an allowed call and marks the turn sent', async () => {
     const req = comparisonRequest();
     const upstreamFetch = jest.fn(
@@ -639,6 +667,42 @@ describe('two-model comparison', () => {
       expect(req.governanceDlpReview).toBeUndefined();
     },
   );
+
+  it("keeps a model's partial answer when its stream breaks, so the other model can finish", async () => {
+    const req = comparisonRequest();
+
+    const [answered, interrupted] = await Promise.all([
+      send(createRequestDlpFetch(req, async () => completion())),
+      send(
+        createRequestDlpFetch(req, async () => broken()),
+        undefined,
+        'public-s2',
+      ),
+    ]);
+
+    expect(await responseText(answered)).toBe('Hi');
+    const events = await streamEvents(interrupted);
+    expect(events).toHaveLength(3);
+    expect(JSON.parse(events[0]).choices[0].delta.content).toBe('Hel');
+    expect(JSON.parse(events[1]).choices[0]).toMatchObject({
+      delta: { content: expect.stringContaining('stopped responding') },
+      finish_reason: 'stop',
+    });
+    expect(events[2]).toBe('[DONE]');
+  });
+
+  it('still ends a broken stream when the user stops the turn', async () => {
+    const controller = new AbortController();
+    const stopped = () =>
+      broken(new DOMException('aborted', 'AbortError'), () => controller.abort());
+
+    const response = await send(
+      createRequestDlpFetch(comparisonRequest(), async () => stopped()),
+      controller.signal,
+    );
+
+    await expect(response.text()).rejects.toThrow('aborted');
+  });
 
   it('keeps a single-model block as it was', async () => {
     const req = { ...comparisonRequest(), body: { text } } as ServerRequest;
