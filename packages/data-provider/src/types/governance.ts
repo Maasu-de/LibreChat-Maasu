@@ -16,23 +16,45 @@ export interface GovernanceMaskedContent {
   text: string;
 }
 
-/** Findings in an attached file, counted by category and action. The file's text is not sent. */
+/** A code-point range of the submitted text that the gateway replaces. */
+export interface GovernanceMaskedRange {
+  start: number;
+  end: number;
+  /** Index in the review's `findings` of the finding whose replacement takes the range. */
+  finding: number;
+}
+
+/**
+ * Findings in an attached file, counted by category and action. Only the matched values are
+ * sent, never the rest of the file's text.
+ */
 export interface GovernanceFileFinding {
   filename: string;
   /** Set for a file attached to the submitted message, which the user can still withdraw. */
   fileId?: string;
+  /** The file's MIME type. */
+  type?: string;
   category: string;
   label?: string;
   action: GovernanceDecision;
   count: number;
+  /**
+   * The matched values, in the order they first appear in the file. A value that differs from an
+   * earlier one only in case or spacing is left out.
+   */
+  terms?: string[];
 }
 
 export interface GovernanceDlpResult {
   decision: GovernanceDecision;
   policyVersion?: number;
   findings: GovernanceFinding[];
+  /** The ranges the gateway replaces, in text order, for every decision. */
+  maskedRanges?: GovernanceMaskedRange[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
+  /** Set when the content does not allow the selected model, which blocks the prompt. */
+  modelNotAllowed?: { model: string; allowedTiers: GovernanceTier[] };
 }
 
 /** Location that the findings and masked preview of a DLP review give for the submitted text. */

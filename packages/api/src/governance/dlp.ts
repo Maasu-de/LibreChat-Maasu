@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
-import { isEphemeralAgentId } from 'librechat-data-provider';
+import { ErrorTypes, isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
+  GovernanceTier,
   TEphemeralAgent,
   GovernanceDecision,
   GovernanceDlpReview,
@@ -12,16 +13,17 @@ import type { ServerRequest } from '~/types/http';
 import type { GovernanceAgentRequest } from './agents';
 import { createGovernanceAgentFetch, agentRequestHeaders } from './agents';
 import {
-  maskText,
   readReview,
   reviewTtl,
   getReviewStore,
   toClientReview,
   findSubmittedText,
   findingsInFiles,
+  toModelBlockReview,
   findingsInSubmittedText,
 } from './review';
-import { isGovernancePilotEnabled } from './mode';
+import { isGovernancePilotEnabled, hasGovernanceFileReferences } from './mode';
+import { getGovernanceMasking } from './mask';
 import { isEnabled } from '~/utils/common';
 
 const DLP_CHAT_COMPLETIONS_PATH = '/v1/chat/completions';
@@ -158,8 +160,9 @@ export function hasSelectedTools(ephemeralAgent?: TEphemeralAgent | null): boole
   );
 }
 
-/** True for a plain-text message, including follow-ups using an ephemeral agent ID. */
+/** True for a nonempty text submission, including enabled attachments and ephemeral-agent follow-ups. */
 export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
+  const hasFiles = hasGovernanceFileReferences(body?.files);
   return (
     typeof body?.text === 'string' &&
     body.text.trim().length > 0 &&
@@ -170,7 +173,7 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
     (body.agent_id == null ||
       (typeof body.agent_id === 'string' && isEphemeralAgentId(body.agent_id))) &&
     body.assistant_id == null &&
-    (body.files == null || (Array.isArray(body.files) && body.files.length === 0)) &&
+    (body.files == null || (Array.isArray(body.files) && body.files.length === 0) || hasFiles) &&
     (body.tools == null || (Array.isArray(body.tools) && body.tools.length === 0)) &&
     !hasSelectedTools(body.ephemeralAgent)
   );
@@ -408,6 +411,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   if (!decision) {
     return rejectCompletion('dlp_malformed_response');
   }
+  const fileContexts = params.fileContexts();
   const submitted = findSubmittedText(params.request.messages, params.text);
   if (!submitted) {
     return rejectCompletion('dlp_unsupported_request');
@@ -418,10 +422,15 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     params.request.messages,
     review.findings ?? [],
     submitted,
-    params.fileContexts(),
+    fileContexts,
   );
+  const masking = getGovernanceMasking(params.text, findings);
   if (decision === 'BLOCK') {
-    params.onReview(toClientReview(review, decision, findings, undefined, fileFindings));
+    params.onReview(
+      review.block_reason === 'model_not_allowed'
+        ? toModelBlockReview(review, params.request.model, findings, fileFindings)
+        : toClientReview(review, decision, findings, masking, fileFindings),
+    );
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
 
@@ -433,7 +442,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     return rejectCompletion('dlp_malformed_response');
   }
 
-  const approvedText = maskText(params.text, findings);
+  const { text: approvedText } = masking;
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
     return rejectCompletion('dlp_malformed_response');
   }
@@ -451,7 +460,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     },
     reviewTtl(review.expires_at),
   );
-  params.onReview(toClientReview(review, decision, findings, approvedText, fileFindings));
+  params.onReview(toClientReview(review, decision, findings, masking, fileFindings));
   return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
@@ -598,20 +607,51 @@ export function createGovernanceDlpFetch({
   };
 }
 
+/** The gateway's 403 for a selected model that the content does not allow. */
+interface ModelNotAllowedBody {
+  error?: { code?: string; allowed_tiers?: GovernanceTier[] };
+}
+
+/**
+ * Restates the gateway's rejection of a model the content does not allow as a typed error, so the
+ * chat explains it in the user's language with the allowed tiers. The SDK puts the message in the
+ * error it throws, so the type travels as that message.
+ */
+async function explainModelRejection(response: Response): Promise<Response> {
+  if (response.status !== 403) {
+    return response;
+  }
+  const body: ModelNotAllowedBody | undefined = await response
+    .clone()
+    .json()
+    .catch(() => undefined);
+  if (body?.error?.code !== ErrorTypes.GOVERNANCE_MODEL_NOT_ALLOWED) {
+    return response;
+  }
+  const info = (body.error.allowed_tiers ?? []).map((tier) => tier.name).join(', ');
+  const message = JSON.stringify({ type: ErrorTypes.GOVERNANCE_MODEL_NOT_ALLOWED, info });
+  return new Response(JSON.stringify({ error: { ...body.error, message } }), {
+    status: response.status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 /**
  * Adds server-resolved identity and group context to every gateway request. This deliberately
  * does not perform DLP parsing or approval, so completions that the DLP flow cannot govern
  * (files, tools, regenerations, and DLP-disabled deployments) still have accurate usage
- * attribution at the gateway.
+ * attribution at the gateway. A rejected model is explained on every one of these paths.
  */
 export function createGovernanceAttributionFetch(
   req: ServerRequest,
   fetch: GovernanceFetch = globalThis.fetch,
 ): GovernanceFetch {
   return async (input, init) =>
-    fetch(
-      input,
-      withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
+    explainModelRejection(
+      await fetch(
+        input,
+        withGovernanceHeaders(input, init, req.user?.id ?? '', req.governanceGroupIds ?? []),
+      ),
     );
 }
 

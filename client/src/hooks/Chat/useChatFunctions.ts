@@ -714,9 +714,12 @@ export default function useChatFunctions({
 
   const cancelDlpIntervention = useCallback(() => dropDlpReview(true), [dropDlpReview]);
 
+  /** Also runs when a review arrives, so one for another conversation is dropped at once, not at
+   *  whatever re-run comes next (a toast changes `showToast`, and with it `dropDlpReview`). */
+  const reviewConversationKey = dlpReview && dlpConversationKey(dlpReview.conversationId);
   useEffect(() => {
     dropDlpReview(false, dlpConversationKey(immutableConversation?.conversationId));
-  }, [immutableConversation?.conversationId, dropDlpReview]);
+  }, [immutableConversation?.conversationId, reviewConversationKey, dropDlpReview]);
 
   /**
    * Sends the reviewed text (masked where the review masks it) as approved by the user, and
@@ -733,7 +736,6 @@ export default function useChatFunctions({
       showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
       return false;
     }
-
     setDlpReview({ ...pendingDlpReview, status: 'sending' });
     /** The reviewed submit already drained the `$` queue, so its skills come from the review.
      *  An explicit list also keeps skills queued since then for the next message. */

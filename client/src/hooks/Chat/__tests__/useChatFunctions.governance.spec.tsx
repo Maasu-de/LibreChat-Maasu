@@ -19,6 +19,8 @@ import { ephemeralAgentByConvoId } from '~/store/agents';
 import store from '~/store';
 
 const mockShowToast = jest.fn();
+/** Stable, like the real `useLocalize`. */
+const mockLocalize = (key: string) => key;
 /** Succeeds at once, like a delete the server accepts. */
 const mockDeleteFiles = jest.fn((_vars: unknown, options?: { onSuccess?: () => void }) =>
   options?.onSuccess?.(),
@@ -26,12 +28,15 @@ const mockDeleteFiles = jest.fn((_vars: unknown, options?: { onSuccess?: () => v
 
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: { id: 'user-1' } }),
-  useLocalize: () => (key: string) => key,
+  useLocalize: () => mockLocalize,
 }));
+
+/** The real ToastProvider makes a new `showToast` whenever a toast shows or hides. */
+let mockToastContext: { showToast: (...args: unknown[]) => void } = { showToast: mockShowToast };
 
 jest.mock('@librechat/client', () => ({
   ...jest.requireActual('@librechat/client'),
-  useToastContext: () => ({ showToast: mockShowToast }),
+  useToastContext: () => mockToastContext,
 }));
 
 jest.mock('~/data-provider', () => ({
@@ -82,6 +87,7 @@ const maskReview = (conversationId: string | null): TPendingDlpReview => ({
         replacement: '[EMAIL]',
       },
     ],
+    maskedRanges: [{ start: 13, end: 28, finding: 0 }],
     maskedPreview: [{ location: '/messages/0/content', text: maskedEmail }],
   },
 });
@@ -292,6 +298,7 @@ beforeEach(() => {
   setMessages.mockClear();
   mockShowToast.mockClear();
   mockDeleteFiles.mockClear();
+  mockToastContext = { showToast: mockShowToast };
 });
 
 /** Sends a message with the composer files, which the stream then holds for `review`. */
@@ -318,6 +325,26 @@ it('sends a message at once, without a separate DLP check', () => {
   expect(lastSubmission().userMessage.text).toBe(email);
   expect(lastSubmission().dlpReviewId).toBeUndefined();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it.each(['', '   '])('rejects a blank message without files (%j)', (text) => {
+  renderChat(newConversation, maskReview(null));
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(setSubmission).not.toHaveBeenCalled();
+});
+
+it.each(['', '   '])('rejects a blank message with attached files (%j)', (text) => {
+  renderChat(newConversation, fileReview(null));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Attach files' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(setSubmission).not.toHaveBeenCalled();
+  expect(composerFileIds()).toEqual(composerFiles.map((file) => file.file_id));
 });
 
 it.each([false, true])(
@@ -353,7 +380,7 @@ it.each([savedConversation, newConversation])(
 
     fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('[EMAIL]')).toBeInTheDocument();
+    expect(screen.getByText('com_ui_dlp_category_email_address')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
 
     expect(setSubmission).toHaveBeenCalledTimes(1);
@@ -520,6 +547,35 @@ it('drops a review once the chat moves to another conversation', () => {
   );
 
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it("keeps a new chat's review open when a toast renews `showToast`", () => {
+  renderChat(newConversation, maskReview(null));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  mockToastContext = { showToast: (...args) => mockShowToast(...args) };
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt', hidden: true }), {
+    target: { value: 'typed while the review is open' },
+  });
+
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+
+it('drops a review for another conversation as soon as it arrives', () => {
+  renderChat(newConversation, maskReview('stream-1'));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it("keeps a saved chat's review and its uploads while that chat stays open", () => {
+  renderChat(savedConversation, fileReview(savedConversation.conversationId));
+
+  sendWithFilesForReview();
+
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(mockDeleteFiles).not.toHaveBeenCalled();
 });
 
 it('puts all files of a cancelled review without blocked findings back', () => {
