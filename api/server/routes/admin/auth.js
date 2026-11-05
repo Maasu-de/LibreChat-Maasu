@@ -2,7 +2,7 @@ const express = require('express');
 const passport = require('passport');
 const crypto = require('node:crypto');
 const openIdClient = require('openid-client');
-const { CacheKeys } = require('librechat-data-provider');
+const { CacheKeys, SystemRoles } = require('librechat-data-provider');
 const {
   logger,
   DEFAULT_SESSION_EXPIRY,
@@ -11,6 +11,7 @@ const {
 } = require('@librechat/data-schemas');
 const {
   isEnabled,
+  isGovernancePilotEnabled,
   getAdminPanelUrl,
   exchangeAdminCode,
   createSetBalanceConfig,
@@ -18,14 +19,17 @@ const {
   tenantContextMiddleware,
   preAuthTenantMiddleware,
   applyAdminRefresh,
+  syncOidcAdministrator,
   AdminRefreshError,
   buildOpenIDRefreshParams,
+  assertOidcAdministratorConfigured,
 } = require('@librechat/api');
 const { loginController } = require('~/server/controllers/auth/LoginController');
 const { hasCapability, requireCapability } = require('~/server/middleware/roles/capabilities');
 const { createOAuthHandler } = require('~/server/controllers/auth/oauth');
 const {
   findBalanceByUser,
+  updateUser,
   findUsers,
   generateToken,
   getUserById,
@@ -87,14 +91,16 @@ router.get('/verify', middleware.requireJwtAuth, requireAdminAccess, (req, res) 
 });
 
 router.get('/oauth/openid/check', (req, res) => {
-  const openidConfig = getOpenIdConfig();
-  if (!openidConfig) {
-    return res.status(404).json({
-      error: 'OpenID configuration not found',
+  try {
+    assertOidcAdministratorConfigured();
+    getOpenIdConfig();
+    return res.status(200).json({ message: 'OpenID check successful' });
+  } catch {
+    return res.status(isGovernancePilotEnabled() ? 503 : 404).json({
+      error: 'OpenID is unavailable or misconfigured',
       error_code: 'OPENID_NOT_CONFIGURED',
     });
   }
-  res.status(200).json({ message: 'OpenID check successful' });
 });
 
 /**
@@ -573,8 +579,16 @@ router.post(
           {
             findUsers,
             getUserById,
+            synchronizeAdministrator: (user, refreshed) =>
+              syncOidcAdministrator(user, refreshed, updateUser),
             canAccessAdmin: async (user) => {
               try {
+                if (
+                  isGovernancePilotEnabled() &&
+                  (user.provider !== 'openid' || user.role !== SystemRoles.GOVERNANCE_ADMIN)
+                ) {
+                  return false;
+                }
                 return await hasCapability(
                   {
                     id: user.id ?? user._id?.toString(),
@@ -605,9 +619,18 @@ router.post(
         return res.json(result);
       } catch (err) {
         if (err instanceof AdminRefreshError) {
-          return res.status(err.status).json({ error: err.message, error_code: err.code });
+          return res.status(err.status).json({
+            error: err.message,
+            error_code: err.code,
+            ...(tokenset.refresh_token ? { refreshToken: tokenset.refresh_token } : {}),
+          });
         }
-        throw err;
+        logger.error('[admin/oauth/refresh] Post-refresh validation failed:', err);
+        return res.status(500).json({
+          error: 'Internal server error',
+          error_code: 'INTERNAL_ERROR',
+          ...(tokenset.refresh_token ? { refreshToken: tokenset.refresh_token } : {}),
+        });
       }
     } catch (error) {
       logger.error('[admin/oauth/refresh] Error:', error);

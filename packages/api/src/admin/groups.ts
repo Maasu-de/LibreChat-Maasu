@@ -13,6 +13,11 @@ import type { FilterQuery, ClientSession, DeleteResult } from 'mongoose';
 import type { Response } from 'express';
 import type { ValidationError } from '~/types/error';
 import type { ServerRequest } from '~/types/http';
+import {
+  mutateGovernanceGroup,
+  groupSessionArgs,
+  isGovernanceGroupAuditConfigured,
+} from '../governance/audit';
 import { parsePagination } from './pagination';
 
 type GroupListFilter = Pick<GroupFilterOptions, 'source' | 'search'>;
@@ -155,6 +160,9 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
 
   async function createGroupHandler(req: ServerRequest, res: Response) {
     try {
+      if (!isGovernanceGroupAuditConfigured(req)) {
+        return res.status(503).json({ error: 'Governance group audit is not configured' });
+      }
       const body = req.body as CreateGroupRequest;
       if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
         return res.status(400).json({ error: 'name is required' });
@@ -213,15 +221,24 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         memberIds = rawIds.map((id) => idMap.get(id) || id);
       }
 
-      const group = await createGroup({
-        name: body.name.trim(),
-        description: body.description,
-        email: body.email,
-        avatar: body.avatar,
-        source: body.source || 'local',
-        memberIds,
-        ...(body.idOnTheSource ? { idOnTheSource: body.idOnTheSource } : {}),
-      });
+      const group = await mutateGovernanceGroup(
+        req,
+        'group.created',
+        (session) =>
+          createGroup(
+            {
+              name: body.name.trim(),
+              description: body.description,
+              email: body.email,
+              avatar: body.avatar,
+              source: body.source || 'local',
+              memberIds,
+              ...(body.idOnTheSource ? { idOnTheSource: body.idOnTheSource } : {}),
+            },
+            ...groupSessionArgs(session),
+          ),
+        rawIds,
+      );
       return res.status(201).json({ group });
     } catch (error) {
       if ((error as ValidationError).name === 'ValidationError') {
@@ -234,6 +251,9 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
 
   async function updateGroupHandler(req: ServerRequest, res: Response) {
     try {
+      if (!isGovernanceGroupAuditConfigured(req)) {
+        return res.status(503).json({ error: 'Governance group audit is not configured' });
+      }
       const { id } = req.params as GroupIdParams;
       if (!isValidObjectIdString(id)) {
         return res.status(400).json({ error: 'Invalid group ID format' });
@@ -285,7 +305,9 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         return res.status(400).json({ error: 'No valid fields to update' });
       }
 
-      const group = await updateGroupById(id, updateData);
+      const group = await mutateGovernanceGroup(req, 'group.updated', (session) =>
+        updateGroupById(id, updateData, ...groupSessionArgs(session)),
+      );
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
       }
@@ -301,11 +323,16 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
 
   async function deleteGroupHandler(req: ServerRequest, res: Response) {
     try {
+      if (!isGovernanceGroupAuditConfigured(req)) {
+        return res.status(503).json({ error: 'Governance group audit is not configured' });
+      }
       const { id } = req.params as GroupIdParams;
       if (!isValidObjectIdString(id)) {
         return res.status(400).json({ error: 'Invalid group ID format' });
       }
-      const deleted = await deleteGroup(id);
+      const deleted = await mutateGovernanceGroup(req, 'group.deleted', (session) =>
+        deleteGroup(id, ...groupSessionArgs(session)),
+      );
       if (!deleted) {
         return res.status(404).json({ error: 'Group not found' });
       }
@@ -402,6 +429,9 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
 
   async function addGroupMemberHandler(req: ServerRequest, res: Response) {
     try {
+      if (!isGovernanceGroupAuditConfigured(req)) {
+        return res.status(503).json({ error: 'Governance group audit is not configured' });
+      }
       const { id } = req.params as GroupIdParams;
       if (!isValidObjectIdString(id)) {
         return res.status(400).json({ error: 'Invalid group ID format' });
@@ -416,7 +446,12 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
           .json({ error: 'Only native user ObjectIds can be added via this endpoint' });
       }
 
-      const { group } = await addUserToGroup(userId, id);
+      const group = await mutateGovernanceGroup(
+        req,
+        'membership.added',
+        async (session) => (await addUserToGroup(userId, id, ...groupSessionArgs(session))).group,
+        [userId],
+      );
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
       }
@@ -437,14 +472,18 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
    * (which resolves the user), falling back to a raw $pull if the user record
    * no longer exists. Returns null only when the group itself is not found.
    */
-  async function removeObjectIdMember(groupId: string, userId: string): Promise<IGroup | null> {
+  async function removeObjectIdMember(
+    groupId: string,
+    userId: string,
+    session?: ClientSession,
+  ): Promise<IGroup | null> {
     try {
-      const { group } = await removeUserFromGroup(userId, groupId);
+      const { group } = await removeUserFromGroup(userId, groupId, ...groupSessionArgs(session));
       return group;
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       if (msg === 'User not found' || msg.startsWith('User not found:')) {
-        return removeMemberById(groupId, userId);
+        return removeMemberById(groupId, userId, ...groupSessionArgs(session));
       }
       throw err;
     }
@@ -452,14 +491,23 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
 
   async function removeGroupMemberHandler(req: ServerRequest, res: Response) {
     try {
+      if (!isGovernanceGroupAuditConfigured(req)) {
+        return res.status(503).json({ error: 'Governance group audit is not configured' });
+      }
       const { id, userId } = req.params as GroupMemberParams;
       if (!isValidObjectIdString(id)) {
         return res.status(400).json({ error: 'Invalid group ID format' });
       }
 
-      const group = isValidObjectIdString(userId)
-        ? await removeObjectIdMember(id, userId)
-        : await removeMemberById(id, userId);
+      const group = await mutateGovernanceGroup(
+        req,
+        'membership.removed',
+        (session) =>
+          isValidObjectIdString(userId)
+            ? removeObjectIdMember(id, userId, session)
+            : removeMemberById(id, userId, ...groupSessionArgs(session)),
+        [userId],
+      );
 
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });

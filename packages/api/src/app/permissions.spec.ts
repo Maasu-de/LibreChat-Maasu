@@ -179,7 +179,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
 
     // Check USER role call
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
@@ -192,6 +192,13 @@ describe('updateInterfacePermissions - permissions', () => {
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
       SystemRoles.ADMIN,
       expectedPermissionsForAdmin,
+      null,
+    );
+
+    // Governance administrators keep user-level feature permissions.
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
+      SystemRoles.GOVERNANCE_ADMIN,
+      expectedPermissionsForUser,
       null,
     );
   });
@@ -361,7 +368,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
 
     // Check USER role call
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
@@ -529,7 +536,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
 
     // Check USER role call
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
@@ -710,7 +717,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
 
     // Check USER role call
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
@@ -878,7 +885,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
 
     // Check USER role call
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
@@ -1039,7 +1046,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
       SystemRoles.USER,
       expectedPermissionsForUser,
@@ -1221,7 +1228,7 @@ describe('updateInterfacePermissions - permissions', () => {
       },
     };
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
     expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
       SystemRoles.USER,
       expectedPermissionsForUser,
@@ -1291,7 +1298,7 @@ describe('updateInterfacePermissions - permissions', () => {
       updateAccessPermissions: mockUpdateAccessPermissions,
     });
 
-    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(2);
+    expect(mockUpdateAccessPermissions).toHaveBeenCalledTimes(3);
 
     // Get the calls to updateAccessPermissions
     const userCall = mockUpdateAccessPermissions.mock.calls.find(
@@ -1333,10 +1340,11 @@ describe('updateInterfacePermissions - permissions', () => {
       updateAccessPermissions: mockUpdateAccessPermissions,
     });
 
-    // Should call getRoleByName exactly twice (once for USER, once for ADMIN)
-    expect(mockGetRoleByName).toHaveBeenCalledTimes(2);
+    // Every built-in role with interface permissions is synchronized once.
+    expect(mockGetRoleByName).toHaveBeenCalledTimes(3);
     expect(mockGetRoleByName).toHaveBeenCalledWith(SystemRoles.USER);
     expect(mockGetRoleByName).toHaveBeenCalledWith(SystemRoles.ADMIN);
+    expect(mockGetRoleByName).toHaveBeenCalledWith(SystemRoles.GOVERNANCE_ADMIN);
   });
 
   it('should use role-specific defaults for complex permissions when not configured', async () => {

@@ -1,5 +1,6 @@
 import type { AxiosResponse } from 'axios';
 import type { TContextProjectionRequest, TContextUsageEvent } from './types/runs';
+import type { GovernanceModelsConfig } from './types/governance';
 import type { TFileConfig } from './file-config';
 import type * as t from './types';
 import * as permissions from './accessPermissions';
@@ -277,6 +278,10 @@ export const getContextProjection = (
 
 export const getModels = async (): Promise<t.TModelsConfig> => {
   return request.get(endpoints.models());
+};
+
+export const getGovernanceModels = (): Promise<GovernanceModelsConfig> => {
+  return request.get(endpoints.governanceModels());
 };
 
 /* Assistants */

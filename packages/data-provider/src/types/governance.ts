@@ -5,6 +5,8 @@ export interface GovernanceFinding {
   start: number;
   end: number;
   category: string;
+  /** How a tenant-defined category is shown to the user; built-in categories have none. */
+  label?: string;
   action: GovernanceDecision;
   replacement?: string;
 }
@@ -20,6 +22,7 @@ export interface GovernanceFileFinding {
   /** Set for a file attached to the submitted message, which the user can still withdraw. */
   fileId?: string;
   category: string;
+  label?: string;
   action: GovernanceDecision;
   count: number;
 }
@@ -53,3 +56,18 @@ export interface GovernanceDlpReview extends GovernanceDlpResult {
   reviewId: string;
   expiresAt?: number;
 }
+
+export interface GovernanceTier {
+  code: string;
+  name: string;
+  description: string;
+}
+
+export interface GovernanceModel {
+  id: string;
+  governance_tier?: GovernanceTier | null;
+}
+
+export type GovernanceModelsConfig = Record<string, GovernanceModel[]>;
+
+export const GOVERNANCE_ENDPOINT: string = 'AI Governance Gateway';

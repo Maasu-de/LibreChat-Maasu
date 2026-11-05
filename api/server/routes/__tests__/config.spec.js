@@ -106,6 +106,7 @@ afterEach(() => {
   delete process.env.HELP_AND_FAQ_URL;
   delete process.env.WEB_PUBLIC_URL;
   delete process.env.ADMIN_PANEL_URL;
+  delete process.env.GOVERNANCE_PILOT_ENABLED;
 });
 
 describe('GET /api/config', () => {
@@ -282,7 +283,29 @@ describe('GET /api/config', () => {
   });
 
   describe('authenticated (req.user exists)', () => {
-    it('exposes admin navigation only to ADMIN users with ACCESS_ADMIN', async () => {
+    it('exposes governance navigation to a pilot GOVERNANCE_ADMIN with ACCESS_ADMIN', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      mockHasCapability.mockResolvedValue(true);
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test/';
+      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/';
+      const response = await request(createApp({ ...mockUser, role: 'GOVERNANCE_ADMIN' })).get(
+        '/api/config',
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body.governancePilotEnabled).toBe(true);
+      expect(response.body.governanceAdminUrl).toBe('https://gateway.example.test/admin');
+      expect(response.body.libreChatAdminUrl).toBe(
+        'https://gateway.example.test/api/auth/open-librechat-admin',
+      );
+      expect(mockHasCapability).toHaveBeenCalledWith(
+        { id: mockUser.id, role: 'GOVERNANCE_ADMIN', tenantId: undefined },
+        'access:admin',
+      );
+    });
+
+    it('exposes admin navigation to ADMIN users with ACCESS_ADMIN', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       process.env.WEB_PUBLIC_URL = 'https://gateway.example.test/';
       process.env.ADMIN_PANEL_URL = 'https://admin.example.test/';
@@ -308,7 +331,7 @@ describe('GET /api/config', () => {
       );
     });
 
-    it('omits admin navigation for a non-ADMIN role with ACCESS_ADMIN', async () => {
+    it('omits admin navigation for an unrelated role with ACCESS_ADMIN', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockHasCapability.mockResolvedValue(true);
       process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
@@ -326,16 +349,19 @@ describe('GET /api/config', () => {
       );
     });
 
-    it('omits admin navigation for an ADMIN role without ACCESS_ADMIN', async () => {
-      mockGetAppConfig.mockResolvedValue(baseAppConfig);
-      mockHasCapability.mockResolvedValue(false);
-      process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
-      process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
-      const response = await request(createApp({ ...mockUser, role: 'ADMIN' })).get('/api/config');
+    it.each(['ADMIN', 'GOVERNANCE_ADMIN'])(
+      'omits admin navigation for a %s role without ACCESS_ADMIN',
+      async (role) => {
+        mockGetAppConfig.mockResolvedValue(baseAppConfig);
+        mockHasCapability.mockResolvedValue(false);
+        process.env.WEB_PUBLIC_URL = 'https://gateway.example.test';
+        process.env.ADMIN_PANEL_URL = 'https://admin.example.test/admin';
+        const response = await request(createApp({ ...mockUser, role })).get('/api/config');
 
-      expect(response.body).not.toHaveProperty('libreChatAdminUrl');
-      expect(response.body).not.toHaveProperty('governanceAdminUrl');
-    });
+        expect(response.body).not.toHaveProperty('libreChatAdminUrl');
+        expect(response.body).not.toHaveProperty('governanceAdminUrl');
+      },
+    );
 
     it('omits admin navigation when the capability check fails', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);

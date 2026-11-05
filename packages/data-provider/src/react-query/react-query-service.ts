@@ -4,8 +4,10 @@ import type {
   UseMutationResult,
   QueryObserverResult,
 } from '@tanstack/react-query';
+import { GOVERNANCE_ENDPOINT } from '../types/governance';
+import type { GovernanceModelsConfig } from '../types/governance';
 import { MCPServerConnectionStatusResponse } from '../types/queries';
-import { Constants, initialModelsConfig } from '../config';
+import { Constants, Time, initialModelsConfig } from '../config';
 import { defaultOrderQuery } from '../types/assistants';
 import * as permissions from '../accessPermissions';
 import { ResourceType } from '../accessPermissions';
@@ -185,17 +187,54 @@ export const useRevokeAllUserKeysMutation = (): UseMutationResult<unknown> => {
   });
 };
 
+function governanceModelIds(catalog?: GovernanceModelsConfig): string[] | undefined {
+  return catalog?.[GOVERNANCE_ENDPOINT]?.map(({ id }) => id);
+}
+
+export const useGetGovernanceModelsQuery = () => {
+  const queryClient = useQueryClient();
+  return useQuery<GovernanceModelsConfig>(
+    [QueryKeys.governanceModels],
+    dataService.getGovernanceModels,
+    {
+      refetchOnWindowFocus: true,
+      staleTime: Time.ONE_MINUTE,
+      onSuccess: (catalog) => {
+        const ids = governanceModelIds(catalog);
+        if (ids) {
+          queryClient.setQueryData<t.TModelsConfig>([QueryKeys.models], (current) => ({
+            ...(current ?? {}),
+            [GOVERNANCE_ENDPOINT]: ids,
+          }));
+        }
+      },
+    },
+  );
+};
+
 export const useGetModelsQuery = (
   config?: UseQueryOptions<t.TModelsConfig>,
 ): QueryObserverResult<t.TModelsConfig> => {
-  return useQuery<t.TModelsConfig>([QueryKeys.models], () => dataService.getModels(), {
-    initialData: initialModelsConfig,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchOnMount: false,
-    staleTime: Infinity,
-    ...config,
-  });
+  const queryClient = useQueryClient();
+  return useQuery<t.TModelsConfig>(
+    [QueryKeys.models],
+    async () => {
+      const models = await dataService.getModels();
+      const catalog = queryClient.getQueryData<GovernanceModelsConfig>([
+        QueryKeys.governanceModels,
+      ]);
+      const ids = governanceModelIds(catalog);
+      return ids ? { ...models, [GOVERNANCE_ENDPOINT]: ids } : models;
+    },
+    {
+      initialData: initialModelsConfig,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      staleTime: Infinity,
+      ...config,
+    },
+  );
 };
 
 export const useCreatePresetMutation = (): UseMutationResult<

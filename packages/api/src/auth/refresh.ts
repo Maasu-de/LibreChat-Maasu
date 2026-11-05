@@ -64,6 +64,7 @@ export interface AdminRefreshDeps {
    * compatibility with existing callers; route handlers that mint admin
    * bearers should always inject this.
    */
+  synchronizeAdministrator?: (user: IUser, tokenset: RefreshTokenset) => Promise<void>;
   canAccessAdmin?: (user: IUser) => Promise<boolean>;
   /**
    * Optional post-success hook for forks that need to do additional work
@@ -274,6 +275,8 @@ export async function applyAdminRefresh(
   if (!user) {
     throw new AdminRefreshError('USER_NOT_FOUND', 401, 'No user found for the refreshed identity');
   }
+
+  await deps.synchronizeAdministrator?.(user, tokenset);
 
   if (deps.canAccessAdmin && !(await deps.canAccessAdmin(user))) {
     throw new AdminRefreshError('FORBIDDEN', 403, 'User does not have admin access');

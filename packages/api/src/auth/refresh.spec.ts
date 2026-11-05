@@ -143,6 +143,31 @@ describe('applyAdminRefresh', () => {
       expect(deps.onRefreshSuccess).toHaveBeenCalledWith(user, tokenset);
     });
 
+    it('synchronizes administrator entitlement before checking access and minting', async () => {
+      const user = makeUser();
+      const order: string[] = [];
+      const synchronizeAdministrator = jest.fn().mockImplementation(async () => {
+        order.push('synchronize');
+      });
+      const canAccessAdmin = jest.fn().mockImplementation(async () => {
+        order.push('authorize');
+        return true;
+      });
+      const mintToken = jest.fn().mockImplementation(async () => {
+        order.push('mint');
+        return { token: 'minted-jwt', expiresAt: 1234567890 };
+      });
+      const deps = makeDeps(user, {
+        synchronizeAdministrator,
+        canAccessAdmin,
+        mintToken,
+      });
+
+      await applyAdminRefresh(makeTokenset(), deps);
+
+      expect(order).toEqual(['synchronize', 'authorize', 'mint']);
+    });
+
     it('uses findUsers when no userId is supplied', async () => {
       const user = makeUser();
       const deps = makeDeps(user);
