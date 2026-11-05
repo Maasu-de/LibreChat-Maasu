@@ -9,7 +9,12 @@ import React, {
 } from 'react';
 import type { JSX } from 'react/jsx-runtime';
 import type { IThemeRGB } from '../types';
-import { readThemePreference, writeThemePreference, subscribeToTheme } from '../utils/preference';
+import {
+  readThemePreference,
+  writeThemePreference,
+  renewThemePreference,
+  subscribeToTheme,
+} from '../utils/preference';
 import applyTheme from '../utils/applyTheme';
 
 const THEME_COLORS_KEY = 'theme-colors';
@@ -38,7 +43,6 @@ export interface ThemeProviderProps {
   children: React.ReactNode;
   themeRGB?: IThemeRGB;
   themeName?: string;
-  initialTheme?: string;
 }
 
 /**
@@ -107,7 +111,6 @@ export function ThemeProvider({
   children,
   themeRGB: propThemeRGB,
   themeName: propThemeName,
-  initialTheme,
 }: ThemeProviderProps): JSX.Element {
   const [theme, setThemeState] = useState<string>(readThemePreference);
   const [themeRGB, setThemeRGBState] = useState<IThemeRGB | undefined>(getInitialThemeColors);
@@ -129,6 +132,7 @@ export function ThemeProvider({
   useEffect(() => {
     const sync = () => setThemeState(readThemePreference());
     const unsubscribe = subscribeToTheme(sync);
+    renewThemePreference();
     sync();
     return unsubscribe;
   }, []);
@@ -166,11 +170,6 @@ export function ThemeProvider({
     if (initialized.current) return;
     initialized.current = true;
 
-    // Set initial theme if provided
-    if (initialTheme) {
-      setTheme(initialTheme);
-    }
-
     // Set initial theme colors if provided
     if (propThemeRGB) {
       setThemeRGB(propThemeRGB);
@@ -180,7 +179,7 @@ export function ThemeProvider({
     if (propThemeName) {
       setThemeName(propThemeName);
     }
-  }, [initialTheme, propThemeRGB, propThemeName, setTheme, setThemeRGB, setThemeName]);
+  }, [propThemeRGB, propThemeName, setThemeRGB, setThemeName]);
 
   // Apply class-based dark mode
   const applyThemeMode = useCallback((darkMode: boolean) => {

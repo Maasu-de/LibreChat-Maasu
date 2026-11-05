@@ -1,4 +1,9 @@
-import { readThemePreference, writeThemePreference, subscribeToTheme } from './preference';
+import {
+  readThemePreference,
+  writeThemePreference,
+  renewThemePreference,
+  subscribeToTheme,
+} from './preference';
 
 describe('theme change listeners', () => {
   let unsubscribe = () => {};
@@ -51,5 +56,16 @@ describe('theme change listeners', () => {
     jest.advanceTimersByTime(1000);
     window.dispatchEvent(new Event('focus'));
     expect(changed).toHaveBeenCalledTimes(2);
+  });
+
+  it('renews only a saved preference', () => {
+    const write = jest.spyOn(Document.prototype, 'cookie', 'set');
+    renewThemePreference();
+    expect(write).not.toHaveBeenCalled();
+    document.cookie = 'aimo-theme=dark; Path=/';
+    renewThemePreference();
+    expect(write).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^aimo-theme=dark; Path=\/; Max-Age=31536000/),
+    );
   });
 });
