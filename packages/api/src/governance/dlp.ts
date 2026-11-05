@@ -762,11 +762,11 @@ function settleComparison(req: ServerRequest): Promise<void> {
   return comparison.settled;
 }
 
-/** Waits for `settled`, but not past a stopped turn or the settle timeout. */
+/** Waits for `settled`, but not past a stopped turn or the settle timeout; true once settled. */
 async function waitForComparison(
   settled: Promise<void>,
   signal?: AbortSignal | null,
-): Promise<void> {
+): Promise<boolean> {
   let release = () => {};
   const released = new Promise<void>((resolve) => {
     release = resolve;
@@ -774,7 +774,7 @@ async function waitForComparison(
   const timer = setTimeout(release, COMPARISON_SETTLE_TIMEOUT_MS);
   signal?.addEventListener('abort', release, { once: true });
   try {
-    await Promise.race([settled, released]);
+    return await Promise.race([settled.then(() => true), released.then(() => false)]);
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', release);
@@ -807,6 +807,17 @@ function showComparisonReview(
   }
 }
 
+/** True for a gateway response that its AI governance policy denied. */
+async function isGovernanceBlocked(response: Response): Promise<boolean> {
+  if (response.status !== 403) {
+    return false;
+  }
+  const body = (await response.json().catch(() => null)) as {
+    error?: { code?: string };
+  } | null;
+  return body?.error?.code === 'governance_blocked';
+}
+
 /**
  * The governed fetch for one model of a two-model comparison. The gateway reviews each model's
  * call on its own. A review that ends the turn waits for the other model's call, so the review
@@ -814,8 +825,8 @@ function showComparisonReview(
  * sent. A review the user can approve ends the turn as for a single model; once approved, each
  * model's own review is approved with it. A block or failure, also one partway through the stream,
  * becomes that model's response text instead of an error, because an error would also end the
- * other model's response. So does a review once the other model already answered, as the turn then
- * can no longer end with it.
+ * other model's response. So does a review once the other model already answered or is still
+ * pending, as the turn then can no longer end with it. A turn that only got such notices is kept.
  */
 function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
   req.governanceDlpSent ??= false;
@@ -827,6 +838,21 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
     const settle = () => (settled ??= counted ? settleComparison(req) : Promise.resolve());
     let review: GovernanceDlpReview | undefined;
     let restriction: GovernanceModelRestriction | undefined;
+    /** Keeps the turn unless the other model ends it with a review the user can act on. */
+    const notice = async (message: string) => {
+      await waitForComparison(settle(), init?.signal);
+      const shown = req.governanceDlpReview;
+      if (!shown || (shown.decision === 'BLOCK' && !shown.modelRestriction)) {
+        markDlpSent(req);
+      }
+      return comparisonNotice(message);
+    };
+    const failure = async (response: Response) =>
+      notice(
+        (await isGovernanceBlocked(response))
+          ? COMPARISON_BLOCKED_MESSAGE
+          : COMPARISON_FAILURE_MESSAGE,
+      );
     const send = (reviewId?: string) =>
       createGovernanceDlpFetch({
         userId: req.user?.id ?? '',
@@ -843,26 +869,24 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
       })(input, init);
     try {
       const response = await send();
-      if (response.ok || !review) {
+      if (response.ok) {
         settle();
-        return response.ok
-          ? isolateStreamFailure(response, init?.signal)
-          : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+        return isolateStreamFailure(response, init?.signal);
+      }
+      if (!review) {
+        return await failure(response);
       }
       if (review.decision !== 'BLOCK' && (await claimComparisonApproval(req))) {
         settle();
         const approved = await send(review.reviewId);
-        return approved.ok
-          ? isolateStreamFailure(approved, init?.signal)
-          : comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+        return approved.ok ? isolateStreamFailure(approved, init?.signal) : await failure(approved);
       }
       showComparisonReview(req, review, restriction);
       if (review.decision === 'BLOCK' && !restriction) {
-        settle();
-        return comparisonNotice(COMPARISON_BLOCKED_MESSAGE);
+        return await notice(COMPARISON_BLOCKED_MESSAGE);
       }
-      await waitForComparison(settle(), init?.signal);
-      if (isDlpUnsent(req)) {
+      const otherCame = await waitForComparison(settle(), init?.signal);
+      if (otherCame && isDlpUnsent(req)) {
         return response;
       }
       /** The other model already answered, so the turn can no longer end with this review. */
@@ -876,7 +900,7 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
       if (init?.signal?.aborted) {
         throw error;
       }
-      return comparisonNotice(COMPARISON_FAILURE_MESSAGE);
+      return notice(COMPARISON_FAILURE_MESSAGE);
     }
   };
 }

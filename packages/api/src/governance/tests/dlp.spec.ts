@@ -514,17 +514,53 @@ describe('two-model comparison', () => {
       },
       'could not respond',
     ],
+    [
+      'denied by the gateway',
+      async () => new Response('{"error":{"code":"governance_blocked"}}', { status: 403 }),
+      'AI governance policy blocks this message',
+    ],
   ])(
-    'answers for a model whose call was %s instead of failing the turn',
+    'answers for both models whose calls were %s and keeps the turn',
     async (_label, gateway, expected) => {
       const req = comparisonRequest();
 
-      const response = await send(createRequestDlpFetch(req, jest.fn(gateway)));
+      const responses = await Promise.all([
+        send(createRequestDlpFetch(req, jest.fn(gateway))),
+        send(createRequestDlpFetch(req, jest.fn(gateway))),
+      ]);
 
-      expect(response.ok).toBe(true);
-      expect(await responseText(response)).toContain(expected);
+      for (const response of responses) {
+        expect(response.ok).toBe(true);
+        expect(await responseText(response)).toContain(expected);
+      }
+      expect(isDlpUnsent(req)).toBe(false);
     },
   );
+
+  it('keeps a pending model call when the review stops waiting for it', async () => {
+    jest.useFakeTimers();
+    try {
+      const req = comparisonRequest();
+      let answer = (_response: Response) => {};
+      const pending = new Promise<Response>((resolve) => {
+        answer = resolve;
+      });
+
+      const reviewed = send(createRequestDlpFetch(req, async () => review('WARN')));
+      const delayed = send(createRequestDlpFetch(req, () => pending));
+      await jest.advanceTimersByTimeAsync(30_000);
+      const notice = await reviewed;
+      answer(completion());
+
+      expect(notice.ok).toBe(true);
+      expect(await responseText(notice)).toContain('needs your review first');
+      expect(await responseText(await delayed)).toBe('Hi');
+      expect(isDlpUnsent(req)).toBe(false);
+      expect(req.governanceDlpReview).toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 
   it('asks the user to review a masked message, ahead of the other model being blocked', async () => {
     const req = comparisonRequest();
