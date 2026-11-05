@@ -14,6 +14,7 @@
  * - an IBAN (`DE` + 20 digits) is masked as `[IBAN]`;
  * - an email address is a warning;
  * - `PROJECT-NIGHTSHADE` is a blocked confidential term;
+ * - `PROJECT-FRIENDLY-MASK` is masked as `[REDACTED]` with the category label `Codenames`;
  * - a message containing `E2E-SLOW` gets its review two seconds late, so specs can type meanwhile.
  *
  * Each completion reports what reached the model, so specs can assert on it:
@@ -39,6 +40,13 @@ const RULES = [
   { pattern: IBAN, category: 'IBAN_CODE', action: 'MASK', replacement: '[IBAN]' },
   { pattern: EMAIL, category: 'EMAIL_ADDRESS', action: 'WARN' },
   { pattern: BLOCKED_TERM, category: 'CODE_NAME', action: 'BLOCK' },
+  {
+    pattern: /PROJECT-FRIENDLY-MASK/g,
+    category: 'CUSTOM_E2E_CODENAMES',
+    label: 'Codenames',
+    action: 'MASK',
+    replacement: '[REDACTED]',
+  },
 ];
 const SEVERITY = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
 
@@ -53,7 +61,7 @@ function scan(messages) {
     if (message.role !== 'user' || typeof message.content !== 'string') {
       return;
     }
-    for (const { pattern, category, action, replacement } of RULES) {
+    for (const { pattern, category, label, action, replacement } of RULES) {
       for (const match of message.content.matchAll(pattern)) {
         const start = codePoints(message.content.slice(0, match.index));
         findings.push({
@@ -61,6 +69,7 @@ function scan(messages) {
           start,
           end: start + codePoints(match[0]),
           category,
+          ...(label ? { label } : {}),
           action,
           ...(replacement ? { replacement } : {}),
         });
@@ -114,6 +123,7 @@ function describe(messages) {
     `iban=${ibanState(last)}`,
     `email=${new RegExp(EMAIL.source, 'i').test(last) ? 'yes' : 'no'}`,
     `history-iban=${ibanState(history)}`,
+    ...(last.includes('[REDACTED]') ? ['codename=masked'] : []),
   ].join(' ');
 }
 

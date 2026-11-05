@@ -13,7 +13,51 @@ jest.mock(
   { virtual: true },
 );
 
-import { exchangeAdminCode, generateAdminExchangeCode, verifyCodeChallenge } from './exchange';
+import {
+  exchangeAdminCode,
+  generateAdminExchangeCode,
+  isAdminPanelRedirect,
+  verifyCodeChallenge,
+} from './exchange';
+
+describe('isAdminPanelRedirect', () => {
+  it.each([
+    ['https://admin.example.com/access', true],
+    ['https://chat.example.com/access', false],
+    ['https://other.example.com/access', false],
+  ])('keeps cross-origin behavior for %s', (redirect, expected) => {
+    expect(
+      isAdminPanelRedirect(redirect, 'https://admin.example.com', 'https://chat.example.com'),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ['/librechat-admin', true],
+    ['/librechat-admin/', true],
+    ['/librechat-admin/access?tab=groups', true],
+    ['/librechat-administrator', false],
+    ['/chat', false],
+    ['/chat/c/new', false],
+  ])('classifies the shared-origin path %s', (path, expected) => {
+    expect(
+      isAdminPanelRedirect(
+        `https://app.example.com${path}`,
+        'https://app.example.com/librechat-admin/',
+        'https://app.example.com/chat/',
+      ),
+    ).toBe(expected);
+  });
+
+  it('excludes the client path even when it is nested inside the admin path', () => {
+    expect(
+      isAdminPanelRedirect(
+        'https://app.example.com/panel/chat/c/new',
+        'https://app.example.com/panel',
+        'https://app.example.com/panel/chat',
+      ),
+    ).toBe(false);
+  });
+});
 
 describe('admin OAuth code exchange', () => {
   const user = {

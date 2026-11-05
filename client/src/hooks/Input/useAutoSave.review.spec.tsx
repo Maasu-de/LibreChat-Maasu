@@ -86,7 +86,7 @@ const renderTurn = (conversationId: string) => {
     });
 
   /** What `useResumableSSE` does when the server holds a message for review */
-  const endWithReview = (parentMessageId: string) =>
+  const endWithReview = (parentMessageId: string, messages: TMessage[] = []) =>
     act(() => {
       clearAllDrafts(conversationId);
       result.current.finalHandler(
@@ -98,7 +98,7 @@ const renderTurn = (conversationId: string) => {
           responseMessage: null,
         } as unknown as TFinalResData,
         {
-          messages: [],
+          messages,
           conversation: { conversationId },
           userMessage: { parentMessageId } as TMessage,
         } as unknown as EventSubmission,
@@ -130,6 +130,16 @@ beforeEach(() => {
 afterEach(() => {
   jest.runOnlyPendingTimers();
   jest.useRealTimers();
+});
+
+it('puts an edited first message back in its saved chat, not in a new one', () => {
+  const { send, endWithReview } = renderTurn(CONVO_ID);
+  send();
+
+  endWithReview(NO_PARENT, [{ messageId: 'user-1' } as TMessage]);
+
+  expect(getDraft(CONVO_ID)).toBe(REVIEWED_TEXT);
+  expect(getDraft(NEW_CONVO)).toBeFalsy();
 });
 
 describe.each(chats)('useAutoSave — DLP review in $chat', ({ conversationId, parentMessageId }) => {

@@ -20,6 +20,8 @@ const environmentKeys = [
   'GOVERNANCE_API_BASE_URL',
   'LIBRECHAT_SERVICE_CREDENTIAL',
   'GOVERNANCE_DLP_ENABLED',
+  'GOVERNANCE_PILOT_ENABLED',
+  'GOVERNANCE_ATTACHMENTS_ENABLED',
 ] as const;
 
 const originalEnvironment = new Map<string, string | undefined>(
@@ -30,6 +32,8 @@ beforeEach(() => {
   process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/v1';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'server-only-credential';
   delete process.env.GOVERNANCE_DLP_ENABLED;
+  delete process.env.GOVERNANCE_PILOT_ENABLED;
+  delete process.env.GOVERNANCE_ATTACHMENTS_ENABLED;
 });
 
 afterAll(() => {
@@ -174,6 +178,39 @@ describe('Governance DLP', () => {
     const headers = new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers);
     expect(headers.get('X-LibreChat-Conversation-ID')).toBe('conversation-1');
     expect(headers.get('X-LibreChat-Message-ID')).toBe('message-1');
+  });
+
+  describe('a model the content does not allow', () => {
+    const req = { user: { id: 'user-123' } } as unknown as ServerRequest;
+    const send = (response: Response) =>
+      createGovernanceAttributionFetch(req, async () => response)(
+        'http://governance.test/api/v1/dlp/chat/completions',
+        { method: 'POST' },
+      );
+
+    it('is restated as a typed error that names the allowed tiers', async () => {
+      const error = {
+        message: 'The selected model is not allowed for this content.',
+        type: 'governance_policy_violation',
+        code: 'governance_model_not_allowed',
+        allowed_tiers: [{ code: 'S1', name: 'EU Sovereign', description: 'Hosted in the EU.' }],
+      };
+
+      const response = await send(new Response(JSON.stringify({ error }), { status: 403 }));
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: {
+          ...error,
+          message: '{"type":"governance_model_not_allowed","info":"EU Sovereign"}',
+        },
+      });
+    });
+
+    it('leaves any other rejection unchanged', async () => {
+      const blocked = new Response('{"error":{"code":"governance_blocked"}}', { status: 403 });
+      expect(await send(blocked)).toBe(blocked);
+    });
   });
 
   it('rejects an unsupported request to the DLP completions API instead of forwarding it', async () => {
@@ -800,6 +837,24 @@ describe('hasSelectedTools', () => {
 });
 
 describe('isPlainTextSubmission', () => {
+  it('governs enabled documents with accompanying text', () => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+    expect(
+      isPlainTextSubmission(
+        plainTextBody({ text: 'Read this document', files: [{ file_id: 'uploaded' }] }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each(['', '   '])('rejects document-only submissions: %j', (text) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+    expect(isPlainTextSubmission(plainTextBody({ text, files: [{ file_id: 'uploaded' }] }))).toBe(
+      false,
+    );
+  });
+
   it('accepts a first-turn plain-text message', () => {
     expect(isPlainTextSubmission(plainTextBody())).toBe(true);
   });
@@ -877,7 +932,13 @@ describe('approved review to send again', () => {
   beforeEach(async () => {
     await getReviewStore().set(
       reviewId,
-      { userId: 'user-123', model: 'governed-model', text, messages, dlpToken: 'approval-token' },
+      {
+        userId: 'user-123',
+        model: 'governed-model',
+        text,
+        messages,
+        dlpToken: 'approval-token',
+      },
       60_000,
     );
   });

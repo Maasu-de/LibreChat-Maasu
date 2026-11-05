@@ -1,5 +1,6 @@
 import { CacheKeys, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
+  GovernanceTier,
   GovernanceFinding,
   GovernanceDecision,
   GovernanceDlpReview,
@@ -9,6 +10,7 @@ import type {
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
 import type { FileContext } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
+import type { GovernanceMasking } from './mask';
 import { standardCache } from '~/cache';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
@@ -25,6 +27,10 @@ export interface GatewayReview {
   expires_at?: number;
   /** Set on a block when these categories do not allow the requested model. */
   restricted_categories?: string[];
+  /** Why a BLOCK review cannot be sent: `policy_blocked` or `model_not_allowed`. */
+  block_reason?: string;
+  /** For `model_not_allowed`: the tiers whose models may take the content. */
+  allowed_tiers?: GovernanceTier[];
 }
 
 /** A review the user can still approve: the exact stage 2 request, bound to its user and text. */
@@ -206,8 +212,15 @@ export interface DlpFileContext extends FileContext {
 interface LocatedFile {
   fileId?: string;
   filename: string;
+  type?: string;
   start: number;
   end: number;
+}
+
+/** A user message's code points and the attached files located in it. */
+interface MessageFiles {
+  chars: string[];
+  files: LocatedFile[];
 }
 
 /**
@@ -227,10 +240,11 @@ function locateFiles(
       continue;
     }
     const base = Array.from(content.slice(0, index)).length;
-    for (const { fileId, filename, start, end } of fileContext.files) {
+    for (const { fileId, filename, type, start, end } of fileContext.files) {
       located.push({
         ...(current ? { fileId } : {}),
         filename,
+        type,
         start: base + start,
         end: base + end,
       });
@@ -240,9 +254,10 @@ function locateFiles(
 }
 
 /**
- * Findings inside files attached to user messages, counted per file, category and action.
- * Findings in the submitted text are left to `findingsInSubmittedText`. A finding in a file
- * attached to the submitted message names that file's ID, since only those can be withdrawn.
+ * Findings inside files attached to user messages, counted per file, category and action, with
+ * the distinct values they matched. Findings in the submitted text are left to
+ * `findingsInSubmittedText`. A finding in a file attached to the submitted message names that
+ * file's ID, since only those can be withdrawn.
  */
 export function findingsInFiles(
   messages: GovernanceChatMessage[],
@@ -250,8 +265,8 @@ export function findingsInFiles(
   submitted: SubmittedText,
   fileContexts: DlpFileContext[] = [],
 ): GovernanceFileFinding[] {
-  const filesByMessage = new Map<number, LocatedFile[]>();
-  const counted = new Map<string, GovernanceFileFinding>();
+  const filesByMessage = new Map<number, MessageFiles>();
+  const counted = new Map<string, { counter: GovernanceFileFinding; terms: Map<string, string> }>();
   for (const finding of findings) {
     const match = MESSAGE_CONTENT_LOCATION.exec(finding.location);
     const messageIndex = match ? Number(match[1]) : -1;
@@ -260,23 +275,26 @@ export function findingsInFiles(
     if (message?.role !== 'user' || (isSubmitted && finding.end > submitted.offset)) {
       continue;
     }
-    let files = filesByMessage.get(messageIndex);
-    if (!files) {
-      const content = isSubmitted
-        ? Array.from(message.content).slice(0, submitted.offset).join('')
-        : message.content;
-      files = locateFiles(content, fileContexts, isSubmitted);
-      filesByMessage.set(messageIndex, files);
+    let located = filesByMessage.get(messageIndex);
+    if (!located) {
+      const chars = Array.from(message.content);
+      const content = isSubmitted ? chars.slice(0, submitted.offset).join('') : message.content;
+      located = { chars, files: locateFiles(content, fileContexts, isSubmitted) };
+      filesByMessage.set(messageIndex, located);
     }
-    const file = files.find(({ start, end }) => finding.start >= start && finding.start < end);
+    const file = located.files.find(
+      ({ start, end }) => finding.start >= start && finding.start < end,
+    );
     if (!file) {
       continue;
     }
-    const { fileId, filename } = file;
+    const term = located.chars.slice(finding.start, finding.end).join('');
+    const { fileId, filename, type } = file;
     const key = JSON.stringify([fileId ?? null, filename, finding.category, finding.action]);
     const entry = counted.get(key);
     if (entry) {
-      entry.count += 1;
+      entry.counter.count += 1;
+      addTerm(entry.terms, term);
       continue;
     }
     const counter: GovernanceFileFinding = {
@@ -291,41 +309,25 @@ export function findingsInFiles(
     if (finding.label !== undefined) {
       counter.label = finding.label;
     }
-    counted.set(key, counter);
+    if (type !== undefined) {
+      counter.type = type;
+    }
+    const terms = new Map<string, string>();
+    addTerm(terms, term);
+    counted.set(key, { counter, terms });
   }
-  return Array.from(counted.values());
+  return Array.from(counted.values(), ({ counter, terms }) => ({
+    ...counter,
+    terms: [...terms.values()],
+  }));
 }
 
-/** The characters Python's `str.isspace()` matches, which the gateway skips when trimming. */
-const GATEWAY_WHITESPACE =
-  // eslint-disable-next-line no-control-regex
-  /^[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/;
-
-/**
- * Applies each finding's replacement to the text like the gateway, using code-point offsets. A
- * finding inside an earlier one is dropped; a finding crossing an earlier one masks only the
- * rest, without its leading whitespace, so both keep their replacements.
- */
-export function maskText(text: string, findings: GovernanceFinding[]): string {
-  const chars = Array.from(text);
-  const masks = findings
-    .filter((finding) => finding.replacement !== undefined)
-    .sort((a, b) => a.start - b.start || b.end - a.end);
-
-  let masked = '';
-  let cursor = 0;
-  for (const { start, end, replacement } of masks) {
-    if (end <= cursor) {
-      continue;
-    }
-    let from = Math.max(start, cursor);
-    while (start < cursor && from < end && GATEWAY_WHITESPACE.test(chars[from])) {
-      from++;
-    }
-    masked += chars.slice(cursor, from).join('') + (from < end ? replacement : '');
-    cursor = end;
+/** Adds a matched value unless one that differs only in case or spacing is listed already. */
+function addTerm(terms: Map<string, string>, term: string): void {
+  const key = term.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (key && !terms.has(key)) {
+    terms.set(key, term);
   }
-  return masked + chars.slice(cursor).join('');
 }
 
 type ReviewedUserMessage = FinalMessageFields & { quotes?: string[]; manualSkills?: string[] };
@@ -385,11 +387,15 @@ export function toModelRestriction(
   return categories.length > 0 ? { models: [model], categories } : undefined;
 }
 
+/**
+ * The review the user decides on, with where the gateway masks the submitted text. Every
+ * decision but BLOCK can be approved, so it also gives the masked text an approval sends.
+ */
 export function toClientReview(
   review: GatewayReview,
   decision: GovernanceDecision,
   findings: GovernanceFinding[],
-  approvedText?: string,
+  { text, ranges }: GovernanceMasking,
   fileFindings: GovernanceFileFinding[] = [],
 ): GovernanceDlpReview {
   return {
@@ -397,11 +403,30 @@ export function toClientReview(
     decision,
     policyVersion: review.policy_version,
     findings,
+    maskedRanges: ranges.length > 0 ? ranges : undefined,
     fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
     maskedPreview:
-      approvedText === undefined
-        ? undefined
-        : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text: approvedText }],
+      decision === 'BLOCK' ? undefined : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text }],
     expiresAt: review.expires_at,
+  };
+}
+
+/**
+ * A review blocked because its content does not allow the selected model. Nothing is masked when
+ * nothing can be sent, so its findings carry no replacements.
+ */
+export function toModelBlockReview(
+  review: GatewayReview,
+  model: string,
+  findings: GovernanceFinding[],
+  fileFindings: GovernanceFileFinding[],
+): GovernanceDlpReview {
+  return {
+    reviewId: review.review_id,
+    decision: 'BLOCK',
+    policyVersion: review.policy_version,
+    findings: findings.map((finding) => ({ ...finding, replacement: undefined })),
+    fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
+    modelNotAllowed: { model, allowedTiers: review.allowed_tiers ?? [] },
   };
 }
