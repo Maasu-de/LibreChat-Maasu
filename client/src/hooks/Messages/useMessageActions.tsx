@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useRecoilValue } from 'recoil';
+import { useQueryClient } from '@tanstack/react-query';
 import { useUpdateFeedbackMutation } from 'librechat-data-provider/react-query';
 import {
   TFeedback,
+  QueryKeys,
   getTagByKey,
   isAgentsEndpoint,
   SearchResultData,
@@ -10,6 +12,7 @@ import {
   isAssistantsEndpoint,
   TUpdateFeedbackRequest,
 } from 'librechat-data-provider';
+import type { TMessage } from 'librechat-data-provider';
 import type { TMessageProps } from '~/common';
 import type { TMessageChatContext } from '~/common/types';
 import { useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
@@ -167,15 +170,36 @@ export default function useMessageActions(props: TMessageActions) {
     [feedbackMutation],
   );
 
+  const queryClient = useQueryClient();
   const { mutate: mutateFeedback } = feedbackMutation;
+  const conversationId = conversation?.conversationId;
   /** Rates one parallel response of the message, such as one model of a comparison. */
   const handleParallelFeedback = useCallback(
     (agentId: string, newFeedback: TFeedback | undefined) =>
       mutateFeedback(
         { agentId, feedback: newFeedback ? toMinimalFeedback(newFeedback) : undefined },
-        { onError: (error) => console.error('Failed to update feedback:', error) },
+        {
+          /** Keeps the rating when the message is shown again from the cached conversation. */
+          onSuccess: ({ feedback }) =>
+            queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], (messages) =>
+              messages?.map((cached) =>
+                cached.messageId !== messageId
+                  ? cached
+                  : {
+                      ...cached,
+                      parallelFeedback: [
+                        ...(cached.parallelFeedback ?? []).filter(
+                          (entry) => entry.agentId !== agentId,
+                        ),
+                        ...(feedback ? [{ ...feedback, agentId }] : []),
+                      ],
+                    },
+              ),
+            ),
+          onError: (error) => console.error('Failed to update feedback:', error),
+        },
       ),
-    [mutateFeedback],
+    [mutateFeedback, queryClient, conversationId, messageId],
   );
 
   return {
