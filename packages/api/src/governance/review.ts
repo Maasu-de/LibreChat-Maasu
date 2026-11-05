@@ -13,7 +13,7 @@ import { standardCache } from '~/cache';
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
 const EVENT_END = /\r?\n\r?\n/;
 
-/** The `dlp` extension of a stage 1 response from `POST /api/v1/dlp/chat/completions`. */
+/** The `dlp` extension of a stage 1 response from `POST /v1/chat/completions`. */
 export interface GatewayReview {
   review_id: string;
   action: string;
@@ -284,6 +284,9 @@ export function findingsInFiles(
     };
     if (fileId !== undefined) {
       counter.fileId = fileId;
+    }
+    if (finding.label !== undefined) {
+      counter.label = finding.label;
     }
     counted.set(key, counter);
   }

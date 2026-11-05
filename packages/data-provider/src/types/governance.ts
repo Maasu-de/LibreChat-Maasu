@@ -5,6 +5,8 @@ export interface GovernanceFinding {
   start: number;
   end: number;
   category: string;
+  /** How a tenant-defined category is shown to the user; built-in categories have none. */
+  label?: string;
   action: GovernanceDecision;
   replacement?: string;
 }
@@ -20,6 +22,7 @@ export interface GovernanceFileFinding {
   /** Set for a file attached to the submitted message, which the user can still withdraw. */
   fileId?: string;
   category: string;
+  label?: string;
   action: GovernanceDecision;
   count: number;
 }

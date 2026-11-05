@@ -9,15 +9,23 @@ import type {
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { TranslationKeys } from '~/hooks';
+import { cn, getApprovedDlpText } from '~/utils';
 import { useLocalize } from '~/hooks';
-import { cn } from '~/utils';
 
 /** A finding covering a text segment, underlined on row `lane`; `ends` marks its last segment. */
 type SegmentFinding = { finding: GovernanceFinding; lane: number; ends: boolean };
 type TextSegment = { text: string; findings?: SegmentFinding[]; replacement?: boolean };
 type FindingTerm = { finding: GovernanceFinding; term?: string };
+type CategorizedFinding = Pick<GovernanceFinding, 'category' | 'label'>;
 
 const label = (category: string) => category.replaceAll('_', ' ');
+
+/**
+ * Opaque keys of custom categories, which are never shown to the user. The gateway labels them
+ * (`src/governance/category_labels.py` in ai-governance-gateway); this only covers reviews
+ * without a label.
+ */
+const CUSTOM_CATEGORY_PREFIX = 'CUSTOM_';
 
 const CATEGORY_COPY: Partial<Record<string, TranslationKeys>> = {
   CLIENT_NAME: 'com_ui_dlp_category_client_name',
@@ -160,12 +168,20 @@ export default function DlpInterventionDialog({
 }) {
   const localize = useLocalize();
   const { decision } = result;
-  const categoryLabel = (category: string) => {
+  const categoryLabel = ({ category, label: displayName }: CategorizedFinding) => {
+    if (displayName) {
+      return displayName;
+    }
     const key = CATEGORY_COPY[category];
-    return key ? localize(key) : label(category);
+    if (key) {
+      return localize(key);
+    }
+    return category.startsWith(CUSTOM_CATEGORY_PREFIX)
+      ? localize('com_ui_dlp_category_custom_term')
+      : label(category);
   };
-  const findingLabel = ({ category, replacement }: GovernanceFinding) =>
-    `${categoryLabel(category)}${replacement ? ` → ${replacement}` : ''}`;
+  const findingLabel = (finding: GovernanceFinding) =>
+    `${categoryLabel(finding)}${finding.replacement ? ` → ${finding.replacement}` : ''}`;
   const originalSegments = useMemo(
     () => buildFindingSegments(originalText, result.findings),
     [originalText, result.findings],
@@ -174,9 +190,7 @@ export default function DlpInterventionDialog({
     () => buildFindingTerms(originalText, result.findings),
     [originalText, result.findings],
   );
-  const maskedText = result.maskedPreview?.find(
-    (m) => m.location === GOVERNANCE_DLP_TEXT_LOCATION,
-  )?.text;
+  const maskedText = getApprovedDlpText(result);
   const files = useMemo(() => groupFileFindings(result.fileFindings), [result.fileFindings]);
   const maskedSegments = useMemo(
     () => buildReplacementSegments(maskedText ?? '', result.findings),
@@ -256,7 +270,7 @@ export default function DlpInterventionDialog({
                       {segment.findings!.map(({ finding, ends }, i) =>
                         ends ? (
                           <span key={i} className="sr-only">
-                            {` (${categoryLabel(finding.category)})`}
+                            {` (${categoryLabel(finding)})`}
                           </span>
                         ) : null,
                       )}
@@ -280,8 +294,7 @@ export default function DlpInterventionDialog({
                           ACTION_CLASS[finding.action],
                         )}
                       >
-                        {categoryLabel(finding.category)} ·{' '}
-                        {localize(DECISION_COPY[finding.action])}
+                        {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
                       </span>
                       {term && <span className="break-all text-text-primary">{term}</span>}
                       {finding.replacement && (
@@ -313,8 +326,7 @@ export default function DlpInterventionDialog({
                               ACTION_CLASS[finding.action],
                             )}
                           >
-                            {categoryLabel(finding.category)} ·{' '}
-                            {localize(DECISION_COPY[finding.action])}
+                            {categoryLabel(finding)} · {localize(DECISION_COPY[finding.action])}
                             {finding.count > 1 ? ` × ${finding.count}` : ''}
                           </li>
                         ))}

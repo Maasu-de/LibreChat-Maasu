@@ -11,6 +11,9 @@ jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
 }));
 
+const PROJECTS = 'CUSTOM_8F14E45FCEEA167A5A36DEDD4BEA2543';
+const CLIENTS = 'CUSTOM_C9F0F895FB98AB9159F51FD0297E236D';
+
 const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding => ({
   location: '/messages/0/content',
   start: 8,
@@ -161,12 +164,12 @@ describe('DlpInterventionDialog', () => {
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
   });
 
-  it('falls back to a readable label for an unknown finding category', () => {
+  it('falls back to a readable label for a built-in category without its own copy', () => {
     render(
       <DlpInterventionDialog
         result={{
           decision: 'WARN',
-          findings: [finding({ category: 'CUSTOM_SECRET', action: 'WARN' })],
+          findings: [finding({ category: 'VAT_ID', action: 'WARN' })],
         }}
         originalText="Discuss Project Acme now"
         onCancel={jest.fn()}
@@ -174,7 +177,7 @@ describe('DlpInterventionDialog', () => {
       />,
     );
 
-    expect(screen.getByText('CUSTOM SECRET · com_ui_dlp_decision_warn')).toBeInTheDocument();
+    expect(screen.getByText('VAT ID · com_ui_dlp_decision_warn')).toBeInTheDocument();
     expect(screen.getByText('→ [CONFIDENTIAL]')).toBeInTheDocument();
   });
 
@@ -203,5 +206,84 @@ describe('DlpInterventionDialog', () => {
       'title',
       'com_ui_dlp_category_project_name → [TERM]\ncom_ui_dlp_category_project_name → [TERM]',
     );
+  });
+
+  it('shows custom categories by their display names, never by their keys', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [
+            finding({
+              start: 0,
+              end: 7,
+              category: PROJECTS,
+              label: 'Project Names',
+              replacement: '[Project Names]',
+            }),
+            finding({
+              start: 12,
+              end: 19,
+              category: CLIENTS,
+              label: 'Client Names',
+              replacement: '[Client Names]',
+            }),
+            finding({ start: 26, end: 42, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }),
+          ],
+          fileFindings: [
+            {
+              filename: 'notes.txt',
+              category: PROJECTS,
+              label: 'Project Names',
+              action: 'MASK',
+              count: 2,
+            },
+          ],
+          maskedPreview: [
+            {
+              location: '/messages/0/content',
+              text: '[Project Names] for [Client Names], mail [EMAIL]',
+            },
+          ],
+        }}
+        originalText="Phoenix for Contoso, mail jane@example.com"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const terms = screen.getAllByRole('listitem').map((item) => item.textContent);
+    expect(terms).toEqual(
+      expect.arrayContaining([
+        'Project Names · com_ui_dlp_decision_maskPhoenix→ [Project Names]',
+        'Client Names · com_ui_dlp_decision_maskContoso→ [Client Names]',
+        'com_ui_dlp_category_email_address · com_ui_dlp_decision_maskjane@example.com→ [EMAIL]',
+      ]),
+    );
+    expect(screen.getByText('Project Names · com_ui_dlp_decision_mask × 2')).toBeInTheDocument();
+    expect(screen.getByText('[Project Names]')).toBeInTheDocument();
+    expect(screen.getByText('[Client Names]')).toBeInTheDocument();
+    expect(screen.getByTitle('Project Names → [Project Names]')).toHaveTextContent('Phoenix');
+    expect(document.body.innerHTML).not.toContain('CUSTOM_');
+  });
+
+  it('shows a generic label for a custom category without display name', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'WARN',
+          findings: [finding({ category: PROJECTS, action: 'WARN', replacement: undefined })],
+          fileFindings: [{ filename: 'notes.txt', category: CLIENTS, action: 'WARN', count: 1 }],
+        }}
+        originalText="Discuss Project Acme now"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.getAllByText('com_ui_dlp_category_custom_term · com_ui_dlp_decision_warn'),
+    ).toHaveLength(2);
+    expect(document.body.innerHTML).not.toContain('CUSTOM_');
   });
 });

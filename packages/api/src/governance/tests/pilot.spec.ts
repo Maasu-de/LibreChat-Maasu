@@ -23,7 +23,10 @@ const plain = {
 beforeEach(() => {
   process.env.GOVERNANCE_PILOT_ENABLED = 'true';
   process.env.GOVERNANCE_DLP_ENABLED = 'true';
-  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
+  process.env.OPENID_REUSE_TOKENS = 'true';
+  process.env.OPENID_ADMIN_ROLE = 'governance-admin';
+  process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'realm_access.roles';
+  process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
   process.env.OPENAI_MODERATION = 'false';
 });
@@ -131,13 +134,35 @@ describe('pilot HTTP boundary', () => {
     '/api/files',
     '/api/files/config',
     '/api/files/speech/config',
-    '/api/admin/config',
     '/api/user/plugins',
     '/api/user/settings/skills/active',
     '/api/agents/chat/active',
     '/api/agents/chat/stream/job',
     '/api/agents/chat/status/convo',
   ])('preserves read-only history, config, and stream controls: %s', async (path) => {
+    await expect(request(app()).get(path)).resolves.toMatchObject({ status: 204 });
+  });
+
+  it.each([
+    '/api/admin/config',
+    '/api/admin/roles',
+    '/api/admin/grants',
+    '/api/admin/grants/effective',
+    '/api/admin/users/search',
+    '/api/admin/users',
+    '/api/admin/audit-log',
+    '/api/admin/login/local',
+  ])('denies hidden admin API %s', async (path) => {
+    await expect(request(app()).get(path)).resolves.toMatchObject({ status: 403 });
+  });
+
+  it.each([
+    '/api/admin/verify',
+    '/api/admin/groups/capabilities',
+    '/api/admin/groups/users/search',
+    '/api/admin/groups',
+    '/api/admin/oauth/openid/check',
+  ])('retains group/session API %s', async (path) => {
     await expect(request(app()).get(path)).resolves.toMatchObject({ status: 204 });
   });
 
@@ -167,9 +192,9 @@ describe('pilot HTTP boundary', () => {
     await expect(request(app()).get('/api/convos/gen_title/id')).resolves.toMatchObject({
       status: 204,
     });
-    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject(
-      { status: 403 },
-    );
+    await expect(request(app()).post('/api/convos/gen_title/id').send({})).resolves.toMatchObject({
+      status: 403,
+    });
     await expect(request(app()).post('/api/convos/import').send({})).resolves.toMatchObject({
       status: 403,
     });
@@ -415,8 +440,36 @@ describe('pilot configuration', () => {
     process.env.OPENAI_MODERATION = 'true';
     expect(() => restrictGovernanceConfig({})).toThrow(/moderation/);
   });
+  it.each([undefined, '', 'false', 'FALSE', '0'])(
+    'rejects pilot startup when OpenID token reuse is %j',
+    (value) => {
+      if (value === undefined) delete process.env.OPENID_REUSE_TOKENS;
+      else process.env.OPENID_REUSE_TOKENS = value;
+
+      expect(() => restrictGovernanceConfig({})).toThrow(/OPENID_REUSE_TOKENS/);
+    },
+  );
+  it.each(['true', 'TRUE', ' True '])('accepts OpenID token reuse %j', (value) => {
+    process.env.OPENID_REUSE_TOKENS = value;
+
+    expect(() => restrictGovernanceConfig({})).not.toThrow();
+  });
+  it.each(['OPENID_ADMIN_ROLE', 'OPENID_ADMIN_ROLE_PARAMETER_PATH'])(
+    'rejects pilot startup without %s',
+    (key) => {
+      delete process.env[key];
+
+      expect(() => restrictGovernanceConfig({})).toThrow(key);
+    },
+  );
+  it.each(['', '   '])('rejects blank administrator role %j at startup', (value) => {
+    process.env.OPENID_ADMIN_ROLE = value;
+
+    expect(() => restrictGovernanceConfig({})).toThrow('OPENID_ADMIN_ROLE');
+  });
   it('does not change non-pilot configuration', () => {
     delete process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.OPENID_REUSE_TOKENS = 'false';
     const config = { interface: { agents: true } };
     expect(restrictGovernanceConfig(config)).toBe(config);
   });
@@ -429,22 +482,19 @@ describe('pilot outbound boundary', () => {
     messages: [{ role: 'user', content: 'hello' }],
   };
   beforeEach(() => {
-    process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/api/v1/dlp';
+    process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
   });
   it.each([
-    ['https://external.test/api/v1/dlp/chat/completions', valid],
-    ['http://gateway.test/api/v1/dlp/responses', valid],
-    ['http://gateway.test:8080/api/v1/dlp/chat/completions', valid],
-    ['http://gateway.test/api/v2/dlp/chat/completions', valid],
-    ['http://gateway.test/api/v1/dlp/chat/completions?extra=true', valid],
-    ['http://gateway.test/api/v1/dlp/models', valid],
-    ['http://gateway.test/api/v1/dlp/chat/completions', { ...valid, stream: 'yes' }],
+    ['https://external.test/v1/chat/completions', valid],
+    ['http://gateway.test/v1/responses', valid],
+    ['http://gateway.test:8080/v1/chat/completions', valid],
+    ['http://gateway.test/v2/chat/completions', valid],
+    ['http://gateway.test/v1/chat/completions?extra=true', valid],
+    ['http://gateway.test/v1/models', valid],
+    ['http://gateway.test/v1/chat/completions', { ...valid, stream: 'yes' }],
+    ['http://gateway.test/v1/chat/completions', { ...valid, tools: [{ type: 'function' }] }],
     [
-      'http://gateway.test/api/v1/dlp/chat/completions',
-      { ...valid, tools: [{ type: 'function' }] },
-    ],
-    [
-      'http://gateway.test/api/v1/dlp/chat/completions',
+      'http://gateway.test/v1/chat/completions',
       { ...valid, messages: [{ role: 'tool', content: 'result' }] },
     ],
   ])('never forwards unsupported destination or request %s %j', async (url, body) => {
@@ -456,10 +506,10 @@ describe('pilot outbound boundary', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
   it.each([
-    ['http://gateway.test/api/v1/dlp', 'http://gateway.test/api/v1/dlp/chat/completions'],
-    ['HTTP://GATEWAY.TEST/api/v1/dlp/', 'http://gateway.test/api/v1/dlp/chat/completions'],
-    ['http://gateway.test:80/api/v1/dlp', 'http://gateway.test/api/v1/dlp/chat/completions'],
-    ['HTTPS://GATEWAY.TEST:443/api/v1/dlp///', 'https://gateway.test/api/v1/dlp/chat/completions'],
+    ['http://gateway.test/v1', 'http://gateway.test/v1/chat/completions'],
+    ['HTTP://GATEWAY.TEST/v1/', 'http://gateway.test/v1/chat/completions'],
+    ['http://gateway.test:80/v1', 'http://gateway.test/v1/chat/completions'],
+    ['HTTPS://GATEWAY.TEST:443/v1///', 'https://gateway.test/v1/chat/completions'],
   ])('preserves streaming and the request body with gateway URL %s', async (base, destination) => {
     process.env.GOVERNANCE_API_BASE_URL = base;
     const upstream = new Response('data: [DONE]\n\n', {
@@ -489,7 +539,7 @@ describe('pilot outbound boundary', () => {
     });
     const governed = createGovernanceDlpFetch({ userId: 'user-1', fetch });
     expect(
-      await governed('http://gateway.test/api/v1/dlp/chat/completions', {
+      await governed('http://gateway.test/v1/chat/completions', {
         method: 'POST',
         body: JSON.stringify(title),
       }),

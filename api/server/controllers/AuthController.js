@@ -5,7 +5,10 @@ const { logger } = require('@librechat/data-schemas');
 const {
   math,
   isEnabled,
+  isGovernancePilotEnabled,
   findOpenIDUser,
+  syncOidcAdministrator,
+  requiresOidcEntitlementRefresh,
   getOpenIdIssuer,
   buildOpenIDRefreshParams,
 } = require('@librechat/api');
@@ -170,7 +173,9 @@ const refreshController = async (req, res) => {
        * Stale, missing, or near-expiry tokens fall through to refreshTokenGrant so
        * upstream revocations and cookie/session extension are checked regularly.
        */
-      const reusableSessionToken = getReusableOpenIDSessionToken(req.session?.openidTokens);
+      const reusableSessionToken = isGovernancePilotEnabled()
+        ? null
+        : getReusableOpenIDSessionToken(req.session?.openidTokens);
       const reuseUserId = reusableSessionToken ? getValidOpenIDReuseUserId(parsedCookies) : null;
       if (reuseUserId) {
         const user = await getUserById(reuseUserId, AUTH_REFRESH_USER_PROJECTION);
@@ -242,6 +247,8 @@ const refreshController = async (req, res) => {
         );
       }
 
+      await syncOidcAdministrator(user, tokenset, updateUser);
+
       const token = setOpenIDAuthTokens(tokenset, req, res, {
         userId: user._id.toString(),
         existingRefreshToken: refreshToken,
@@ -266,6 +273,10 @@ const refreshController = async (req, res) => {
     const user = await getUserById(payload.id, AUTH_REFRESH_USER_PROJECTION);
     if (!user) {
       return res.status(401).redirect('/login');
+    }
+
+    if (requiresOidcEntitlementRefresh(user)) {
+      return res.status(403).send('Sign in again with OpenID to refresh this session');
     }
 
     const userId = payload.id;

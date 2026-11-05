@@ -29,6 +29,7 @@ export enum SystemRoles {
    * The Admin role
    */
   ADMIN = 'ADMIN',
+  GOVERNANCE_ADMIN = 'GOVERNANCE_ADMIN',
   /**
    * The default user role
    */
@@ -139,7 +140,7 @@ export function isSystemRoleName(name: string | undefined | null): boolean {
   return systemRoleSet.has(name.toUpperCase());
 }
 
-export const roleDefaults = defaultRolesSchema.parse({
+const defaultRoles = defaultRolesSchema.parse({
   [SystemRoles.ADMIN]: {
     name: SystemRoles.ADMIN,
     permissions: {
@@ -281,3 +282,11 @@ export const roleDefaults = defaultRolesSchema.parse({
     },
   },
 });
+
+export const roleDefaults = {
+  ...defaultRoles,
+  [SystemRoles.GOVERNANCE_ADMIN]: {
+    name: SystemRoles.GOVERNANCE_ADMIN,
+    permissions: defaultRoles[SystemRoles.USER].permissions,
+  },
+};
