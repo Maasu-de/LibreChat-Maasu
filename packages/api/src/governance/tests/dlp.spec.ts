@@ -109,68 +109,33 @@ describe('Governance DLP', () => {
     expect(result).toBe(upstreamResponse);
   });
 
-  it.each([
-    {
-      model: 'gemini-3.6-flash',
-      expectedParameters: { max_tokens: 512 },
-    },
-    ...[
-      'gemini-3.5-flash',
-      'gemini-3.5-flash-lite',
-      'gemini-3.1-pro-preview',
-      'gemini-3-flash-preview',
-      'gemini-3.1-flash-lite',
-    ].map((model) => ({
-      model,
-      expectedParameters: { temperature: 0.4, top_p: 0.8, max_tokens: 512 },
-    })),
-    ...[
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-      'gemma-4-26b-a4b-it-maas',
-      'governed-model',
-    ].map((model) => ({
-      model,
-      expectedParameters: {
-        temperature: 0.4,
-        top_p: 0.8,
-        frequency_penalty: 0.2,
-        presence_penalty: -0.1,
-        max_tokens: 512,
-      },
-    })),
-  ])(
-    'strips unsupported parameters from the SDK request for $model',
-    async ({ model, expectedParameters }) => {
+  it.each(['company-assistant', 'gemini-3.6-flash', 'gemini-2.5-flash'])(
+    'leaves routed-model parameter enforcement to the gateway for %s',
+    async (model) => {
       process.env.GOVERNANCE_PILOT_ENABLED = 'true';
       const upstreamFetch = jest.fn(
         async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
           new Response('ok'),
       );
       const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
-
-      await governedFetch('http://governance.test/v1/chat/completions', {
-        method: 'POST',
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'Hello' }],
-          stream: true,
-          temperature: 0.4,
-          top_p: 0.8,
-          frequency_penalty: 0.2,
-          presence_penalty: -0.1,
-          max_tokens: 512,
-        }),
-      });
-
-      expect(upstreamFetch).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      const request = {
         model,
         messages: [{ role: 'user', content: 'Hello' }],
         stream: true,
-        ...expectedParameters,
+        temperature: 0.4,
+        top_p: 0.8,
+        frequency_penalty: 0.2,
+        presence_penalty: -0.1,
+        max_tokens: 512,
+      };
+
+      await governedFetch('http://governance.test/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify(request),
       });
+
+      expect(upstreamFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual(request);
     },
   );
 

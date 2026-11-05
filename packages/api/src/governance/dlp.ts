@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { isEphemeralAgentId, getGovernanceAgentModelParameters } from 'librechat-data-provider';
+import { isEphemeralAgentId } from 'librechat-data-provider';
 import type {
   TPayload,
   TEphemeralAgent,
@@ -316,21 +316,6 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     ...(typeof request.stream === 'boolean' ? { stream: request.stream } : {}),
     ...(typeof request.temperature === 'number' ? { temperature: request.temperature } : {}),
   };
-
-  if (isGovernancePilotEnabled()) {
-    const supportedParameters = new Set(getGovernanceAgentModelParameters(request.model));
-    for (const key of [
-      'temperature',
-      'top_p',
-      'frequency_penalty',
-      'presence_penalty',
-      'max_tokens',
-    ] as const) {
-      if (!supportedParameters.has(key)) {
-        delete normalizedRequest[key];
-      }
-    }
-  }
 
   return normalizedRequest;
 }

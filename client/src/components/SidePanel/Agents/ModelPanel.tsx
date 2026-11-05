@@ -3,6 +3,7 @@ import keyBy from 'lodash/keyBy';
 import { ControlCombobox } from '@librechat/client';
 import { ChevronLeft, RotateCcw } from 'lucide-react';
 import { useFormContext, useWatch, Controller } from 'react-hook-form';
+import { useGetGovernanceModelsQuery } from 'librechat-data-provider/react-query';
 import { componentMapping } from '~/components/SidePanel/Parameters/components';
 import {
   alternateName,
@@ -69,13 +70,15 @@ export default function ModelPanel({
   const { data: endpointsConfig = {} } = useGetEndpointsQuery();
   const { data: startupConfig } = useGetStartupConfig();
   const governancePilot = startupConfig?.governancePilotEnabled === true;
+  const { data: governanceModels } = useGetGovernanceModelsQuery(governancePilot);
+  const governanceModel = governanceModels?.[provider]?.find((entry) => entry.id === model);
   const governedParameterKeys = useMemo(
-    () => new Set<string>(getGovernanceAgentModelParameters(model ?? '')),
-    [model],
+    () => new Set<string>(getGovernanceAgentModelParameters(governanceModel)),
+    [governanceModel],
   );
 
   useEffect(() => {
-    if (!governancePilot || !modelParameters) {
+    if (!governancePilot || !governanceModel?.supported_parameters || !modelParameters) {
       return;
     }
     const unsupportedKeys = GOVERNANCE_AGENT_MODEL_PARAMETERS.filter(
@@ -87,7 +90,7 @@ export default function ModelPanel({
     const nextParameters = { ...modelParameters };
     unsupportedKeys.forEach((key) => delete nextParameters[key]);
     setValue('model_parameters', nextParameters, { shouldDirty: true });
-  }, [governancePilot, governedParameterKeys, modelParameters, setValue]);
+  }, [governancePilot, governanceModel, governedParameterKeys, modelParameters, setValue]);
 
   const bedrockRegions = useMemo(() => {
     return endpointsConfig?.[provider]?.availableRegions ?? [];

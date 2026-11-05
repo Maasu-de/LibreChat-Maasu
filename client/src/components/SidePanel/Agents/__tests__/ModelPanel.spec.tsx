@@ -8,12 +8,14 @@ import {
   GOVERNANCE_ENDPOINT,
   GOVERNANCE_AGENT_MODEL_PARAMETERS,
 } from 'librechat-data-provider';
+import type { GovernanceModelsConfig } from 'librechat-data-provider';
 import type { AgentForm } from '~/common';
 import { ChatContext } from '~/Providers/ChatContext';
 import { useLocalize } from '~/hooks';
 import ModelPanel from '../ModelPanel';
 
 let mockGovernancePilot = true;
+let mockGovernanceModels: GovernanceModelsConfig | undefined;
 const mockEndpoints = {
   [GOVERNANCE_ENDPOINT]: { type: EModelEndpoint.custom, userProvide: false },
 };
@@ -23,6 +25,11 @@ jest.mock('~/data-provider', () => ({
   useGetStartupConfig: () => ({
     data: { governancePilotEnabled: mockGovernancePilot },
   }),
+}));
+
+jest.mock('librechat-data-provider/react-query', () => ({
+  ...jest.requireActual('librechat-data-provider/react-query'),
+  useGetGovernanceModelsQuery: () => ({ data: mockGovernanceModels }),
 }));
 
 const chatContext = { preset: null } as NonNullable<
@@ -39,6 +46,7 @@ const models = [
   'gemini-3.5-flash-lite',
   'gemini-3.6-flash',
   'gemma-4-26b-a4b-it-maas',
+  'company-assistant',
 ];
 
 type ModelParameters = Partial<AgentForm['model_parameters']> & { max_tokens?: number };
@@ -101,6 +109,26 @@ function renderPanel(
 
 beforeEach(() => {
   mockGovernancePilot = true;
+  mockGovernanceModels = {
+    [GOVERNANCE_ENDPOINT]: models.map((id) => {
+      if (id === 'gemini-3.6-flash' || id === 'company-assistant') {
+        return { id, supported_parameters: ['max_tokens'] };
+      }
+      if (id.startsWith('gemini-3')) {
+        return { id, supported_parameters: ['max_tokens', 'temperature', 'top_p'] };
+      }
+      return {
+        id,
+        supported_parameters: [
+          'max_tokens',
+          'temperature',
+          'top_p',
+          'frequency_penalty',
+          'presence_penalty',
+        ],
+      };
+    }),
+  };
 });
 
 it.each<[string, readonly string[]]>([
@@ -117,6 +145,7 @@ it.each<[string, readonly string[]]>([
     ['maxContextTokens', 'max_tokens', 'temperature', 'top_p'],
   ]),
   ['gemini-3.6-flash', ['maxContextTokens', 'max_tokens']],
+  ['company-assistant', ['maxContextTokens', 'max_tokens']],
 ])('shows the supported parameters for %s', (model, expected) => {
   const { container } = renderPanel(undefined, model);
   const controls = container.querySelectorAll(
@@ -125,6 +154,60 @@ it.each<[string, readonly string[]]>([
   expect(
     Array.from(controls, (control) => control.id.replace(/-dynamic-(?:input|setting-slider)$/, '')),
   ).toEqual(expected);
+});
+
+it('uses catalog capabilities even when the logical ID resembles another model family', () => {
+  mockGovernanceModels = {
+    [GOVERNANCE_ENDPOINT]: [{ id: 'gemini-2.5-flash', supported_parameters: ['max_tokens'] }],
+  };
+  renderPanel(undefined, 'gemini-2.5-flash');
+
+  expect(screen.queryByText('Temperature', { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByText('Frequency Penalty', { exact: true })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Max Output Tokens')).toBeInTheDocument();
+});
+
+it('clears unsupported saved values for an aliased model using its catalog capabilities', async () => {
+  const onSave = jest.fn();
+  renderPanel(onSave, 'company-assistant', {
+    maxContextTokens: 8192,
+    max_tokens: 256,
+    temperature: 0.4,
+    frequency_penalty: 0.2,
+    presence_penalty: 0.3,
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+
+  await waitFor(() => {
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'company-assistant',
+        model_parameters: { maxContextTokens: 8192, max_tokens: 256 },
+      }),
+      expect.anything(),
+    );
+  });
+});
+
+it.each([
+  undefined,
+  { [GOVERNANCE_ENDPOINT]: [{ id: 'logical-model' }] },
+  { [GOVERNANCE_ENDPOINT]: [{ id: 'logical-model', supported_parameters: null }] },
+])('preserves saved values while model capabilities are unavailable (%j)', async (catalog) => {
+  mockGovernanceModels = catalog;
+  const onSave = jest.fn();
+  const parameters = { max_tokens: 256, temperature: 0.4, frequency_penalty: 0.2 };
+  renderPanel(onSave, 'logical-model', parameters);
+
+  expect(screen.queryByText('Temperature', { exact: true })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Max Output Tokens')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+  await waitFor(() => {
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ model_parameters: parameters }),
+      expect.anything(),
+    );
+  });
 });
 
 it('removes incompatible saved values when switching models and preserves token limits', async () => {

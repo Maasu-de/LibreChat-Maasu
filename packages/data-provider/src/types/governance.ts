@@ -58,6 +58,7 @@ export interface GovernanceTier {
 export interface GovernanceModel {
   id: string;
   governance_tier?: GovernanceTier | null;
+  supported_parameters?: string[] | null;
 }
 
 export type GovernanceModelsConfig = Record<string, GovernanceModel[]>;
@@ -73,20 +74,10 @@ export const GOVERNANCE_AGENT_MODEL_PARAMETERS = [
   'presence_penalty',
 ] as const;
 
-/** Supported controls for the gateway's configured Google model families. */
-export function getGovernanceAgentModelParameters(model: string) {
-  const gemini = /(?:^|\/)gemini-(\d+)(?:\.(\d+))?(?:-|$)/i.exec(model);
-  if (!gemini || Number(gemini[1]) < 3) {
-    return GOVERNANCE_AGENT_MODEL_PARAMETERS;
-  }
-
-  // The deployed LiteLLM adapter rejects penalties for Gemini 3. Google also removes
-  // sampling controls from 3.6 onward: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters
-  const supportsSampling = Number(gemini[1]) === 3 && Number(gemini[2] ?? 0) < 6;
+/** Gateway capabilities describe the routed model; its logical ID can be any alias. */
+export function getGovernanceAgentModelParameters(model?: GovernanceModel) {
+  const supported = new Set(model?.supported_parameters ?? ['max_tokens']);
   return GOVERNANCE_AGENT_MODEL_PARAMETERS.filter(
-    (key) =>
-      key !== 'frequency_penalty' &&
-      key !== 'presence_penalty' &&
-      (supportsSampling || (key !== 'temperature' && key !== 'top_p')),
+    (key) => key === 'maxContextTokens' || supported.has(key),
   );
 }
