@@ -426,7 +426,7 @@ export default function DlpInterventionDialog({
   }, [revealed]);
 
   /**
-   * A value the gateway replaces is set like a redaction bar with its replacement. While the
+   * A value the gateway replaces is set like a redaction bar with its category label. While the
    * pointer is on it, or it has focus, the original value takes its place, centered on the bar's
    * width when it is shorter, so the text after it doesn't move. Only that bar lights up.
    */
@@ -451,10 +451,10 @@ export default function DlpInterventionDialog({
         )}
       >
         <span
-          aria-hidden={shown || undefined}
+          aria-hidden="true"
           className={cn('font-semibold [grid-area:1/1]', shown && 'invisible')}
         >
-          {finding.replacement}
+          {categoryLabel(finding)}
         </span>
         {shown && <span className="[grid-area:1/1]">{text}</span>}
         <span className="sr-only">{` (${findingLabel(finding)})`}</span>

@@ -420,7 +420,20 @@ test.describe('governed prompts', () => {
     page,
   }) => {
     await sendMessage(page, `Pay ${IBAN} or ${IBAN} today`);
-    await page.getByRole('dialog').getByRole('button', { name: 'Send masked' }).click();
+    const dialog = page.getByRole('dialog');
+    const prompt = dialog.getByRole('region', { name: 'Masked prompt' });
+    const labels = prompt.getByText('IBAN', { exact: true });
+    await expect(labels).toHaveCount(2);
+    await expect(labels.first()).toBeVisible();
+    await expect(labels.last()).toBeVisible();
+    await expect(prompt.getByText('[IBAN]', { exact: true })).toHaveCount(0);
+
+    await labels.first().hover();
+    await expect(prompt.getByText(IBAN, { exact: true })).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(labels.first()).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('mask-friendly-labels.png') });
+    await dialog.getByRole('button', { name: 'Send masked' }).click();
     await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
 
     const bars = messagesView(page).locator('mark', { hasText: '[IBAN]' });
@@ -459,7 +472,7 @@ test.describe('governed prompts', () => {
     await expect(dialog).toBeVisible();
     await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
 
-    await dialog.locator('mark', { hasText: '[IBAN]' }).click();
+    await dialog.getByText('IBAN', { exact: true }).click();
     await page.keyboard.press('Enter');
     await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
     await expect(dialog).not.toBeVisible();

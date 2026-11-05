@@ -416,7 +416,7 @@ it.each([savedConversation, newConversation])(
 
     fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('[EMAIL]')).toBeInTheDocument();
+    expect(screen.getByText('com_ui_dlp_category_email_address')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
 
     expect(setSubmission).toHaveBeenCalledTimes(1);

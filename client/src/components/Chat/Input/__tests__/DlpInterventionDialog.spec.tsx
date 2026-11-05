@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type {
   GovernanceTier,
+  GovernanceDlpResult,
   GovernanceFinding,
   GovernanceMaskedRange,
 } from 'librechat-data-provider';
@@ -23,9 +24,10 @@ const WARN_HIGHLIGHT = 'bg-aimo-warn/40';
 const BLOCK_HIGHLIGHT = 'bg-aimo-block/30';
 const REDACTED = ['bg-text-primary', 'text-surface-primary'];
 const EMAIL_WARN = 'com_ui_dlp_category_email_address · com_ui_dlp_decision_warn';
-const PROJECT_MASK = 'com_ui_dlp_category_project_name · com_ui_dlp_decision_mask';
+const PROJECT_LABEL = 'com_ui_dlp_category_project_name';
+const PROJECT_MASK = `${PROJECT_LABEL} · com_ui_dlp_decision_mask`;
 
-/** The redaction bar that holds a replacement or the value revealed in its place. */
+/** The redaction bar that holds a category label or the value revealed in its place. */
 const barOf = (element: HTMLElement) => {
   const bar = element.closest('mark');
   if (!bar) {
@@ -33,8 +35,8 @@ const barOf = (element: HTMLElement) => {
   }
   return bar;
 };
-/** Whether a bar shows its replacement, not the original value laid over it. */
-const showsToken = (bar: HTMLElement) => bar.querySelector('.invisible') === null;
+/** Whether a bar shows its category label, not the original value laid over it. */
+const showsLabel = (bar: HTMLElement) => bar.querySelector('.invisible') === null;
 
 const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding => ({
   location: '/messages/0/content',
@@ -180,7 +182,7 @@ describe('DLP intervention text segmentation', () => {
 });
 
 describe('DlpInterventionDialog', () => {
-  it('shows only the masked prompt as it will be sent, each replacement set as a bar', () => {
+  it('shows the masked prompt with a friendly category label on each bar', () => {
     const onCancel = jest.fn();
     const onConfirm = jest.fn();
 
@@ -199,10 +201,10 @@ describe('DlpInterventionDialog', () => {
     );
 
     const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
-    const bar = barOf(within(prompt).getByText('[CONFIDENTIAL]'));
+    const bar = barOf(within(prompt).getByText(PROJECT_LABEL));
     expect(screen.queryByRole('region', { name: 'com_ui_dlp_original_prompt' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'com_ui_dlp_file_findings' })).toBeNull();
-    expect(prompt.textContent).toBe(`Discuss [CONFIDENTIAL] (${PROJECT_MASK}) now`);
+    expect(prompt.textContent).toBe(`Discuss ${PROJECT_LABEL} (${PROJECT_MASK}) now`);
     expect(bar).toHaveClass(...REDACTED);
     expect(screen.queryByText('Project Acme')).toBeNull();
     expect(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' })).toHaveFocus();
@@ -211,6 +213,65 @@ describe('DlpInterventionDialog', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText('com_ui_cancel'));
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes categories sharing the same replacement', () => {
+    const preview = {
+      location: '/messages/0/content',
+      text: 'Mail [CONFIDENTIAL] about [CONFIDENTIAL]',
+    };
+    const result: GovernanceDlpResult = {
+      decision: 'MASK',
+      findings: [
+        finding({ start: 5, end: 21, category: 'EMAIL_ADDRESS' }),
+        finding({ start: 28, end: 40 }),
+      ],
+      maskedRanges: [
+        { start: 5, end: 21, finding: 0 },
+        { start: 28, end: 40, finding: 1 },
+      ],
+      maskedPreview: [preview],
+    };
+    render(
+      <DlpInterventionDialog
+        result={result}
+        originalText="Mail jane@example.com about Project Acme"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
+    for (const label of ['com_ui_dlp_category_email_address', PROJECT_LABEL]) {
+      const visibleLabel = within(prompt).getByText(label);
+      expect(visibleLabel).toBeVisible();
+      expect(visibleLabel.closest('.sr-only')).toBeNull();
+      expect(barOf(visibleLabel)).toHaveClass(...REDACTED);
+    }
+    expect(within(prompt).queryByText('[CONFIDENTIAL]')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['VAT_ID', 'VAT ID'],
+    [PROJECTS, 'com_ui_dlp_category_custom_term'],
+  ])('shows a friendly mask label for %s without a display name', (category, label) => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [finding({ category })],
+          maskedRanges: maskedAt(),
+        }}
+        originalText="Discuss Project Acme now"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const visibleLabel = screen.getByText(label);
+    expect(visibleLabel).toBeVisible();
+    expect(visibleLabel.closest('.sr-only')).toBeNull();
+    expect(screen.queryByText('[CONFIDENTIAL]')).not.toBeInTheDocument();
   });
 
   it('shows blocked values on their color and masked ones as bars, with no way to send', () => {
@@ -235,11 +296,13 @@ describe('DlpInterventionDialog', () => {
     const blocked = within(prompt).getByText('Project Acme', { selector: 'mark' });
     expect(prompt.textContent).toBe(
       'Discuss Project Acme (com_ui_dlp_category_project_name · com_ui_dlp_decision_block)' +
-        ', pay [IBAN] (com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask)',
+        ', pay com_ui_dlp_category_iban_code (com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask)',
     );
     expect(blocked).toHaveClass(BLOCK_HIGHLIGHT);
     expect(blocked).not.toHaveClass(...REDACTED);
-    expect(barOf(within(prompt).getByText('[IBAN]'))).toHaveClass(...REDACTED);
+    expect(barOf(within(prompt).getByText('com_ui_dlp_category_iban_code'))).toHaveClass(
+      ...REDACTED,
+    );
     expect(screen.queryByText(iban)).toBeNull();
 
     expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
@@ -516,7 +579,7 @@ describe('DlpInterventionDialog', () => {
       const { onCancel, onConfirm } = renderDecision('MASK');
 
       fireEvent.keyDown(dialog(), { key: 'Enter' });
-      fireEvent.keyDown(barOf(screen.getByText('[CONFIDENTIAL]')), { key: 'Enter' });
+      fireEvent.keyDown(barOf(screen.getByText(PROJECT_LABEL)), { key: 'Enter' });
       expect(onConfirm).toHaveBeenCalledTimes(2);
 
       fireEvent.keyDown(screen.getByRole('button', { name: 'com_ui_cancel' }), { key: 'Enter' });
@@ -775,9 +838,9 @@ describe('DlpInterventionDialog', () => {
     );
 
     expect(screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' }).textContent).toBe(
-      '[Project Names] (Project Names · com_ui_dlp_decision_mask) for ' +
-        '[Client Names] (Client Names · com_ui_dlp_decision_mask), mail ' +
-        '[EMAIL] (com_ui_dlp_category_email_address · com_ui_dlp_decision_mask)',
+      'Project Names (Project Names · com_ui_dlp_decision_mask) for ' +
+        'Client Names (Client Names · com_ui_dlp_decision_mask), mail ' +
+        'com_ui_dlp_category_email_address (com_ui_dlp_category_email_address · com_ui_dlp_decision_mask)',
     );
     expect(screen.getByText('Project Names · com_ui_dlp_decision_mask × 2')).toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain('CUSTOM_');
@@ -851,17 +914,17 @@ describe('DlpInterventionDialog', () => {
         onConfirm={jest.fn()}
       />,
     );
-    const [first, second] = screen.getAllByText('[TERM]').map(barOf);
+    const [first, second] = screen.getAllByText(PROJECT_LABEL).map(barOf);
 
     fireEvent.mouseEnter(second);
     expect(barOf(screen.getByText('Secret'))).toBe(second);
     expect(second).toHaveClass(MASK_HIGHLIGHT);
-    expect(showsToken(first)).toBe(true);
+    expect(showsLabel(first)).toBe(true);
     expect(first).toHaveClass(...REDACTED);
 
     fireEvent.mouseEnter(first);
     expect(barOf(screen.getByText('Project Phoenix'))).toBe(first);
-    expect(showsToken(second)).toBe(true);
+    expect(showsLabel(second)).toBe(true);
   });
 
   describe('redaction bar', () => {
@@ -881,9 +944,9 @@ describe('DlpInterventionDialog', () => {
           onConfirm={jest.fn()}
         />,
       );
-    const tokenBar = () => barOf(screen.getByText('[CONFIDENTIAL]'));
+    const labelBar = () => barOf(screen.getByText(PROJECT_LABEL));
     const revealedIn = (bar: HTMLElement) =>
-      !showsToken(bar) && within(bar).queryByText('Project Acme') !== null;
+      !showsLabel(bar) && within(bar).queryByText('Project Acme') !== null;
     const moveTo = (clientX: number, clientY: number) =>
       fireEvent.mouseMove(document, { clientX, clientY });
     /** Client rects given as [left, top, right, bottom]. */
@@ -904,25 +967,25 @@ describe('DlpInterventionDialog', () => {
 
     it('shows the original value in place of the bar while the pointer is on it', () => {
       renderMasked();
-      const bar = tokenBar();
+      const bar = labelBar();
 
       fireEvent.mouseEnter(bar);
       expect(revealedIn(bar)).toBe(true);
-      expect(within(bar).getByText('[CONFIDENTIAL]')).toHaveClass('invisible');
+      expect(within(bar).getByText(PROJECT_LABEL)).toHaveClass('invisible');
       expect(bar).toHaveClass(MASK_HIGHLIGHT);
       expect(bar).not.toHaveClass(...REDACTED);
       expect(screen.queryByRole('dialog', { name: PROJECT_MASK })).toBeNull();
       expect(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' })).toHaveFocus();
 
       moveTo(500, 500);
-      expect(showsToken(bar)).toBe(true);
+      expect(showsLabel(bar)).toBe(true);
       expect(within(bar).queryByText('Project Acme')).toBeNull();
       expect(bar).toHaveClass(...REDACTED);
     });
 
     it('keeps the value until the pointer leaves both the place of the bar and the value', () => {
       renderMasked();
-      const bar = tokenBar();
+      const bar = labelBar();
       const place = jest.spyOn(bar, 'getClientRects').mockReturnValue(rects([100, 10, 160, 30]));
 
       fireEvent.mouseEnter(bar);
@@ -933,18 +996,18 @@ describe('DlpInterventionDialog', () => {
       moveTo(20, 50);
       expect(revealedIn(bar)).toBe(true);
       moveTo(300, 50);
-      expect(showsToken(bar)).toBe(true);
+      expect(showsLabel(bar)).toBe(true);
     });
 
     it('shows the original value while the bar has focus', () => {
       renderMasked();
-      const bar = tokenBar();
+      const bar = labelBar();
 
       act(() => bar.focus());
       expect(revealedIn(bar)).toBe(true);
 
       act(() => screen.getByRole('button', { name: 'com_ui_cancel' }).focus());
-      expect(showsToken(bar)).toBe(true);
+      expect(showsLabel(bar)).toBe(true);
     });
   });
 
@@ -962,7 +1025,7 @@ describe('DlpInterventionDialog', () => {
         onConfirm={jest.fn()}
       />,
     );
-    const bar = barOf(screen.getByText('[overlap test]'));
+    const bar = barOf(screen.getByText('OVERLAP TEST'));
     const rest = screen.getByText('@example.com', { selector: 'mark' });
     expect(within(rest).getByText(`(${EMAIL_WARN})`)).toHaveClass('sr-only');
     expect(rest).toHaveClass(WARN_HIGHLIGHT);
@@ -1000,12 +1063,12 @@ describe('DlpInterventionDialog', () => {
       />,
     );
     const badge = screen.getByRole('button', { name: ibanMask });
-    const bar = barOf(screen.getByText('[IBAN]'));
+    const bar = barOf(screen.getByText('com_ui_dlp_category_iban_code'));
 
     fireEvent.mouseEnter(badge);
     expect(screen.getByRole('dialog', { name: ibanMask })).toHaveTextContent(iban);
     expect(bar).toHaveClass(...REDACTED);
-    expect(showsToken(bar)).toBe(true);
+    expect(showsLabel(bar)).toBe(true);
     fireEvent.mouseLeave(badge);
 
     fireEvent.mouseEnter(bar);
