@@ -120,6 +120,25 @@ describe('Langfuse feedback scores', () => {
     );
   });
 
+  it('scores each parallel response on its own, and clears only that score', async () => {
+    const { sendFeedbackScore } = await loadFeedback();
+    const agentId = 'openAI__gpt-4.1___GPT-4.1____0';
+
+    await sendFeedbackScore({ traceId: 'trace-id', agentId, feedback: { rating: 'thumbsDown' } });
+    await sendFeedbackScore({ traceId: 'trace-id', agentId });
+
+    const [[, created], [deleted]] = getFetchMock().mock.calls;
+    expect(JSON.parse(created?.body as string)).toMatchObject({
+      id: `feedback-trace-id-${agentId}`,
+      traceId: 'trace-id',
+      value: 0,
+      metadata: { agentId, rating: 'thumbsDown' },
+    });
+    expect(deleted).toBe(
+      `https://cloud.langfuse.com/api/public/scores/${encodeURIComponent(`feedback-trace-id-${agentId}`)}`,
+    );
+  });
+
   it('skips scores when Langfuse tracing is disabled', async () => {
     process.env.LANGFUSE_TRACING_ENABLED = 'false';
     const { sendFeedbackScore } = await loadFeedback();

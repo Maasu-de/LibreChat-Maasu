@@ -23,6 +23,7 @@ let saveMessage: ReturnType<typeof createMessageMethods>['saveMessage'];
 let getMessages: ReturnType<typeof createMessageMethods>['getMessages'];
 let getMessageTextStats: ReturnType<typeof createMessageMethods>['getMessageTextStats'];
 let updateMessage: ReturnType<typeof createMessageMethods>['updateMessage'];
+let updateParallelFeedback: ReturnType<typeof createMessageMethods>['updateParallelFeedback'];
 let deleteMessages: ReturnType<typeof createMessageMethods>['deleteMessages'];
 let bulkSaveMessages: ReturnType<typeof createMessageMethods>['bulkSaveMessages'];
 let updateMessageText: ReturnType<typeof createMessageMethods>['updateMessageText'];
@@ -42,6 +43,7 @@ beforeAll(async () => {
   getMessages = methods.getMessages;
   getMessageTextStats = methods.getMessageTextStats;
   updateMessage = methods.updateMessage;
+  updateParallelFeedback = methods.updateParallelFeedback;
   deleteMessages = methods.deleteMessages;
   bulkSaveMessages = methods.bulkSaveMessages;
   updateMessageText = methods.updateMessageText;
@@ -164,6 +166,104 @@ describe('Message Operations', () => {
       await expect(
         updateMessage(mockCtx.userId, { messageId: 'nonexistent', text: 'Test' }),
       ).rejects.toThrow('Message not found or user not authorized.');
+    });
+  });
+
+  describe('updateParallelFeedback', () => {
+    const first = 'openAI__gpt-4.1___GPT-4.1____0';
+    const second = 'anthropic__claude-3.5___Claude____1';
+
+    const saveComparison = () =>
+      saveMessage(mockCtx, {
+        ...mockMessageData,
+        feedback: { rating: 'thumbsUp', tag: undefined },
+        content: [
+          { type: 'text', text: 'First answer', agentId: first, groupId: 1 },
+          { type: 'text', text: 'Second answer', agentId: second, groupId: 1 },
+        ],
+      });
+
+    const storedFeedback = async () =>
+      (await Message.findOne({ messageId: 'msg123' }).lean())?.parallelFeedback;
+
+    it('keeps feedback for each response apart, replacing only the rated one', async () => {
+      await saveComparison();
+
+      await updateParallelFeedback('user123', {
+        messageId: 'msg123',
+        agentId: first,
+        feedback: { rating: 'thumbsUp', tag: 'accurate_reliable' },
+      });
+      await updateParallelFeedback('user123', {
+        messageId: 'msg123',
+        agentId: second,
+        feedback: { rating: 'thumbsDown', tag: 'not_helpful', text: 'Too vague' },
+      });
+      const result = await updateParallelFeedback('user123', {
+        messageId: 'msg123',
+        agentId: first,
+        feedback: { rating: 'thumbsDown', tag: 'inaccurate' },
+      });
+
+      const expected = [
+        { agentId: second, rating: 'thumbsDown', tag: 'not_helpful', text: 'Too vague' },
+        { agentId: first, rating: 'thumbsDown', tag: 'inaccurate' },
+      ];
+      expect(await storedFeedback()).toEqual(expected);
+      expect(result?.parallelFeedback).toEqual(expected);
+      expect(result?.conversationId).toBe(mockMessageData.conversationId);
+    });
+
+    it("clears one response's feedback without touching the other's or the message's", async () => {
+      await saveComparison();
+      await updateParallelFeedback('user123', {
+        messageId: 'msg123',
+        agentId: first,
+        feedback: { rating: 'thumbsUp', tag: 'accurate_reliable' },
+      });
+      await updateParallelFeedback('user123', {
+        messageId: 'msg123',
+        agentId: second,
+        feedback: { rating: 'thumbsDown', tag: 'not_helpful' },
+      });
+
+      await updateParallelFeedback('user123', { messageId: 'msg123', agentId: first });
+
+      expect(await storedFeedback()).toEqual([
+        { agentId: second, rating: 'thumbsDown', tag: 'not_helpful' },
+      ]);
+      const message = await Message.findOne({ messageId: 'msg123' }).lean();
+      expect(message?.feedback?.rating).toBe('thumbsUp');
+    });
+
+    it('stores text that looks like a field path as written', async () => {
+      await saveComparison();
+
+      await updateParallelFeedback('user123', {
+        messageId: 'msg123',
+        agentId: first,
+        feedback: { rating: 'thumbsDown', tag: 'other', text: '$user' },
+      });
+
+      expect(await storedFeedback()).toEqual([
+        { agentId: first, rating: 'thumbsDown', tag: 'other', text: '$user' },
+      ]);
+    });
+
+    it.each([
+      ['an agent without content in the message', 'user123', 'other-agent'],
+      ["another user's message", 'attacker123', first],
+    ])('changes nothing for %s', async (_label, userId, agentId) => {
+      await saveComparison();
+
+      const result = await updateParallelFeedback(userId, {
+        messageId: 'msg123',
+        agentId,
+        feedback: { rating: 'thumbsUp', tag: 'accurate_reliable' },
+      });
+
+      expect(result).toBeNull();
+      expect(await storedFeedback()).toBeUndefined();
     });
   });
 

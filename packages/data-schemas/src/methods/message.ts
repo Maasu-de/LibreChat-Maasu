@@ -1,5 +1,6 @@
 import { RetentionMode } from 'librechat-data-provider';
 import type { DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
+import type { TMinimalFeedback } from 'librechat-data-provider';
 import type { AppConfig, IMessage } from '~/types';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { createFallbackRetentionDate } from '~/utils/retention';
@@ -51,6 +52,10 @@ export interface MessageMethods {
     message: Partial<IMessage> & { newMessageId?: string },
     metadata?: { context?: string },
   ): Promise<Partial<IMessage>>;
+  updateParallelFeedback(
+    userId: string,
+    params: { messageId: string; agentId: string; feedback?: TMinimalFeedback | null },
+  ): Promise<Partial<IMessage> | null>;
   deleteMessagesSince(
     userId: string,
     params: { messageId: string; conversationId: string },
@@ -323,6 +328,54 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   }
 
   /**
+   * Sets the user's feedback on one parallel response of a message, by its agent ID, or clears it
+   * without `feedback`. Only an agent with content in the message matches. It is one atomic update,
+   * so the other responses' feedback is kept. Returns `null` when nothing matched.
+   */
+  async function updateParallelFeedback(
+    userId: string,
+    {
+      messageId,
+      agentId,
+      feedback,
+    }: { messageId: string; agentId: string; feedback?: TMinimalFeedback | null },
+  ): Promise<Partial<IMessage> | null> {
+    const Message = mongoose.models.Message as Model<IMessage>;
+    const others = {
+      $filter: {
+        input: { $ifNull: ['$parallelFeedback', []] },
+        cond: { $ne: ['$$this.agentId', { $literal: agentId }] },
+      },
+    };
+    const entry = feedback && {
+      agentId,
+      rating: feedback.rating,
+      tag: feedback.tag,
+      ...(feedback.text != null ? { text: feedback.text } : {}),
+    };
+    const parallelFeedback = entry ? { $concatArrays: [others, { $literal: [entry] }] } : others;
+    const updated = await Message.findOneAndUpdate(
+      { messageId, user: userId, 'content.agentId': agentId },
+      [{ $set: { parallelFeedback } }],
+      { new: true },
+    );
+    if (!updated) {
+      return null;
+    }
+    const message = updated.toObject();
+    return {
+      messageId: message.messageId,
+      conversationId: message.conversationId,
+      parentMessageId: message.parentMessageId,
+      sender: message.sender,
+      isCreatedByUser: message.isCreatedByUser,
+      tokenCount: message.tokenCount,
+      endpoint: message.endpoint,
+      parallelFeedback: message.parallelFeedback,
+    };
+  }
+
+  /**
    * Deletes messages in a conversation since a specific message.
    */
   async function deleteMessagesSince(
@@ -545,6 +598,7 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     recordMessage,
     updateMessageText,
     updateMessage,
+    updateParallelFeedback,
     deleteMessagesSince,
     getMessages,
     getMessageTextStats,

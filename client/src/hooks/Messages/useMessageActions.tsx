@@ -167,6 +167,17 @@ export default function useMessageActions(props: TMessageActions) {
     [feedbackMutation],
   );
 
+  const { mutate: mutateFeedback } = feedbackMutation;
+  /** Rates one parallel response of the message, such as one model of a comparison. */
+  const handleParallelFeedback = useCallback(
+    (agentId: string, newFeedback: TFeedback | undefined) =>
+      mutateFeedback(
+        { agentId, feedback: newFeedback ? toMinimalFeedback(newFeedback) : undefined },
+        { onError: (error) => console.error('Failed to update feedback:', error) },
+      ),
+    [mutateFeedback],
+  );
+
   return {
     ask,
     edit,
@@ -180,6 +191,7 @@ export default function useMessageActions(props: TMessageActions) {
     handleFeedback,
     handleContinue,
     copyToClipboard,
+    handleParallelFeedback,
     latestMessageId,
     regenerateMessage,
     latestMessageDepth,

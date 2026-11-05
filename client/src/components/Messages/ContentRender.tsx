@@ -80,6 +80,7 @@ function areContentRenderPropsEqual(prev: ContentRenderProps, next: ContentRende
     prevMsg.endpoint === nextMsg.endpoint &&
     prevMsg.iconURL === nextMsg.iconURL &&
     prevMsg.feedback?.rating === nextMsg.feedback?.rating &&
+    prevMsg.parallelFeedback === nextMsg.parallelFeedback &&
     (prevMsg.attachments?.length ?? 0) === (nextMsg.attachments?.length ?? 0) &&
     (prevMsg.manualSkills?.length ?? 0) === (nextMsg.manualSkills?.length ?? 0) &&
     (prevMsg.alwaysAppliedSkills?.length ?? 0) === (nextMsg.alwaysAppliedSkills?.length ?? 0) &&
@@ -116,6 +117,7 @@ const ContentRender = memo(function ContentRender({
     copyToClipboard,
     regenerateMessage,
     latestMessageDepth,
+    handleParallelFeedback,
   } = useMessageActions({
     message: msg,
     searchResults,
@@ -230,6 +232,8 @@ const ContentRender = memo(function ContentRender({
               createdAt={msg.createdAt ?? msg.clientTimestamp}
               conversationId={conversation?.conversationId}
               content={msg.content as Array<TMessageContentParts | undefined>}
+              parallelFeedback={msg.parallelFeedback}
+              onParallelFeedback={msg.isCreatedByUser ? undefined : handleParallelFeedback}
             />
           </div>
           {hasNoChildren && isSubmitting ? (
@@ -252,7 +256,7 @@ const ContentRender = memo(function ContentRender({
                 copyToClipboard={copyToClipboard}
                 handleContinue={handleContinue}
                 latestMessageId={latestMessageId}
-                handleFeedback={handleFeedback}
+                handleFeedback={hasParallelContent ? undefined : handleFeedback}
                 isLast={isLast}
               />
             </SubRow>
