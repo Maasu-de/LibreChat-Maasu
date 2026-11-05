@@ -395,6 +395,7 @@ export default function DlpInterventionDialog({
   const { decision, modelNotAllowed } = result;
   const copy = modelNotAllowed ? MODEL_BLOCK_COPY : COPY[decision];
   const [revealed, setRevealed] = useState<RevealedValue | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const categoryLabel = useCategoryLabel();
@@ -431,7 +432,7 @@ export default function DlpInterventionDialog({
    * width when it is shorter, so the text after it doesn't move. Only that bar lights up.
    */
   const renderRedacted = ({ text, finding }: FoundValue, index: number) => {
-    const shown = revealed?.index === index;
+    const shown = revealed?.index === index || focusedIndex === index;
     const reveal = ({ currentTarget }: SyntheticEvent<HTMLElement>) => {
       const bar = Array.from(currentTarget.getClientRects());
       setRevealed((current) =>
@@ -443,8 +444,8 @@ export default function DlpInterventionDialog({
         key={index}
         tabIndex={0}
         onMouseEnter={reveal}
-        onFocus={reveal}
-        onBlur={() => setRevealed((current) => (current?.index === index ? null : current))}
+        onFocus={() => setFocusedIndex(index)}
+        onBlur={() => setFocusedIndex((current) => (current === index ? null : current))}
         className={cn(
           REDACTION,
           shown ? [ACTION_STYLE[finding.action].highlight, 'text-inherit'] : REDACTED,

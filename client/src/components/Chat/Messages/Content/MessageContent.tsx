@@ -101,7 +101,6 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
     [showCursor, isSubmitting],
   );
 
-  /** A masked message shows as plain text: its masks are ranges of the text, not of markdown. */
   const maskedSegments = useMemo(
     () => (isCreatedByUser ? getMaskedSegments(text, message.dlpMasks) : undefined),
     [isCreatedByUser, text, message.dlpMasks],
@@ -111,11 +110,11 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
     if (!isCreatedByUser) {
       return <Markdown content={text} isLatestMessage={isLatestMessage} />;
     }
+    if (enableUserMsgMarkdown) {
+      return <MarkdownLite content={text} maskedSegments={maskedSegments} />;
+    }
     if (maskedSegments) {
       return <MaskedText segments={maskedSegments} />;
-    }
-    if (enableUserMsgMarkdown) {
-      return <MarkdownLite content={text} />;
     }
     return <>{text}</>;
   }, [isCreatedByUser, maskedSegments, enableUserMsgMarkdown, text, isLatestMessage]);
@@ -127,7 +126,7 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
           'markdown prose message-content dark:prose-invert light w-full break-words',
           isSubmitting && 'submitting',
           showCursorState && text.length > 0 && 'result-streaming',
-          isCreatedByUser && (!enableUserMsgMarkdown || maskedSegments) && 'whitespace-pre-wrap',
+          isCreatedByUser && !enableUserMsgMarkdown && 'whitespace-pre-wrap',
           isCreatedByUser ? 'dark:text-gray-20' : 'dark:text-gray-100',
         )}
       >

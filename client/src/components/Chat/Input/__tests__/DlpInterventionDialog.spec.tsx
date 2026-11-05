@@ -1006,8 +1006,52 @@ describe('DlpInterventionDialog', () => {
       act(() => bar.focus());
       expect(revealedIn(bar)).toBe(true);
 
+      moveTo(500, 500);
+      expect(bar).toHaveFocus();
+      expect(revealedIn(bar)).toBe(true);
+
       act(() => screen.getByRole('button', { name: 'com_ui_cancel' }).focus());
       expect(showsLabel(bar)).toBe(true);
+    });
+
+    it('keeps focus and pointer reveals independent across bars', () => {
+      render(
+        <DlpInterventionDialog
+          result={{
+            decision: 'MASK',
+            findings: [
+              finding(),
+              finding({ start: 27, end: 43, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }),
+            ],
+            maskedRanges: [...maskedAt(), { start: 27, end: 43, finding: 1 }],
+          }}
+          originalText="Discuss Project Acme, mail jane@example.com"
+          onCancel={jest.fn()}
+          onConfirm={jest.fn()}
+        />,
+      );
+      const project = labelBar();
+      const email = barOf(screen.getByText('com_ui_dlp_category_email_address'));
+
+      act(() => project.focus());
+      fireEvent.mouseEnter(email);
+      expect(revealedIn(project)).toBe(true);
+      expect(within(email).getByText('jane@example.com')).toBeVisible();
+
+      moveTo(500, 500);
+      expect(project).toHaveFocus();
+      expect(revealedIn(project)).toBe(true);
+      expect(showsLabel(email)).toBe(true);
+
+      fireEvent.mouseEnter(project);
+      act(() => email.focus());
+      expect(revealedIn(project)).toBe(true);
+      expect(within(email).getByText('jane@example.com')).toBeVisible();
+
+      moveTo(500, 500);
+      expect(showsLabel(project)).toBe(true);
+      expect(email).toHaveFocus();
+      expect(within(email).getByText('jane@example.com')).toBeVisible();
     });
   });
 
