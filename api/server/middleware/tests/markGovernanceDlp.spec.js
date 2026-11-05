@@ -16,10 +16,12 @@ const markGovernanceDlp = require('../markGovernanceDlp');
 describe('markGovernanceDlp', () => {
   const originalEnabled = process.env.GOVERNANCE_DLP_ENABLED;
   const originalPilot = process.env.GOVERNANCE_PILOT_ENABLED;
+  const originalAttachments = process.env.GOVERNANCE_ATTACHMENTS_ENABLED;
 
   beforeEach(() => {
     process.env.GOVERNANCE_DLP_ENABLED = 'true';
     delete process.env.GOVERNANCE_PILOT_ENABLED;
+    delete process.env.GOVERNANCE_ATTACHMENTS_ENABLED;
     mockGetUserGroups.mockReset();
     mockGetUserGroups.mockResolvedValue([{ _id: 'group-1' }, { _id: 'group-2' }]);
     mockDenyRequest.mockReset();
@@ -29,6 +31,7 @@ describe('markGovernanceDlp', () => {
     for (const [name, value] of [
       ['GOVERNANCE_DLP_ENABLED', originalEnabled],
       ['GOVERNANCE_PILOT_ENABLED', originalPilot],
+      ['GOVERNANCE_ATTACHMENTS_ENABLED', originalAttachments],
     ]) {
       if (value === undefined) {
         delete process.env[name];
@@ -51,6 +54,17 @@ describe('markGovernanceDlp', () => {
     expect(req.governanceDlpEligible).toBe(true);
     expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
     expect(mockGetUserGroups).toHaveBeenCalledWith('user-123', { _id: 1 });
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['', '   '])('does not mark document-only text %j for DLP approval', async (text) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+
+    const { req, next } = await run({ text, files: [{ file_id: 'file-1' }] });
+
+    expect(req.governanceDlpEligible).toBe(false);
+    expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
     expect(next).toHaveBeenCalledTimes(1);
   });
 

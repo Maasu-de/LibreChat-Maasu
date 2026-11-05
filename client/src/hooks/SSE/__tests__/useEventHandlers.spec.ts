@@ -68,6 +68,18 @@ describe('isInitialNewConversationSubmission', () => {
     ).toBe(true);
   });
 
+  it("does not treat a saved chat's edited first message as an optimistic new chat", () => {
+    expect(
+      isInitialNewConversationSubmission({
+        userMessage: {
+          messageId: 'user-3',
+          parentMessageId: Constants.NO_PARENT,
+        } as TMessage,
+        messages: [{ messageId: 'user-1' } as TMessage],
+      } as EventSubmission),
+    ).toBe(false);
+  });
+
   it('does not treat follow-up turns as optimistic new chats', () => {
     expect(
       isInitialNewConversationSubmission({

@@ -97,10 +97,12 @@ export const buildCreatedInitialResponse = ({
   conversationId: userMessage.conversationId ?? initialResponse.conversationId,
 });
 
+/** An edited first message also has no parent, but its saved chat still has messages. */
 export const isInitialNewConversationSubmission = ({
   userMessage,
-}: Pick<EventSubmission, 'userMessage'>): boolean =>
-  userMessage?.parentMessageId === Constants.NO_PARENT;
+  messages,
+}: Pick<EventSubmission, 'userMessage' | 'messages'>): boolean =>
+  userMessage?.parentMessageId === Constants.NO_PARENT && !messages?.length;
 
 export const mergeRegenerateFinalMessages = ({
   messages,
