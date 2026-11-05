@@ -193,6 +193,41 @@ describe('readReview', () => {
 });
 
 describe('submitted text helpers', () => {
+  it.each(['', '   '])('anchors document-only text %j to the current file block', (text) => {
+    const content = `> 🙂 excerpt\n\n${ATTACHED}\n${text}`;
+    const messages = [
+      { role: 'user', content: `${ATTACHED}\n${text}` },
+      { role: 'assistant', content: 'Earlier answer' },
+      { role: 'user', content },
+    ];
+    expect(findSubmittedText(messages, text, [attachedContext(true)])).toEqual({
+      messageIndex: 2,
+      offset: Array.from(content).length - text.length,
+    });
+  });
+
+  it('does not mistake a historical document for a document-only current turn', () => {
+    const messages = [
+      { role: 'user', content: `${ATTACHED}\n` },
+      { role: 'assistant', content: 'Earlier answer' },
+      { role: 'user', content: '' },
+    ];
+    expect(findSubmittedText(messages, '', [attachedContext(true)])).toBeUndefined();
+    expect(findSubmittedText([messages[0]], '', [attachedContext(false)])).toBeUndefined();
+  });
+
+  it('rejects a document-only anchor without valid file spans', () => {
+    const context = attachedContext(true);
+    const messages = [{ role: 'user', content: `${ATTACHED}\n` }];
+    expect(findSubmittedText(messages, '')).toBeUndefined();
+    expect(findSubmittedText(messages, '', [{ ...context, files: [] }])).toBeUndefined();
+    expect(
+      findSubmittedText(messages, '', [
+        { ...context, files: [{ ...context.files[0], end: ATTACHED.length + 1 }] },
+      ]),
+    ).toBeUndefined();
+  });
+
   it('locates the submitted text after quoted excerpts, in code points', () => {
     const messages = [
       { role: 'user', content: 'earlier' },
@@ -981,5 +1016,139 @@ describe('DLP approval flow', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_approval_invalid' } });
     expect(upstream).not.toHaveBeenCalled();
     expect(onSent).not.toHaveBeenCalled();
+  });
+});
+
+describe('document-only DLP approval', () => {
+  const savedEnvironment = { ...process.env };
+
+  beforeEach(() => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+    process.env.GOVERNANCE_API_BASE_URL = DLP_COMPLETIONS_URL.replace(/\/chat\/completions$/, '');
+  });
+
+  afterEach(() => {
+    process.env = { ...savedEnvironment };
+  });
+
+  it.each(['', '   '])(
+    'sends only the extracted document and the original text %j',
+    async (text) => {
+      const messages = [{ role: 'user', content: `${ATTACHED}\n${text}` }];
+      const { upstream, onSent, send, sentBody } = setup({
+        text,
+        fileContexts: [attachedContext(true)],
+        responses: [completionResponse()],
+      });
+
+      expect((await send(messages)).status).toBe(200);
+      expect(upstream).toHaveBeenCalledTimes(1);
+      expect(sentBody(0).messages).toEqual(messages);
+      expect(onSent).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['WARN', 'MASK', 'BLOCK'] as const)(
+    'shows an attachment-only %s review without a synthetic prompt',
+    async (action) => {
+      const content = `${ATTACHED}\n`;
+      const reviewed = [
+        {
+          role: 'user',
+          content: action === 'MASK' ? content.replaceAll(IBAN, '[IBAN]') : content,
+        },
+      ];
+      const { onReview, onSent, reviews, send } = setup({
+        text: '',
+        fileContexts: [attachedContext(true)],
+        responses: [
+          reviewResponse({
+            review_id: 'document-review',
+            action,
+            findings: [content.indexOf(IBAN), content.lastIndexOf(IBAN)].map((start) => ({
+              ...ibanFinding('/messages/0/content', start),
+              action,
+              replacement: action === 'MASK' ? '[IBAN]' : undefined,
+            })),
+            ...(action !== 'BLOCK' && { messages: reviewed, dlp_token: 'document-token' }),
+          }),
+        ],
+      });
+
+      const response = await send([{ role: 'user', content }]);
+
+      expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
+      expect(onReview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: action,
+          findings: [],
+          fileFindings: [expect.objectContaining({ fileId: 'file-report', action, count: 2 })],
+          ...(action !== 'BLOCK' && {
+            maskedPreview: [{ location: '/messages/0/content', text: '' }],
+          }),
+        }),
+      );
+      expect(onSent).not.toHaveBeenCalled();
+      if (action === 'BLOCK') {
+        expect(reviews.entries.size).toBe(0);
+        return;
+      }
+      expect(reviews.entries.get('document-review')).toMatchObject({
+        text: '',
+        messages: reviewed,
+        dlpToken: 'document-token',
+      });
+
+      const approved = setup({
+        text: '',
+        reviewId: 'document-review',
+        reviews,
+        responses: [completionResponse()],
+      });
+      expect(
+        (await approved.send([{ role: 'user', content: 'Rebuilt context must not be sent' }]))
+          .status,
+      ).toBe(200);
+      expect(approved.sentBody(0)).toMatchObject({
+        messages: reviewed,
+        dlp_token: 'document-token',
+        require_user_approval: true,
+      });
+      expect(approved.onSent).toHaveBeenCalledTimes(1);
+      expect(reviews.entries.size).toBe(0);
+    },
+  );
+
+  it.each<{ fileContexts: DlpFileContext[] }>([
+    { fileContexts: [] },
+    { fileContexts: [attachedContext(false)] },
+    { fileContexts: [{ ...attachedContext(true), files: [] }] },
+    { fileContexts: [{ ...attachedContext(true), text: 'A different document block' }] },
+  ])(
+    'rejects missing or inconsistent current file context before sending: %j',
+    async ({ fileContexts }) => {
+      const { upstream, onReview, send } = setup({ text: '', fileContexts, responses: [] });
+
+      const response = await send([{ role: 'user', content: `${ATTACHED}\n` }]);
+
+      expect(await response.json()).toMatchObject({ error: { code: 'dlp_unsupported_request' } });
+      expect(upstream).not.toHaveBeenCalled();
+      expect(onReview).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a document-only request when governed attachments are disabled', async () => {
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'false';
+    const { upstream, send } = setup({
+      text: '',
+      fileContexts: [attachedContext(true)],
+      responses: [],
+    });
+
+    const response = await send([{ role: 'user', content: `${ATTACHED}\n` }]);
+
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_unsupported_request' } });
+    expect(upstream).not.toHaveBeenCalled();
   });
 });

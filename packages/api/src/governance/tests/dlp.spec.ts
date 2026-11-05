@@ -26,6 +26,8 @@ const environmentKeys = [
   'GOVERNANCE_API_BASE_URL',
   'LIBRECHAT_SERVICE_CREDENTIAL',
   'GOVERNANCE_DLP_ENABLED',
+  'GOVERNANCE_PILOT_ENABLED',
+  'GOVERNANCE_ATTACHMENTS_ENABLED',
 ] as const;
 
 const originalEnvironment = new Map<string, string | undefined>(
@@ -36,6 +38,8 @@ beforeEach(() => {
   process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/v1';
   process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'server-only-credential';
   delete process.env.GOVERNANCE_DLP_ENABLED;
+  delete process.env.GOVERNANCE_PILOT_ENABLED;
+  delete process.env.GOVERNANCE_ATTACHMENTS_ENABLED;
 });
 
 afterAll(() => {
@@ -414,6 +418,14 @@ describe('hasSelectedTools', () => {
 });
 
 describe('isPlainTextSubmission', () => {
+  it.each(['', '   ', 'Read this document'])('governs enabled document submissions: %j', (text) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+    expect(isPlainTextSubmission(plainTextBody({ text, files: [{ file_id: 'uploaded' }] }))).toBe(
+      true,
+    );
+  });
+
   it('accepts a first-turn plain-text message', () => {
     expect(isPlainTextSubmission(plainTextBody())).toBe(true);
   });

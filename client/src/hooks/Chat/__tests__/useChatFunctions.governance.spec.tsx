@@ -328,6 +328,61 @@ it('sends a message at once, without a separate DLP check', () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
+it.each(['', '   '])('rejects a blank message without files (%j)', (text) => {
+  renderChat(newConversation, maskReview(null));
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+  expect(setSubmission).not.toHaveBeenCalled();
+});
+
+it.each([savedConversation, newConversation])(
+  'sends and approves files without adding typed text in conversation $conversationId',
+  (conversation) => {
+    const review = fileReview(conversation.conversationId);
+    review.text = '';
+    review.result.findings = [];
+    review.result.maskedRanges = undefined;
+    review.result.maskedPreview = [{ location: '/messages/0/content', text: '' }];
+    renderChat(conversation, review);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(setSubmission).toHaveBeenCalledTimes(1);
+    expect(lastSubmission().userMessage.text).toBe('');
+    expect(lastSubmission().userMessage.files).toHaveLength(composerFiles.length);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
+
+    expect(setSubmission).toHaveBeenCalledTimes(2);
+    expect(lastSubmission().userMessage.text).toBe('');
+    expect(lastSubmission().userMessage.files).toEqual(review.files);
+    expect(lastSubmission().dlpReviewId).toBe(review.result.reviewId);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  },
+);
+
+it('restores a cancelled file-only review without inserting text', () => {
+  const review = fileReview(null);
+  review.text = '';
+  review.result.findings = [];
+  review.result.maskedRanges = undefined;
+  review.result.maskedPreview = [{ location: '/messages/0/content', text: '' }];
+  renderChat(newConversation, review);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Attach files' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
+
+  expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
+  expect(composerFileIds()).toEqual(composerFiles.map((file) => file.file_id));
+  expect(setSubmission).toHaveBeenCalledTimes(1);
+});
+
 it.each([false, true])(
   'leaves out hidden tool selections and $ skills only in the governed pilot (%s)',
   (governancePilotEnabled) => {

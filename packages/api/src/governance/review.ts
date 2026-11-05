@@ -166,17 +166,43 @@ export async function readReview(
   return { review: readReviewField(parseEventData(first.event)), response: first.response };
 }
 
-/** Finds the last user message that ends with the submitted text; quoted excerpts precede it. */
+/** Finds submitted text, or a document-only turn anchored by its recorded current file block. */
 export function findSubmittedText(
   messages: GovernanceChatMessage[],
   text: string,
+  fileContexts: DlpFileContext[] = [],
 ): SubmittedText | undefined {
-  if (text.length === 0) {
-    return undefined;
-  }
   for (let i = messages.length - 1; i >= 0; i--) {
     const { role, content } = messages[i];
-    if (role === 'user' && content.endsWith(text)) {
+    if (role !== 'user') {
+      continue;
+    }
+    if (!text.trim()) {
+      const prefix = content.slice(0, content.length - text.length);
+      const hasCurrentFiles = fileContexts.some(({ current, text: block, files }) => {
+        const length = Array.from(block).length;
+        return (
+          current &&
+          block.length > 0 &&
+          files.length > 0 &&
+          files.every(
+            ({ fileId, start, end }) =>
+              typeof fileId === 'string' &&
+              fileId.trim().length > 0 &&
+              Number.isInteger(start) &&
+              Number.isInteger(end) &&
+              start >= 0 &&
+              end > start &&
+              end <= length,
+          ) &&
+          (prefix.endsWith(block) || prefix.endsWith(`${block}\n`))
+        );
+      });
+      if (!hasCurrentFiles || !content.endsWith(text)) {
+        return undefined;
+      }
+    }
+    if (content.endsWith(text)) {
       return {
         messageIndex: i,
         offset: Array.from(content).length - Array.from(text).length,

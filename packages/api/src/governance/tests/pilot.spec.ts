@@ -45,6 +45,36 @@ function app() {
 }
 
 describe('pilot HTTP boundary', () => {
+  it.each(['', '   '])('allows documents without typed text: %j', async (text) => {
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+    await expect(
+      request(app())
+        .post(chatPath)
+        .send({ ...plain, text, files: [{ file_id: 'uploaded' }] }),
+    ).resolves.toMatchObject({ status: 204 });
+  });
+
+  it.each([undefined, [], [null], [{}], [{ file_id: '' }], [{ file_id: '   ' }]])(
+    'rejects a blank turn without valid uploaded file references: %j',
+    async (files) => {
+      process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
+      await expect(
+        request(app())
+          .post(chatPath)
+          .send({ ...plain, text: '', files }),
+      ).resolves.toMatchObject({ status: 403 });
+    },
+  );
+
+  it('rejects a document-only turn when attachments are disabled', async () => {
+    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'false';
+    await expect(
+      request(app())
+        .post(chatPath)
+        .send({ ...plain, text: '', files: [{ file_id: 'uploaded' }] }),
+    ).resolves.toMatchObject({ status: 403 });
+  });
+
   it.each([
     {},
     { agent_id: Constants.EPHEMERAL_AGENT_ID },

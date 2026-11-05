@@ -21,7 +21,11 @@ import {
   toModelBlockReview,
   findingsInSubmittedText,
 } from './review';
-import { isGovernancePilotEnabled } from './mode';
+import {
+  isGovernancePilotEnabled,
+  hasGovernanceFileReferences,
+  isGovernanceAttachmentsEnabled,
+} from './mode';
 import { getGovernanceMasking } from './mask';
 import { isEnabled } from '~/utils/common';
 
@@ -155,11 +159,12 @@ export function hasSelectedTools(ephemeralAgent?: TEphemeralAgent | null): boole
   );
 }
 
-/** True for a plain-text message, including follow-ups using an ephemeral agent ID. */
+/** True for a text or enabled document submission, including ephemeral-agent follow-ups. */
 export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
+  const hasFiles = hasGovernanceFileReferences(body?.files);
   return (
     typeof body?.text === 'string' &&
-    body.text.trim().length > 0 &&
+    (body.text.trim().length > 0 || hasFiles) &&
     body.editedContent == null &&
     body.isContinued !== true &&
     body.isRegenerate !== true &&
@@ -167,7 +172,7 @@ export function isPlainTextSubmission(body: GovernanceSubmissionBody): boolean {
     (body.agent_id == null ||
       (typeof body.agent_id === 'string' && isEphemeralAgentId(body.agent_id))) &&
     body.assistant_id == null &&
-    (body.files == null || (Array.isArray(body.files) && body.files.length === 0)) &&
+    (body.files == null || (Array.isArray(body.files) && body.files.length === 0) || hasFiles) &&
     (body.tools == null || (Array.isArray(body.tools) && body.tools.length === 0)) &&
     !hasSelectedTools(body.ephemeralAgent)
   );
@@ -373,7 +378,8 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   if (!decision) {
     return rejectCompletion('dlp_malformed_response');
   }
-  const submitted = findSubmittedText(params.request.messages, params.text);
+  const fileContexts = params.fileContexts();
+  const submitted = findSubmittedText(params.request.messages, params.text, fileContexts);
   if (!submitted) {
     return rejectCompletion('dlp_unsupported_request');
   }
@@ -383,7 +389,7 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     params.request.messages,
     review.findings ?? [],
     submitted,
-    params.fileContexts(),
+    fileContexts,
   );
   const masking = getGovernanceMasking(params.text, findings);
   if (decision === 'BLOCK') {
@@ -475,6 +481,13 @@ async function sendForApproval(params: ApprovalParams): Promise<Response> {
   const { input, request, reviewId } = params;
   if (reviewId !== undefined) {
     return sendApproved(params, reviewId);
+  }
+  if (
+    !params.text.trim() &&
+    (!isGovernanceAttachmentsEnabled() ||
+      !findSubmittedText(request.messages, params.text, params.fileContexts()))
+  ) {
+    return rejectCompletion('dlp_unsupported_request');
   }
 
   const stage1 = await params.fetch(input, withApproval(params, request.messages));

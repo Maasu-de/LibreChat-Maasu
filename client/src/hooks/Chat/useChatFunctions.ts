@@ -302,8 +302,9 @@ export default function useChatFunctions({
     setShowStopButton(false);
 
     text = text.trim();
-    if (!!isSubmitting || text === '') {
-      return;
+    const hasFiles = overrideFiles != null ? overrideFiles.length > 0 : (files?.size ?? 0) > 0;
+    if (!!isSubmitting || (text === '' && !hasFiles)) {
+      return false;
     }
 
     const conversation = cloneDeep(immutableConversation);
@@ -781,6 +782,7 @@ export default function useChatFunctions({
           /** Carry the original user message's quoted excerpts forward so the
            *  regenerated response is sent the same referenced context. */
           overrideQuotes: parentMessage.quotes,
+          overrideFiles: parentMessage.files,
         },
       );
     } else {

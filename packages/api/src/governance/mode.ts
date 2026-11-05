@@ -14,3 +14,20 @@ export function isGovernancePilotEnabled(): boolean {
 export function isGovernanceAttachmentsEnabled(): boolean {
   return isGovernancePilotEnabled() && isEnabled(process.env.GOVERNANCE_ATTACHMENTS_ENABLED);
 }
+
+/** Uploaded file references whose content can join a governed text submission. */
+export function hasGovernanceFileReferences(files: unknown): boolean {
+  return (
+    isGovernanceAttachmentsEnabled() &&
+    Array.isArray(files) &&
+    files.length > 0 &&
+    files.every(
+      (file) =>
+        file != null &&
+        typeof file === 'object' &&
+        !Array.isArray(file) &&
+        typeof file.file_id === 'string' &&
+        file.file_id.trim().length > 0,
+    )
+  );
+}

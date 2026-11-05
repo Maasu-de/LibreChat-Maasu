@@ -1,4 +1,4 @@
-import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
+import { useId, useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
@@ -10,7 +10,7 @@ import type {
   GovernanceMaskedRange,
   GovernanceFileFinding,
 } from 'librechat-data-provider';
-import type { ReactNode, KeyboardEvent, SyntheticEvent } from 'react';
+import type { KeyboardEvent, SyntheticEvent } from 'react';
 import type { CategorizedFinding } from '~/components/Chat/Messages/Content/MaskedText';
 import type { TranslationKeys } from '~/hooks';
 import {
@@ -37,8 +37,8 @@ type FindingGroup = Pick<
 type FileFindings = { id: string; filename: string; type?: string; groups: FindingGroup[] };
 type ActionStyle = { chip: string; highlight: string };
 
-/** How many matched values the popup of a finding badge lists; the rest are only counted. */
-const VISIBLE_TERMS = 50;
+/** How many distinct matched values a finding badge lists before expanding. */
+const VISIBLE_TERMS = 10;
 /** Grace period so moving the pointer from a badge to its popup doesn't close it. */
 const CLOSE_DELAY_MS = 120;
 const SEVERITY: GovernanceDecision[] = ['ALLOW', 'WARN', 'MASK', 'BLOCK'];
@@ -167,20 +167,24 @@ export function groupFileFindings(fileFindings: GovernanceFileFinding[] = []): F
 
 /**
  * A finding badge whose popup shows what was found. Hovering opens the popup until the pointer
- * leaves; a click, tap or Enter keeps it open until Escape or a click outside. The popup stays
- * inside the dialog and never takes focus: the dialog's Radix copy has its own layer and focus
- * stacks, and it ignores Escape only while an expanded trigger has focus.
+ * leaves; a click, tap, focus or expansion keeps it open until Escape or a click outside.
+ * Hovering leaves focus in place; keyboard users can tab to the expansion button.
  */
 function FindingBadge({
   label,
   className,
-  children,
+  terms,
 }: {
   label: string;
   className: string;
-  children: ReactNode;
+  terms: string[];
 }) {
+  const localize = useLocalize();
+  const listId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   /** The popup was opened by hovering, so it closes when the pointer leaves it. */
   const [byHover, setByHover] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -193,6 +197,49 @@ function FindingBadge({
   }, []);
   useEffect(() => cancelClose, [cancelClose]);
 
+  const close = useCallback(
+    (restoreFocus = false) => {
+      cancelClose();
+      setOpen(false);
+      setExpanded(false);
+      setByHover(false);
+      if (restoreFocus) {
+        triggerRef.current?.focus();
+      }
+    },
+    [cancelClose],
+  );
+
+  /** The surrounding dialog and popover use separate Radix Escape listeners. */
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('[data-dlp-finding]') &&
+        !triggerRef.current?.contains(target) &&
+        !contentRef.current?.contains(target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    };
+    window.addEventListener('keydown', closeOnEscape, true);
+    return () => window.removeEventListener('keydown', closeOnEscape, true);
+  }, [open, close]);
+
+  const pin = () => {
+    cancelClose();
+    setByHover(false);
+  };
   const show = () => {
     cancelClose();
     if (!open) {
@@ -203,7 +250,7 @@ function FindingBadge({
   const scheduleClose = () => {
     cancelClose();
     if (open && byHover) {
-      closeTimer.current = setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
+      closeTimer.current = setTimeout(() => close(), CLOSE_DELAY_MS);
     }
   };
   const keepFocus = (event: Event) => event.preventDefault();
@@ -212,12 +259,17 @@ function FindingBadge({
     <Popover.Root
       open={open}
       onOpenChange={(next) => {
-        cancelClose();
-        setOpen(next);
+        if (next) {
+          setOpen(true);
+        } else {
+          close();
+        }
       }}
     >
       <Popover.Trigger asChild>
         <button
+          ref={triggerRef}
+          data-dlp-finding
           type="button"
           className={cn(
             BADGE,
@@ -228,9 +280,12 @@ function FindingBadge({
           onMouseLeave={scheduleClose}
           onClick={(event) => {
             event.preventDefault();
-            cancelClose();
-            setByHover(false);
-            setOpen(byHover || !open);
+            if (byHover || !open) {
+              pin();
+              setOpen(true);
+            } else {
+              close();
+            }
           }}
         >
           {label}
@@ -241,6 +296,8 @@ function FindingBadge({
         </button>
       </Popover.Trigger>
       <Popover.Content
+        ref={contentRef}
+        data-dlp-finding
         side="top"
         align="start"
         sideOffset={6}
@@ -248,12 +305,41 @@ function FindingBadge({
         aria-label={label}
         onOpenAutoFocus={keepFocus}
         onCloseAutoFocus={keepFocus}
-        onEscapeKeyDown={() => setOpen(false)}
+        onEscapeKeyDown={(event) => {
+          event.preventDefault();
+          close(true);
+        }}
+        onFocusCapture={pin}
+        onPointerDown={pin}
         onMouseEnter={cancelClose}
         onMouseLeave={scheduleClose}
         className="z-10 max-h-60 w-max max-w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border-light bg-surface-secondary p-2 text-sm text-text-primary shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
       >
-        {children}
+        <ul id={listId} className="flex flex-col gap-0.5">
+          {(expanded ? terms : terms.slice(0, VISIBLE_TERMS)).map((term) => (
+            <li key={term} className="break-words px-1">
+              {term}
+            </li>
+          ))}
+        </ul>
+        {terms.length > VISIBLE_TERMS && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={listId}
+            className="mt-1 rounded px-1 py-1 text-left text-xs font-medium text-text-secondary underline underline-offset-2 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy"
+            onClick={() => {
+              pin();
+              setExpanded((current) => !current);
+            }}
+          >
+            {expanded
+              ? localize('com_ui_dlp_show_fewer_terms')
+              : localize('com_ui_dlp_show_all_terms', {
+                  0: String(terms.length - VISIBLE_TERMS),
+                })}
+          </button>
+        )}
       </Popover.Content>
     </Popover.Root>
   );
@@ -392,22 +478,8 @@ export default function DlpInterventionDialog({
         </span>
       );
     }
-    const hidden = listed.length - VISIBLE_TERMS;
     return (
-      <FindingBadge key={id} label={caption} className={ACTION_STYLE[action].chip}>
-        <ul className="flex flex-col gap-0.5">
-          {listed.slice(0, VISIBLE_TERMS).map((term) => (
-            <li key={term} className="break-words px-1">
-              {term}
-            </li>
-          ))}
-          {hidden > 0 && (
-            <li className="px-1 text-xs text-text-secondary">
-              {localize('com_ui_dlp_more_terms', { 0: String(hidden) })}
-            </li>
-          )}
-        </ul>
-      </FindingBadge>
+      <FindingBadge key={id} label={caption} className={ACTION_STYLE[action].chip} terms={listed} />
     );
   };
 
@@ -504,15 +576,16 @@ export default function DlpInterventionDialog({
               </section>
             )}
 
-            {(!modelNotAllowed || result.findings.length > 0) && (
-              <section
-                aria-label={localize(
-                  decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
-                )}
-              >
-                <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
-              </section>
-            )}
+            {(files.length === 0 || originalText.trim().length > 0) &&
+              (!modelNotAllowed || result.findings.length > 0) && (
+                <section
+                  aria-label={localize(
+                    decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
+                  )}
+                >
+                  <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
+                </section>
+              )}
           </div>
         }
         buttons={

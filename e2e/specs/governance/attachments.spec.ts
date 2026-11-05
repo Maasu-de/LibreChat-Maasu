@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { readFileSync } from 'fs';
+import path from 'path';
 import type { Page } from '@playwright/test';
-import { getAccessToken, messagesView, sendMessage } from '../mock/helpers';
+import { getAccessToken, isAgentsStream, messagesView, sendMessage } from '../mock/helpers';
 import { newGovernedChat } from './helpers';
 
 /**
@@ -44,6 +46,16 @@ async function attach(page: Page, file: UploadFile) {
   await chooseUploadFile(page, file);
   expect((await uploaded).status()).toBe(200);
   await expect(composerFile(page, file.name)).toBeVisible();
+}
+
+async function sendWithoutText(page: Page) {
+  await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
+  await expect(page.getByTestId('send-button')).toBeEnabled();
+  const [response] = await Promise.all([
+    page.waitForResponse(isAgentsStream),
+    page.getByTestId('send-button').click(),
+  ]);
+  expect(response.request().postDataJSON()).toMatchObject({ text: '' });
 }
 
 async function listFileNames(page: Page): Promise<string[]> {
@@ -200,6 +212,126 @@ test.describe('governed text attachments', () => {
     expect(result.status).toBe(400);
     expect(JSON.parse(result.body)).toEqual({ message: 'Unsupported file type: image/png' });
     expect(await listFileNames(page)).not.toContain('photo.png');
+  });
+});
+
+test.describe('governed documents without a typed message', () => {
+  test.beforeEach(async ({ page }) => {
+    await newGovernedChat(page);
+  });
+
+  test('allow: sends a clean document alone and keeps an empty composer disabled afterward', async ({
+    page,
+  }) => {
+    await expect(page.getByTestId('send-button')).toBeDisabled();
+    await attach(page, textFile('agenda-only.txt', 'Agenda: budget review and hiring plan.'));
+
+    await sendWithoutText(page);
+
+    await expect(reply(page, 'attachment=yes iban=none email=no history-iban=none')).toBeVisible();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await expect(page.getByTestId('send-button')).toBeDisabled();
+  });
+
+  test('warn: cancellation restores the document and approval sends it without adding text', async ({
+    page,
+  }) => {
+    await attach(page, textFile('contacts-only.csv', 'Max,max@example.com', 'text/csv'));
+    await sendWithoutText(page);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Sensitive information detected')).toBeVisible();
+    await expect(dialog.getByRole('region', { name: /prompt/i })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(composerFile(page, 'contacts-only.csv')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
+
+    await sendWithoutText(page);
+    await dialog.getByRole('button', { name: 'Continue anyway' }).click();
+
+    await expect(reply(page, 'attachment=yes iban=none email=yes history-iban=none')).toBeVisible();
+    await expect(dialog).not.toBeVisible();
+  });
+
+  test('mask: reviews a PDF alone and reuses its governed content in a later turn', async ({
+    page,
+  }) => {
+    await attach(page, {
+      name: 'invoice-only.pdf',
+      mimeType: 'application/pdf',
+      buffer: readFileSync(path.resolve(__dirname, '../../fixtures/governance/invoice.pdf')),
+    });
+    await sendWithoutText(page);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Sensitive information will be masked')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'invoice-only.pdf' })).toBeVisible();
+    await expect(dialog.getByRole('region', { name: /prompt/i })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Send masked' }).click();
+    await expect(
+      reply(page, 'attachment=yes iban=masked email=no history-iban=none'),
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(
+      reply(page, 'attachment=yes iban=masked email=no history-iban=none'),
+    ).toBeVisible();
+    await sendMessage(page, 'What is the total?');
+    await expect(reply(page, 'attachment=no iban=none email=no history-iban=masked')).toBeVisible();
+  });
+
+  test('block: removes only the blocked document and restores the clean one without text', async ({
+    page,
+  }) => {
+    await attach(page, textFile('blocked-only.txt', 'PROJECT-NIGHTSHADE launches in May.'));
+    await attach(page, textFile('clean-only.txt', 'Press kit is ready.'));
+    await sendWithoutText(page);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Sensitive prompt blocked')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Send masked|Continue anyway/ })).toHaveCount(
+      0,
+    );
+    await dialog.getByRole('button', { name: 'Close' }).click();
+
+    await expect(composerFile(page, 'clean-only.txt')).toBeVisible();
+    await expect(composerFile(page, 'blocked-only.txt')).not.toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
+    await expect(page.getByTestId('send-button')).toBeEnabled();
+    await expect.poll(() => listFileNames(page)).not.toContain('blocked-only.txt');
+    await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
+  });
+
+  test('finding values expand and collapse without approving or closing the review', async ({
+    page,
+  }) => {
+    const emails = Array.from({ length: 55 }, (_, i) => `qa.user${i + 1}@example.com`);
+    await attach(
+      page,
+      textFile('many-values.txt', [...emails, emails[0], emails[0].toUpperCase()].join('\n')),
+    );
+    await sendWithoutText(page);
+
+    const dialog = page.getByRole('dialog', { name: 'Sensitive information detected' });
+    const badge = dialog.getByRole('button', { name: 'Email address · Warn' });
+    await badge.click();
+    const popup = page.getByRole('dialog', { name: 'Email address · Warn' });
+    await expect(popup.getByText(emails[9], { exact: true })).toBeVisible();
+    await expect(popup.getByText(emails[10], { exact: true })).toHaveCount(0);
+    const expand = popup.getByRole('button', { name: /45 more/ });
+    await expand.focus();
+    await page.keyboard.press('Enter');
+    await expect(popup.getByText(emails[54], { exact: true })).toBeAttached();
+    const collapse = popup.getByRole('button', { name: 'Show fewer' });
+    await collapse.focus();
+    await page.keyboard.press('Space');
+    await expect(popup.getByText(emails[10], { exact: true })).toHaveCount(0);
+    await expect(popup.getByRole('button', { name: /45 more/ })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(popup).not.toBeVisible();
+    await expect(badge).toBeFocused();
+    await expect(dialog).toBeVisible();
+    await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
   });
 });
 

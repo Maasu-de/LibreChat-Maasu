@@ -331,8 +331,11 @@ describe('DlpInterventionDialog', () => {
     expect(screen.getByText('com_ui_dlp_send_masked')).toBeInTheDocument();
   });
 
-  it('shows the values found in a file only in the popup of their badge', () => {
-    const emails = Array.from({ length: 53 }, (_, i) => `user${i}@example.com`);
+  it('shows ten distinct values and expands all the remaining values without submitting', async () => {
+    const user = userEvent.setup();
+    const onCancel = jest.fn();
+    const onConfirm = jest.fn();
+    const emails = Array.from({ length: 55 }, (_, i) => `user${i}@example.com`);
     render(
       <DlpInterventionDialog
         result={{
@@ -349,8 +352,8 @@ describe('DlpInterventionDialog', () => {
           ],
         }}
         originalText="Who is on this list?"
-        onCancel={jest.fn()}
-        onConfirm={jest.fn()}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
       />,
     );
 
@@ -362,9 +365,119 @@ describe('DlpInterventionDialog', () => {
     const popup = screen.getByRole('dialog', { name: EMAIL_WARN });
     expect(badge).toHaveAttribute('aria-expanded', 'true');
     expect(within(popup).getByText('user0@example.com')).toBeInTheDocument();
-    expect(within(popup).getByText('user49@example.com')).toBeInTheDocument();
-    expect(within(popup).queryByText('user50@example.com')).not.toBeInTheDocument();
-    expect(within(popup).getByText('com_ui_dlp_more_terms 3')).toBeInTheDocument();
+    expect(within(popup).getAllByRole('listitem')).toHaveLength(10);
+    expect(within(popup).getByText('user9@example.com')).toBeInTheDocument();
+    expect(within(popup).queryByText('user10@example.com')).not.toBeInTheDocument();
+    const toggle = within(popup).getByRole('button', { name: 'com_ui_dlp_show_all_terms 45' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', within(popup).getByRole('list').id);
+
+    await user.click(toggle);
+    expect(within(popup).getAllByRole('listitem')).toHaveLength(55);
+    expect(within(popup).getByText('user54@example.com')).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveTextContent('com_ui_dlp_show_fewer_terms');
+    expect(toggle).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+    expect(within(popup).getAllByRole('listitem')).toHaveLength(10);
+    expect(toggle).toHaveFocus();
+    await user.keyboard(' ');
+    expect(within(popup).getAllByRole('listitem')).toHaveLength(55);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: EMAIL_WARN })).not.toBeInTheDocument();
+    expect(badge).toHaveFocus();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await user.keyboard('{Enter}');
+    const reopened = screen.getByRole('dialog', { name: EMAIL_WARN });
+    const collapsed = within(reopened).getByRole('button', {
+      name: 'com_ui_dlp_show_all_terms 45',
+    });
+    expect(within(reopened).getAllByRole('listitem')).toHaveLength(10);
+    await user.tab();
+    expect(collapsed).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: EMAIL_WARN })).not.toBeInTheDocument();
+    expect(badge).toHaveFocus();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('keeps expansion separate for each file finding badge', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [],
+          fileFindings: [
+            {
+              filename: 'team.csv',
+              category: 'EMAIL_ADDRESS',
+              action: 'WARN',
+              count: 55,
+              terms: Array.from({ length: 55 }, (_, i) => `user${i}@example.com`),
+            },
+            {
+              filename: 'projects.txt',
+              category: 'PROJECT_NAME',
+              action: 'MASK',
+              count: 12,
+              terms: Array.from({ length: 12 }, (_, i) => `Project ${i}`),
+            },
+          ],
+        }}
+        originalText="Summarize"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: EMAIL_WARN }));
+    const first = screen.getByRole('dialog', { name: EMAIL_WARN });
+    fireEvent.click(within(first).getByRole('button', { name: 'com_ui_dlp_show_all_terms 45' }));
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: PROJECT_MASK }));
+    const second = screen.getByRole('dialog', { name: PROJECT_MASK });
+    expect(within(first).getAllByRole('listitem')).toHaveLength(55);
+    expect(within(second).getAllByRole('listitem')).toHaveLength(10);
+    expect(
+      within(second).getByRole('button', { name: 'com_ui_dlp_show_all_terms 2' }),
+    ).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it.each([
+    ['WARN', ''],
+    ['MASK', '   '],
+    ['BLOCK', ''],
+  ] as const)('omits the empty prompt box for a file-only %s review', (decision, originalText) => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision,
+          findings: [],
+          fileFindings: [
+            { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: decision, count: 1 },
+          ],
+        }}
+        originalText={originalText}
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_file_findings' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'com_ui_dlp_original_prompt' })).toBeNull();
+    expect(
+      screen.getByRole('button', {
+        name: {
+          WARN: 'com_ui_dlp_continue',
+          MASK: 'com_ui_dlp_send_masked',
+          BLOCK: 'com_ui_close',
+        }[decision],
+      }),
+    ).toBeVisible();
   });
 
   describe('keyboard', () => {
@@ -444,7 +557,7 @@ describe('DlpInterventionDialog', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
 
-    const renderFileFinding = (onCancel = jest.fn()) =>
+    const renderFileFinding = (onCancel = jest.fn(), terms = ['max@example.com']) =>
       render(
         <DlpInterventionDialog
           result={{
@@ -455,8 +568,8 @@ describe('DlpInterventionDialog', () => {
                 filename: 'notes.txt',
                 category: 'EMAIL_ADDRESS',
                 action: 'WARN',
-                count: 1,
-                terms: ['max@example.com'],
+                count: terms.length,
+                terms,
               },
             ],
           }}
@@ -521,6 +634,49 @@ describe('DlpInterventionDialog', () => {
       expect(screen.getByRole('dialog', { name: 'com_ui_dlp_warn_title' })).toBeInTheDocument();
       expect(onCancel).not.toHaveBeenCalled();
       expect(badge).toHaveFocus();
+    });
+
+    it('keeps the popup open when its expansion button gains focus or is clicked', () => {
+      const onCancel = jest.fn();
+      renderFileFinding(
+        onCancel,
+        Array.from({ length: 12 }, (_, i) => `user${i}@example.com`),
+      );
+      const badge = screen.getByRole('button', { name: EMAIL_WARN });
+      fireEvent.mouseEnter(badge);
+      const toggle = within(popup() as HTMLElement).getByRole('button', {
+        name: 'com_ui_dlp_show_all_terms 2',
+      });
+
+      fireEvent.mouseLeave(badge);
+      act(() => toggle.focus());
+      wait(500);
+      expect(popup()).toBeInTheDocument();
+
+      fireEvent.click(toggle);
+      fireEvent.mouseLeave(popup() as HTMLElement);
+      wait(500);
+      expect(within(popup() as HTMLElement).getAllByRole('listitem')).toHaveLength(12);
+      expect(toggle).toHaveFocus();
+
+      fireEvent.keyDown(toggle, { key: 'Escape' });
+      expect(popup()).not.toBeInTheDocument();
+      expect(badge).toHaveFocus();
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it('closes a hovered popup on Escape before the surrounding review', () => {
+      const onCancel = jest.fn();
+      renderFileFinding(onCancel);
+      const badge = screen.getByRole('button', { name: EMAIL_WARN });
+      const confirm = screen.getByRole('button', { name: 'com_ui_dlp_continue' });
+      fireEvent.mouseEnter(badge);
+      expect(confirm).toHaveFocus();
+
+      fireEvent.keyDown(confirm, { key: 'Escape' });
+      expect(popup()).not.toBeInTheDocument();
+      expect(badge).toHaveFocus();
+      expect(onCancel).not.toHaveBeenCalled();
     });
   });
 
