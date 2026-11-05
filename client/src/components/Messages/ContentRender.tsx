@@ -256,7 +256,7 @@ const ContentRender = memo(function ContentRender({
                 copyToClipboard={copyToClipboard}
                 handleContinue={handleContinue}
                 latestMessageId={latestMessageId}
-                handleFeedback={hasParallelContent ? undefined : handleFeedback}
+                handleFeedback={hasParallelContent && !msg.feedback ? undefined : handleFeedback}
                 isLast={isLast}
               />
             </SubRow>
