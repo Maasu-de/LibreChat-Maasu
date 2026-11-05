@@ -157,10 +157,10 @@ it.each(['TRUE', ' True '])('requires audit configuration with pilot mode %j', a
 });
 
 it.each([
-  ['https://gateway.example/api/v1/dlp', 'https://gateway.example/api/v1/internal/group-audit'],
-  ['https://gateway.example/api/v1/dlp/', 'https://gateway.example/api/v1/internal/group-audit'],
+  ['https://gateway.example/v1', 'https://gateway.example/api/v1/internal/group-audit'],
+  ['https://gateway.example/v1/', 'https://gateway.example/api/v1/internal/group-audit'],
   [
-    'https://gateway.example/prefix/api/v1/dlp/',
+    'https://gateway.example/prefix/v1/',
     'https://gateway.example/prefix/api/v1/internal/group-audit',
   ],
 ])('derives and delivers audit events from gateway base %s', async (base, endpoint) => {
@@ -178,7 +178,7 @@ it.each([
 });
 
 it('prefers an explicit audit endpoint over the gateway base URL', async () => {
-  process.env.GOVERNANCE_API_BASE_URL = 'https://gateway.example/api/v1/dlp';
+  process.env.GOVERNANCE_API_BASE_URL = 'https://gateway.example/v1';
   process.env.GOVERNANCE_AUDIT_URL = 'https://audit.example/custom-group-audit';
   const sink = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
 
@@ -195,10 +195,10 @@ it('prefers an explicit audit endpoint over the gateway base URL', async () => {
 
 it.each([
   'not-a-url',
-  'file:///api/v1/dlp',
-  'https://user:password@gateway.example/api/v1/dlp',
-  'https://gateway.example/api/v1/dlp?key=secret',
-  'https://gateway.example/api/v1/dlp#fragment',
+  'file:///v1',
+  'https://user:password@gateway.example/v1',
+  'https://gateway.example/v1?key=secret',
+  'https://gateway.example/v1#fragment',
   'https://gateway.example/unrelated',
 ])('rejects an invalid audit base %s before mutating groups', async (base) => {
   delete process.env.GOVERNANCE_AUDIT_URL;
