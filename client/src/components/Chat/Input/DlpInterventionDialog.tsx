@@ -183,6 +183,7 @@ function FindingBadge({
   const listId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const container = triggerRef.current?.closest<HTMLDivElement>('[role="dialog"]') ?? null;
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   /** The popup was opened by hovering, so it closes when the pointer leaves it. */
@@ -254,6 +255,21 @@ function FindingBadge({
     }
   };
   const keepFocus = (event: Event) => event.preventDefault();
+  const leavePopup = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'Tab' || !container) {
+      return;
+    }
+    const controls = Array.from(
+      container.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex="0"]'),
+    ).filter((element) => !contentRef.current?.contains(element));
+    const triggerIndex = controls.findIndex((element) => element === triggerRef.current);
+    const next = event.shiftKey ? triggerRef.current : (controls[triggerIndex + 1] ?? controls[0]);
+    if (next) {
+      event.preventDefault();
+      event.stopPropagation();
+      next.focus();
+    }
+  };
 
   return (
     <Popover.Root
@@ -278,6 +294,16 @@ function FindingBadge({
           )}
           onMouseEnter={show}
           onMouseLeave={scheduleClose}
+          onKeyDown={(event) => {
+            if (open && event.key === 'Tab' && !event.shiftKey) {
+              const toggle = contentRef.current?.querySelector('button');
+              if (toggle) {
+                event.preventDefault();
+                event.stopPropagation();
+                toggle.focus();
+              }
+            }
+          }}
           onClick={(event) => {
             event.preventDefault();
             if (byHover || !open) {
@@ -295,52 +321,58 @@ function FindingBadge({
           />
         </button>
       </Popover.Trigger>
-      <Popover.Content
-        ref={contentRef}
-        data-dlp-finding
-        side="top"
-        align="start"
-        sideOffset={6}
-        collisionPadding={16}
-        aria-label={label}
-        onOpenAutoFocus={keepFocus}
-        onCloseAutoFocus={keepFocus}
-        onEscapeKeyDown={(event) => {
-          event.preventDefault();
-          close(true);
-        }}
-        onFocusCapture={pin}
-        onPointerDown={pin}
-        onMouseEnter={cancelClose}
-        onMouseLeave={scheduleClose}
-        className="z-10 max-h-60 w-max max-w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border-light bg-surface-secondary p-2 text-sm text-text-primary shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-      >
-        <ul id={listId} className="flex flex-col gap-0.5">
-          {(expanded ? terms : terms.slice(0, VISIBLE_TERMS)).map((term) => (
-            <li key={term} className="break-words px-1">
-              {term}
-            </li>
-          ))}
-        </ul>
-        {terms.length > VISIBLE_TERMS && (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-controls={listId}
-            className="mt-1 rounded px-1 py-1 text-left text-xs font-medium text-text-secondary underline underline-offset-2 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy"
-            onClick={() => {
-              pin();
-              setExpanded((current) => !current);
-            }}
+      <Popover.Portal container={container}>
+        <Popover.Content
+          ref={contentRef}
+          data-dlp-finding
+          side="top"
+          align="start"
+          sideOffset={6}
+          collisionPadding={16}
+          aria-label={label}
+          onOpenAutoFocus={keepFocus}
+          onCloseAutoFocus={keepFocus}
+          onEscapeKeyDown={(event) => {
+            event.preventDefault();
+            close(true);
+          }}
+          onFocusCapture={pin}
+          onPointerDown={pin}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+          className="z-10 flex max-h-[min(20rem,var(--radix-popover-content-available-height,20rem))] w-max max-w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border-light bg-surface-secondary p-2 text-sm text-text-primary shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+        >
+          <ul
+            id={listId}
+            className="flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain"
           >
-            {expanded
-              ? localize('com_ui_dlp_show_fewer_terms')
-              : localize('com_ui_dlp_show_all_terms', {
-                  0: String(terms.length - VISIBLE_TERMS),
-                })}
-          </button>
-        )}
-      </Popover.Content>
+            {(expanded ? terms : terms.slice(0, VISIBLE_TERMS)).map((term) => (
+              <li key={term} className="break-words px-1">
+                {term}
+              </li>
+            ))}
+          </ul>
+          {terms.length > VISIBLE_TERMS && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={listId}
+              className="mt-1 shrink-0 rounded px-1 py-1 text-left text-xs font-medium text-text-secondary underline underline-offset-2 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy"
+              onKeyDown={leavePopup}
+              onClick={() => {
+                pin();
+                setExpanded((current) => !current);
+              }}
+            >
+              {expanded
+                ? localize('com_ui_dlp_show_fewer_terms')
+                : localize('com_ui_dlp_show_all_terms', {
+                    0: String(terms.length - VISIBLE_TERMS),
+                  })}
+            </button>
+          )}
+        </Popover.Content>
+      </Popover.Portal>
     </Popover.Root>
   );
 }
@@ -528,7 +560,8 @@ export default function DlpInterventionDialog({
       <OGDialogTemplate
         title={localize(copy.title)}
         description={localize(copy.description, modelNotAllowed && { 0: modelNotAllowed.model })}
-        className="max-w-[760px]"
+        className="max-w-[760px] grid-rows-[auto_minmax(0,1fr)_auto] overflow-visible"
+        mainClassName="flex min-h-0 overflow-hidden"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
         showCancelButton={false}
         onOpenAutoFocus={(event) => {
@@ -537,7 +570,10 @@ export default function DlpInterventionDialog({
         }}
         onKeyDown={sendOnEnter}
         main={
-          <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto px-1" role="document">
+          <div
+            className="flex max-h-[65vh] min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-1"
+            role="document"
+          >
             {sendFailed && (
               <p
                 role="alert"

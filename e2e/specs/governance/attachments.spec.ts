@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'fs';
 import path from 'path';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { getAccessToken, isAgentsStream, messagesView, sendMessage } from '../mock/helpers';
 import { newGovernedChat } from './helpers';
 
@@ -56,6 +56,29 @@ async function sendWithoutText(page: Page) {
     page.getByTestId('send-button').click(),
   ]);
   expect(response.request().postDataJSON()).toMatchObject({ text: '' });
+}
+
+async function expectUnclippedPopup(popup: Locator) {
+  await expect
+    .poll(() =>
+      popup.evaluate((element) => {
+        const { left, top, right, bottom } = element.getBoundingClientRect();
+        const points = [
+          [left + 8, top + 8],
+          [right - 8, top + 8],
+          [left + 8, bottom - 8],
+          [right - 8, bottom - 8],
+        ];
+        return (
+          left >= 0 &&
+          top >= 0 &&
+          right <= window.innerWidth &&
+          bottom <= window.innerHeight &&
+          points.every(([x, y]) => element.contains(document.elementFromPoint(x, y)))
+        );
+      }),
+    )
+    .toBe(true);
 }
 
 async function listFileNames(page: Page): Promise<string[]> {
@@ -333,6 +356,59 @@ test.describe('governed documents without a typed message', () => {
     await expect(dialog).toBeVisible();
     await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
   });
+
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 390, height: 844 },
+    { width: 900, height: 440 },
+  ]) {
+    test(`finding popup stays visible at ${viewport.width}x${viewport.height}`, async ({
+      page,
+    }) => {
+      const emails = Array.from({ length: 55 }, (_, i) => `qa.layout${i + 1}@example.com`);
+      await attach(page, textFile('popup-layout.txt', emails.join('\n')));
+      if (viewport.height < 500) {
+        await sendMessage(
+          page,
+          Array.from({ length: 50 }, (_, i) => `Review note ${i + 1}: summarize the file.`).join(
+            '\n',
+          ),
+        );
+      } else {
+        await sendWithoutText(page);
+      }
+
+      const dialog = page.getByRole('dialog', { name: 'Sensitive information detected' });
+      await expect(dialog).toBeVisible();
+      await page.setViewportSize(viewport);
+      await expect
+        .poll(() =>
+          dialog.evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+          }),
+        )
+        .toBe(true);
+      const badge = dialog.getByRole('button', { name: 'Email address · Warn' });
+      await badge.click();
+      const popup = page.getByRole('dialog', { name: 'Email address · Warn' });
+      await expectUnclippedPopup(popup);
+      await expect(popup.getByText(emails[0], { exact: true })).toBeInViewport();
+      await expect(popup.getByRole('button', { name: /45 more/ })).toBeInViewport();
+      await page.screenshot({ path: test.info().outputPath('popup-collapsed.png') });
+
+      await popup.getByRole('button', { name: /45 more/ }).click();
+      await expectUnclippedPopup(popup);
+      await popup.getByText(emails[54], { exact: true }).scrollIntoViewIfNeeded();
+      await expect(popup.getByText(emails[54], { exact: true })).toBeInViewport();
+      await expectUnclippedPopup(popup);
+      await expect(popup.getByRole('button', { name: 'Show fewer' })).toBeInViewport();
+      await page.screenshot({ path: test.info().outputPath('popup-expanded.png') });
+      await page.keyboard.press('Escape');
+      await expect(badge).toBeFocused();
+      await expect(dialog).toBeVisible();
+    });
+  }
 });
 
 test.describe('governed prompts', () => {

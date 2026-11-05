@@ -665,6 +665,34 @@ describe('DlpInterventionDialog', () => {
       expect(onCancel).not.toHaveBeenCalled();
     });
 
+    it('keeps a portaled popup inside the modal and preserves keyboard focus order', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      const onCancel = jest.fn();
+      renderFileFinding(
+        onCancel,
+        Array.from({ length: 12 }, (_, i) => `user${i}@example.com`),
+      );
+      const badge = screen.getByRole('button', { name: EMAIL_WARN });
+      badge.focus();
+      fireEvent.click(badge);
+      const content = popup() as HTMLElement;
+      const toggle = within(content).getByRole('button', { name: 'com_ui_dlp_show_all_terms 2' });
+      expect(content.closest('[role="document"]')).toBeNull();
+      expect(screen.getByRole('dialog', { name: 'com_ui_dlp_warn_title' })).toContainElement(
+        content,
+      );
+
+      await user.tab();
+      expect(toggle).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(badge).toHaveFocus();
+      await user.tab();
+      expect(toggle).toHaveFocus();
+      await user.tab();
+      expect(screen.getByRole('button', { name: 'com_ui_cancel' })).toHaveFocus();
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+
     it('closes a hovered popup on Escape before the surrounding review', () => {
       const onCancel = jest.fn();
       renderFileFinding(onCancel);
