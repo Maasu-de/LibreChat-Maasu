@@ -838,11 +838,10 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
     const settle = () => (settled ??= counted ? settleComparison(req) : Promise.resolve());
     let review: GovernanceDlpReview | undefined;
     let restriction: GovernanceModelRestriction | undefined;
-    /** Keeps the turn unless the other model ends it with a review the user can act on. */
+    /** Keeps the turn unless a model's review ends it, which then shows that review instead. */
     const notice = async (message: string) => {
       await waitForComparison(settle(), init?.signal);
-      const shown = req.governanceDlpReview;
-      if (!shown || (shown.decision === 'BLOCK' && !shown.modelRestriction)) {
+      if (!req.governanceDlpReview) {
         markDlpSent(req);
       }
       return comparisonNotice(message);

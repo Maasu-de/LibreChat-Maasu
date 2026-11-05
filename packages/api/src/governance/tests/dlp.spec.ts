@@ -500,8 +500,22 @@ describe('two-model comparison', () => {
     expect(req.governanceDlpReview).toBeUndefined();
   });
 
+  it('ends the turn with the block review when both models are blocked', async () => {
+    const req = comparisonRequest();
+
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, async () => review('BLOCK'))),
+      send(createRequestDlpFetch(req, async () => review('BLOCK'))),
+    ]);
+
+    for (const response of responses) {
+      expect(await responseText(response)).toContain('AI governance policy blocks this message');
+    }
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(req.governanceDlpReview?.decision).toBe('BLOCK');
+  });
+
   it.each<[string, () => Promise<Response>, string]>([
-    ['blocked', async () => review('BLOCK'), 'AI governance policy blocks this message'],
     [
       'failed at the gateway',
       async () => new Response('{"error":{}}', { status: 503 }),
