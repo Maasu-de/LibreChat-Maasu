@@ -57,13 +57,13 @@ describe('markGovernanceDlp', () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['', '   '])('marks enabled document-only text %j for DLP approval', async (text) => {
+  it.each(['', '   '])('does not mark document-only text %j for DLP approval', async (text) => {
     process.env.GOVERNANCE_PILOT_ENABLED = 'true';
     process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
 
     const { req, next } = await run({ text, files: [{ file_id: 'file-1' }] });
 
-    expect(req.governanceDlpEligible).toBe(true);
+    expect(req.governanceDlpEligible).toBe(false);
     expect(req.governanceGroupIds).toEqual(['group-1', 'group-2']);
     expect(next).toHaveBeenCalledTimes(1);
   });

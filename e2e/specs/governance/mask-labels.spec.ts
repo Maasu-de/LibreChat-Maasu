@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { isAgentsStream, messagesView, sendMessage } from '../mock/helpers';
 import { newGovernedChat } from './helpers';
 
-test('custom mask labels survive approval and reload without changing governed content', async ({
+test('custom mask labels are shown in the review without changing governed content', async ({
   page,
 }) => {
   await newGovernedChat(page);
@@ -26,17 +26,6 @@ test('custom mask labels survive approval and reload without changing governed c
   );
   await expect(reply).toBeVisible();
 
-  const expectFriendlyMask = async () => {
-    const bars = messagesView(page).locator('.message-content mark');
-    await expect(bars).toHaveCount(1);
-    await expect(bars.getByText('Codenames', { exact: true })).toBeVisible();
-    await expect(bars).not.toContainText('[REDACTED]');
-    await expect(messagesView(page)).not.toContainText('PROJECT-FRIENDLY-MASK');
-  };
-  await expectFriendlyMask();
-
-  await page.reload();
-
-  await expect(reply).toBeVisible();
-  await expectFriendlyMask();
+  await expect(messagesView(page)).toContainText('Discuss [REDACTED] today');
+  await expect(messagesView(page)).not.toContainText('PROJECT-FRIENDLY-MASK');
 });

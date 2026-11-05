@@ -56,7 +56,6 @@ const endpoint = 'AI Governance Gateway' as EModelEndpoint;
 const model = 'governed-model';
 const email = 'Please email max@example.com today';
 const maskedEmail = 'Please email [EMAIL] today';
-const emailMasks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
 const newConversation: TConversation = {
   conversationId: null,
   title: null,
@@ -89,7 +88,7 @@ const maskReview = (conversationId: string | null): TPendingDlpReview => ({
       },
     ],
     maskedRanges: [{ start: 13, end: 28, finding: 0 }],
-    maskedPreview: [{ location: '/messages/0/content', text: maskedEmail, masks: emailMasks }],
+    maskedPreview: [{ location: '/messages/0/content', text: maskedEmail }],
   },
 });
 
@@ -337,50 +336,15 @@ it.each(['', '   '])('rejects a blank message without files (%j)', (text) => {
   expect(setSubmission).not.toHaveBeenCalled();
 });
 
-it.each([savedConversation, newConversation])(
-  'sends and approves files without adding typed text in conversation $conversationId',
-  (conversation) => {
-    const review = fileReview(conversation.conversationId);
-    review.text = '';
-    review.result.findings = [];
-    review.result.maskedRanges = undefined;
-    review.result.maskedPreview = [{ location: '/messages/0/content', text: '' }];
-    renderChat(conversation, review);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-    expect(setSubmission).toHaveBeenCalledTimes(1);
-    expect(lastSubmission().userMessage.text).toBe('');
-    expect(lastSubmission().userMessage.files).toHaveLength(composerFiles.length);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
-
-    expect(setSubmission).toHaveBeenCalledTimes(2);
-    expect(lastSubmission().userMessage.text).toBe('');
-    expect(lastSubmission().userMessage.files).toEqual(review.files);
-    expect(lastSubmission().dlpReviewId).toBe(review.result.reviewId);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  },
-);
-
-it('restores a cancelled file-only review without inserting text', () => {
-  const review = fileReview(null);
-  review.text = '';
-  review.result.findings = [];
-  review.result.maskedRanges = undefined;
-  review.result.maskedPreview = [{ location: '/messages/0/content', text: '' }];
-  renderChat(newConversation, review);
+it.each(['', '   '])('rejects a blank message with attached files (%j)', (text) => {
+  renderChat(newConversation, fileReview(null));
 
   fireEvent.click(screen.getByRole('button', { name: 'Attach files' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: text } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
-  fireEvent.click(screen.getByRole('button', { name: 'com_ui_cancel' }));
 
-  expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
+  expect(setSubmission).not.toHaveBeenCalled();
   expect(composerFileIds()).toEqual(composerFiles.map((file) => file.file_id));
-  expect(setSubmission).toHaveBeenCalledTimes(1);
 });
 
 it.each([false, true])(
@@ -421,7 +385,6 @@ it.each([savedConversation, newConversation])(
 
     expect(setSubmission).toHaveBeenCalledTimes(1);
     expect(lastSubmission().userMessage.text).toBe(maskedEmail);
-    expect(lastSubmission().userMessage.dlpMasks).toEqual(emailMasks);
     expect(lastSubmission().dlpReviewId).toBe('review-1');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   },

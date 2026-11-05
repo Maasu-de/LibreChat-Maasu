@@ -23,7 +23,7 @@ const termFinding = (start: number, end: number): GovernanceFinding => ({
 });
 
 describe('getGovernanceMasking', () => {
-  it('preserves a custom category label without changing the gateway replacement or ranges', () => {
+  it('uses the gateway replacement and original range for a custom category', () => {
     const finding: GovernanceFinding = {
       location: LOCATION,
       start: 8,
@@ -36,28 +36,15 @@ describe('getGovernanceMasking', () => {
 
     expect(getGovernanceMasking('Discuss Apollo today', [finding])).toEqual({
       text: 'Discuss [REDACTED] today',
-      masks: [
-        {
-          start: 8,
-          end: 18,
-          category: 'CUSTOM_CODENAMES',
-          label: 'Codenames',
-          replacement: '[REDACTED]',
-        },
-      ],
       ranges: [{ start: 8, end: 14, finding: 0 }],
     });
   });
 
-  it('masks by code point like the gateway, with the range of each replacement on both sides', () => {
+  it('masks by code point like the gateway, with the original range of each replacement', () => {
     const text = '🙂 max@example.com and max@example.com';
 
     expect(getGovernanceMasking(text, [emailFinding(22), emailFinding(2)])).toEqual({
       text: '🙂 [EMAIL] and [EMAIL]',
-      masks: [
-        { start: 2, end: 9, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' },
-        { start: 14, end: 21, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' },
-      ],
       ranges: [
         { start: 2, end: 17, finding: 1 },
         { start: 22, end: 37, finding: 0 },
@@ -70,10 +57,6 @@ describe('getGovernanceMasking', () => {
 
     expect(getGovernanceMasking(CROSSING_TERMS, findings)).toEqual({
       text: '[TERM] [TERM]',
-      masks: [
-        { start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' },
-        { start: 7, end: 13, category: 'TENANT_TERM', replacement: '[TERM]' },
-      ],
       ranges: [
         { start: 0, end: 15, finding: 1 },
         { start: 16, end: 22, finding: 0 },
@@ -95,7 +78,6 @@ describe('getGovernanceMasking', () => {
 
     expect(getGovernanceMasking('Project  ', findings)).toEqual({
       text: '[TERM]  ',
-      masks: [{ start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' }],
       ranges: [{ start: 0, end: 7, finding: 0 }],
     });
   });
@@ -105,17 +87,15 @@ describe('getGovernanceMasking', () => {
 
     expect(getGovernanceMasking('max@example.com', [warning])).toEqual({
       text: 'max@example.com',
-      masks: [],
       ranges: [],
     });
   });
 
-  it('gives an empty replacement its range of the original text, but none in the masked text', () => {
+  it('gives an empty replacement its range of the original text', () => {
     const removed = { ...emailFinding(5), replacement: '' };
 
     expect(getGovernanceMasking('Mail max@example.com now', [removed])).toEqual({
       text: 'Mail  now',
-      masks: [],
       ranges: [{ start: 5, end: 20, finding: 0 }],
     });
   });

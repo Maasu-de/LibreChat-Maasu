@@ -510,39 +510,6 @@ describe('DlpInterventionDialog', () => {
     ).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it.each([
-    ['WARN', ''],
-    ['MASK', '   '],
-    ['BLOCK', ''],
-  ] as const)('omits the empty prompt box for a file-only %s review', (decision, originalText) => {
-    render(
-      <DlpInterventionDialog
-        result={{
-          decision,
-          findings: [],
-          fileFindings: [
-            { filename: 'notes.txt', category: 'EMAIL_ADDRESS', action: decision, count: 1 },
-          ],
-        }}
-        originalText={originalText}
-        onCancel={jest.fn()}
-        onConfirm={jest.fn()}
-      />,
-    );
-    expect(screen.getByRole('region', { name: 'com_ui_dlp_file_findings' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'com_ui_dlp_original_prompt' })).toBeNull();
-    expect(
-      screen.getByRole('button', {
-        name: {
-          WARN: 'com_ui_dlp_continue',
-          MASK: 'com_ui_dlp_send_masked',
-          BLOCK: 'com_ui_close',
-        }[decision],
-      }),
-    ).toBeVisible();
-  });
-
   describe('keyboard', () => {
     const renderDecision = (decision: 'MASK' | 'BLOCK') => {
       const onCancel = jest.fn();

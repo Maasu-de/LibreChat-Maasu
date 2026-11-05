@@ -30,7 +30,7 @@ import type { SetterOrUpdater } from 'recoil';
 import type { TAskFunction, ExtendedFile } from '~/common';
 import {
   logger,
-  getApprovedDlpPreview,
+  getApprovedDlpText,
   hasStreamStartFailed,
   settleDlpReviewFiles,
   getRouteChatProjectId,
@@ -296,15 +296,13 @@ export default function useChatFunctions({
       overrideQuotes,
       addedConvo,
       dlpReviewId,
-      dlpMasks,
     } = {},
   ) => {
     setShowStopButton(false);
 
     text = text.trim();
-    const hasFiles = overrideFiles != null ? overrideFiles.length > 0 : (files?.size ?? 0) > 0;
-    if (!!isSubmitting || (text === '' && !hasFiles)) {
-      return false;
+    if (!!isSubmitting || text === '') {
+      return;
     }
 
     const conversation = cloneDeep(immutableConversation);
@@ -501,8 +499,6 @@ export default function useChatFunctions({
        * also merges these into the model-facing user text at request time.
        */
       quotes: quotes.length > 0 ? quotes : undefined,
-      /** The server puts the same masks on the stored message once the gateway sends it. */
-      dlpMasks,
     };
 
     const submissionFiles = overrideFiles ?? targetParentMessage?.files;
@@ -735,8 +731,8 @@ export default function useChatFunctions({
       return false;
     }
     const { result } = pendingDlpReview;
-    const approved = getApprovedDlpPreview(result);
-    if (!approved) {
+    const approvedText = getApprovedDlpText(result);
+    if (approvedText == null) {
       showToast({ message: localize('com_ui_dlp_approval_unavailable'), status: 'error' });
       return false;
     }
@@ -744,10 +740,9 @@ export default function useChatFunctions({
     /** The reviewed submit already drained the `$` queue, so its skills come from the review.
      *  An explicit list also keeps skills queued since then for the next message. */
     ask(
-      { text: approved.text },
+      { text: approvedText },
       {
         dlpReviewId: result.reviewId,
-        dlpMasks: approved.masks,
         overrideManualSkills: pendingDlpReview.manualSkills ?? [],
         overrideFiles: pendingDlpReview.files,
       },
@@ -782,7 +777,6 @@ export default function useChatFunctions({
           /** Carry the original user message's quoted excerpts forward so the
            *  regenerated response is sent the same referenced context. */
           overrideQuotes: parentMessage.quotes,
-          overrideFiles: parentMessage.files,
         },
       );
     } else {

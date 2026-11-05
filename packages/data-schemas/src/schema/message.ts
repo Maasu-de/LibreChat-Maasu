@@ -151,20 +151,6 @@ const messageSchema: Schema<IMessage> = new Schema(
      * count), so they are not duplicated into the stored `text`.
      */
     quotes: { type: [String], default: undefined },
-    /**
-     * Where the Governance Backend replaced findings in a user message it masked, as code-point
-     * ranges of `text`, which is stored as sent. UI metadata only — `MaskedText` shows the
-     * replacements as bars on the user bubble.
-     */
-    dlpMasks: {
-      type: [
-        new Schema(
-          { start: Number, end: Number, category: String, label: String, replacement: String },
-          { _id: false },
-        ),
-      ],
-      default: undefined,
-    },
     /*
     attachments: {
       type: [

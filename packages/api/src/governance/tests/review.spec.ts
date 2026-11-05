@@ -1,9 +1,5 @@
 import { GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
-import type {
-  GovernanceFinding,
-  GovernanceDlpReview,
-  GovernanceMaskedSpan,
-} from 'librechat-data-provider';
+import type { GovernanceFinding, GovernanceDlpReview } from 'librechat-data-provider';
 import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from '../review';
 import type { GovernanceChatMessage } from '../dlp';
 import {
@@ -136,7 +132,6 @@ function setup({
   const onReview = jest.fn<void, [GovernanceDlpReview]>();
   const onSent = jest.fn();
   const onApprovalKept = jest.fn<void, [boolean]>();
-  const onApproved = jest.fn<void, [GovernanceMaskedSpan[] | undefined]>();
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
@@ -146,7 +141,6 @@ function setup({
     onReview,
     onSent,
     onApprovalKept,
-    onApproved,
     reviews,
   });
   const send = (messages: GovernanceChatMessage[]) =>
@@ -156,7 +150,7 @@ function setup({
       body: JSON.stringify({ model: 'governed-model', messages, stream: true, top_p: 0.5 }),
     });
   const sentBody = (call: number) => JSON.parse(String(upstream.mock.calls[call]?.[1]?.body));
-  return { upstream, onReview, onSent, onApprovalKept, onApproved, reviews, send, sentBody };
+  return { upstream, onReview, onSent, onApprovalKept, reviews, send, sentBody };
 }
 
 describe('readReview', () => {
@@ -193,39 +187,8 @@ describe('readReview', () => {
 });
 
 describe('submitted text helpers', () => {
-  it.each(['', '   '])('anchors document-only text %j to the current file block', (text) => {
-    const content = `> 🙂 excerpt\n\n${ATTACHED}\n${text}`;
-    const messages = [
-      { role: 'user', content: `${ATTACHED}\n${text}` },
-      { role: 'assistant', content: 'Earlier answer' },
-      { role: 'user', content },
-    ];
-    expect(findSubmittedText(messages, text, [attachedContext(true)])).toEqual({
-      messageIndex: 2,
-      offset: Array.from(content).length - text.length,
-    });
-  });
-
-  it('does not mistake a historical document for a document-only current turn', () => {
-    const messages = [
-      { role: 'user', content: `${ATTACHED}\n` },
-      { role: 'assistant', content: 'Earlier answer' },
-      { role: 'user', content: '' },
-    ];
-    expect(findSubmittedText(messages, '', [attachedContext(true)])).toBeUndefined();
-    expect(findSubmittedText([messages[0]], '', [attachedContext(false)])).toBeUndefined();
-  });
-
-  it('rejects a document-only anchor without valid file spans', () => {
-    const context = attachedContext(true);
-    const messages = [{ role: 'user', content: `${ATTACHED}\n` }];
-    expect(findSubmittedText(messages, '')).toBeUndefined();
-    expect(findSubmittedText(messages, '', [{ ...context, files: [] }])).toBeUndefined();
-    expect(
-      findSubmittedText(messages, '', [
-        { ...context, files: [{ ...context.files[0], end: ATTACHED.length + 1 }] },
-      ]),
-    ).toBeUndefined();
+  it('does not locate an empty submitted text', () => {
+    expect(findSubmittedText([{ role: 'user', content: `${ATTACHED}\n` }], '')).toBeUndefined();
   });
 
   it('locates the submitted text after quoted excerpts, in code points', () => {
@@ -589,14 +552,13 @@ describe('DLP approval flow', () => {
 
     expect(response.status).toBe(400);
     expect(upstream).toHaveBeenCalledTimes(1);
-    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
     expect(onReview).toHaveBeenCalledWith({
       reviewId: 'review-1',
       decision: 'MASK',
       policyVersion: 5,
       findings: [emailFinding('/messages/0/content', 13)],
       maskedRanges: [{ start: 13, end: 28, finding: 0 }],
-      maskedPreview: [{ location: '/messages/0/content', text: MASKED, masks }],
+      maskedPreview: [{ location: '/messages/0/content', text: MASKED }],
       expiresAt,
     });
     expect(reviews.entries.get('review-1')).toEqual({
@@ -606,7 +568,6 @@ describe('DLP approval flow', () => {
       messages: maskedMessages,
       dlpToken: 'approval-token',
       expiresAt,
-      masks,
     });
     expect(onSent).not.toHaveBeenCalled();
   });
@@ -633,10 +594,6 @@ describe('DLP approval flow', () => {
 
     const response = await send(crossing);
 
-    const masks = [
-      { start: 0, end: 6, category: 'TENANT_TERM', replacement: '[TERM]' },
-      { start: 7, end: 13, category: 'TENANT_TERM', replacement: '[TERM]' },
-    ];
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
     expect(onReview).toHaveBeenCalledTimes(1);
     expect(onReview.mock.calls[0]?.[0]).toMatchObject({
@@ -644,9 +601,9 @@ describe('DLP approval flow', () => {
         { start: 0, end: 15, finding: 0 },
         { start: 16, end: 22, finding: 1 },
       ],
-      maskedPreview: [{ text: '[TERM] [TERM]', masks }],
+      maskedPreview: [{ text: '[TERM] [TERM]' }],
     });
-    expect(reviews.entries.get('review-1')).toMatchObject({ text: '[TERM] [TERM]', masks });
+    expect(reviews.entries.get('review-1')).toMatchObject({ text: '[TERM] [TERM]' });
   });
 
   it('rejects a review whose findings are all outside the submitted text, without approving it', async () => {
@@ -838,17 +795,15 @@ describe('DLP approval flow', () => {
   it('sends the stored approved request and token when the user confirms', async () => {
     const reviews = memoryStore();
     const approved = [{ role: 'user', content: MASKED }];
-    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS', replacement: '[EMAIL]' }];
     reviews.entries.set('review-1', {
       userId: 'user-123',
       model: 'governed-model',
       text: MASKED,
       messages: approved,
       dlpToken: 'approval-token',
-      masks,
     });
     const completion = completionResponse();
-    const { onSent, onApproved, send, sentBody } = setup({
+    const { onSent, send, sentBody } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -868,8 +823,6 @@ describe('DLP approval flow', () => {
       require_user_approval: true,
       dlp_token: 'approval-token',
     });
-    expect(onApproved).toHaveBeenCalledWith(masks);
-    expect(onApproved.mock.invocationCallOrder[0]).toBeLessThan(onSent.mock.invocationCallOrder[0]);
     expect(onSent).toHaveBeenCalledTimes(1);
     expect(reviews.entries.has('review-1')).toBe(false);
   });
@@ -1016,139 +969,5 @@ describe('DLP approval flow', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'dlp_approval_invalid' } });
     expect(upstream).not.toHaveBeenCalled();
     expect(onSent).not.toHaveBeenCalled();
-  });
-});
-
-describe('document-only DLP approval', () => {
-  const savedEnvironment = { ...process.env };
-
-  beforeEach(() => {
-    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
-    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
-    process.env.GOVERNANCE_API_BASE_URL = DLP_COMPLETIONS_URL.replace(/\/chat\/completions$/, '');
-  });
-
-  afterEach(() => {
-    process.env = { ...savedEnvironment };
-  });
-
-  it.each(['', '   '])(
-    'sends only the extracted document and the original text %j',
-    async (text) => {
-      const messages = [{ role: 'user', content: `${ATTACHED}\n${text}` }];
-      const { upstream, onSent, send, sentBody } = setup({
-        text,
-        fileContexts: [attachedContext(true)],
-        responses: [completionResponse()],
-      });
-
-      expect((await send(messages)).status).toBe(200);
-      expect(upstream).toHaveBeenCalledTimes(1);
-      expect(sentBody(0).messages).toEqual(messages);
-      expect(onSent).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(['WARN', 'MASK', 'BLOCK'] as const)(
-    'shows an attachment-only %s review without a synthetic prompt',
-    async (action) => {
-      const content = `${ATTACHED}\n`;
-      const reviewed = [
-        {
-          role: 'user',
-          content: action === 'MASK' ? content.replaceAll(IBAN, '[IBAN]') : content,
-        },
-      ];
-      const { onReview, onSent, reviews, send } = setup({
-        text: '',
-        fileContexts: [attachedContext(true)],
-        responses: [
-          reviewResponse({
-            review_id: 'document-review',
-            action,
-            findings: [content.indexOf(IBAN), content.lastIndexOf(IBAN)].map((start) => ({
-              ...ibanFinding('/messages/0/content', start),
-              action,
-              replacement: action === 'MASK' ? '[IBAN]' : undefined,
-            })),
-            ...(action !== 'BLOCK' && { messages: reviewed, dlp_token: 'document-token' }),
-          }),
-        ],
-      });
-
-      const response = await send([{ role: 'user', content }]);
-
-      expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
-      expect(onReview).toHaveBeenCalledWith(
-        expect.objectContaining({
-          decision: action,
-          findings: [],
-          fileFindings: [expect.objectContaining({ fileId: 'file-report', action, count: 2 })],
-          ...(action !== 'BLOCK' && {
-            maskedPreview: [{ location: '/messages/0/content', text: '' }],
-          }),
-        }),
-      );
-      expect(onSent).not.toHaveBeenCalled();
-      if (action === 'BLOCK') {
-        expect(reviews.entries.size).toBe(0);
-        return;
-      }
-      expect(reviews.entries.get('document-review')).toMatchObject({
-        text: '',
-        messages: reviewed,
-        dlpToken: 'document-token',
-      });
-
-      const approved = setup({
-        text: '',
-        reviewId: 'document-review',
-        reviews,
-        responses: [completionResponse()],
-      });
-      expect(
-        (await approved.send([{ role: 'user', content: 'Rebuilt context must not be sent' }]))
-          .status,
-      ).toBe(200);
-      expect(approved.sentBody(0)).toMatchObject({
-        messages: reviewed,
-        dlp_token: 'document-token',
-        require_user_approval: true,
-      });
-      expect(approved.onSent).toHaveBeenCalledTimes(1);
-      expect(reviews.entries.size).toBe(0);
-    },
-  );
-
-  it.each<{ fileContexts: DlpFileContext[] }>([
-    { fileContexts: [] },
-    { fileContexts: [attachedContext(false)] },
-    { fileContexts: [{ ...attachedContext(true), files: [] }] },
-    { fileContexts: [{ ...attachedContext(true), text: 'A different document block' }] },
-  ])(
-    'rejects missing or inconsistent current file context before sending: %j',
-    async ({ fileContexts }) => {
-      const { upstream, onReview, send } = setup({ text: '', fileContexts, responses: [] });
-
-      const response = await send([{ role: 'user', content: `${ATTACHED}\n` }]);
-
-      expect(await response.json()).toMatchObject({ error: { code: 'dlp_unsupported_request' } });
-      expect(upstream).not.toHaveBeenCalled();
-      expect(onReview).not.toHaveBeenCalled();
-    },
-  );
-
-  it('rejects a document-only request when governed attachments are disabled', async () => {
-    process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'false';
-    const { upstream, send } = setup({
-      text: '',
-      fileContexts: [attachedContext(true)],
-      responses: [],
-    });
-
-    const response = await send([{ role: 'user', content: `${ATTACHED}\n` }]);
-
-    expect(await response.json()).toMatchObject({ error: { code: 'dlp_unsupported_request' } });
-    expect(upstream).not.toHaveBeenCalled();
   });
 });

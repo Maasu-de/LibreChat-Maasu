@@ -1,9 +1,4 @@
-import type {
-  TConversation,
-  TEndpointOption,
-  GovernanceDlpReview,
-  GovernanceMaskedSpan,
-} from 'librechat-data-provider';
+import type { TConversation, TEndpointOption, GovernanceDlpReview } from 'librechat-data-provider';
 import type { IUser, AppConfig } from '@librechat/data-schemas';
 import type { Request } from 'express';
 import type { DlpFileContext } from '~/governance/review';
@@ -48,8 +43,6 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpReview?: GovernanceDlpReview;
   /** Set when the approved review's last send failed and put it back, so it can be sent again. */
   governanceDlpApprovalKept?: boolean;
-  /** Where the gateway masked the approved review's text, which this turn sends as its message. */
-  governanceDlpMasks?: GovernanceMaskedSpan[];
   /**
    * `false` until the gateway starts this turn's governed completion, `true` from then on, and
    * unset for a turn that is not governed. An unsent turn stores nothing.

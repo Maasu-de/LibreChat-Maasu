@@ -1,19 +1,13 @@
-import type {
-  GovernanceFinding,
-  GovernanceMaskedSpan,
-  GovernanceMaskedRange,
-} from 'librechat-data-provider';
+import type { GovernanceFinding, GovernanceMaskedRange } from 'librechat-data-provider';
 
 /** The characters Python's `str.isspace()` matches, which the gateway skips when trimming. */
 const GATEWAY_WHITESPACE =
   // eslint-disable-next-line no-control-regex
   /^[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$/;
 
-/** A text as the gateway masks it, with where each replacement is in it and in the original. */
+/** A text as the gateway masks it, with the original range of each replacement. */
 export interface GovernanceMasking {
   text: string;
-  /** The replacements in the masked text, in text order. An empty one takes no range there. */
-  masks: GovernanceMaskedSpan[];
   /** The ranges of the original text that the replacements take the place of, in text order. */
   ranges: GovernanceMaskedRange[];
 }
@@ -34,12 +28,11 @@ export function getGovernanceMasking(
     .filter(({ finding }) => finding.replacement !== undefined)
     .sort(({ finding: a }, { finding: b }) => a.start - b.start || b.end - a.end);
 
-  const masking: GovernanceMasking = { text: '', masks: [], ranges: [] };
+  const masking: GovernanceMasking = { text: '', ranges: [] };
   let covered = 0;
   let copied = 0;
-  let length = 0;
   for (const { finding, index } of candidates) {
-    const { start, end, category, label, replacement = '' } = finding;
+    const { start, end, replacement = '' } = finding;
     if (end <= covered) {
       continue;
     }
@@ -52,17 +45,6 @@ export function getGovernanceMasking(
       continue;
     }
     masking.ranges.push({ start: from, end, finding: index });
-    const offset = length + from - copied;
-    length = offset + Array.from(replacement).length;
-    if (length > offset) {
-      masking.masks.push({
-        start: offset,
-        end: length,
-        category,
-        ...(label !== undefined && { label }),
-        replacement,
-      });
-    }
     masking.text += chars.slice(copied, from).join('') + replacement;
     copied = end;
   }

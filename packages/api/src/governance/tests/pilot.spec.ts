@@ -45,13 +45,13 @@ function app() {
 }
 
 describe('pilot HTTP boundary', () => {
-  it.each(['', '   '])('allows documents without typed text: %j', async (text) => {
+  it.each(['', '   '])('rejects documents without typed text: %j', async (text) => {
     process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
     await expect(
       request(app())
         .post(chatPath)
         .send({ ...plain, text, files: [{ file_id: 'uploaded' }] }),
-    ).resolves.toMatchObject({ status: 204 });
+    ).resolves.toMatchObject({ status: 403 });
   });
 
   it.each([undefined, [], [null], [{}], [{ file_id: '' }], [{ file_id: '   ' }]])(

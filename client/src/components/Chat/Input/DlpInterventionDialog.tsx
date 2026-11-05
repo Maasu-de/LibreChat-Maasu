@@ -11,13 +11,9 @@ import type {
   GovernanceFileFinding,
 } from 'librechat-data-provider';
 import type { KeyboardEvent, SyntheticEvent } from 'react';
-import type { CategorizedFinding } from '~/components/Chat/Messages/Content/MaskedText';
+import type { CategorizedFinding } from './labels';
 import type { TranslationKeys } from '~/hooks';
-import {
-  REDACTED,
-  REDACTION_BAR,
-  useCategoryLabel,
-} from '~/components/Chat/Messages/Content/MaskedText';
+import { REDACTED, REDACTION_BAR, useCategoryLabel } from './labels';
 import FilePreview from './Files/FilePreview';
 import { cn, getFileType } from '~/utils';
 import { useLocalize } from '~/hooks';
@@ -65,7 +61,7 @@ const MODEL_BLOCK_COPY = {
 /** The box that holds the prompt, as it will be sent when the gateway masks it. */
 const PROMPT_BOX =
   'whitespace-pre-wrap rounded-xl bg-aimo-fill [overflow-wrap:anywhere] px-4 py-3 text-[17px] leading-8 text-text-primary dark:bg-aimo-ink-3';
-/** A redaction bar the pointer or focus can reveal, unlike the bars of a sent message. */
+/** A redaction bar the pointer or focus can reveal. */
 const REDACTION = cn(
   REDACTION_BAR,
   'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
@@ -613,16 +609,15 @@ export default function DlpInterventionDialog({
               </section>
             )}
 
-            {(files.length === 0 || originalText.trim().length > 0) &&
-              (!modelNotAllowed || result.findings.length > 0) && (
-                <section
-                  aria-label={localize(
-                    decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
-                  )}
-                >
-                  <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
-                </section>
-              )}
+            {(!modelNotAllowed || result.findings.length > 0) && (
+              <section
+                aria-label={localize(
+                  decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
+                )}
+              >
+                <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
+              </section>
+            )}
           </div>
         }
         buttons={

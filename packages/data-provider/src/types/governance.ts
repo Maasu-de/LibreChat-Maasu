@@ -11,22 +11,9 @@ export interface GovernanceFinding {
   replacement?: string;
 }
 
-/** A replacement the gateway put in a masked text, as the code-point range it takes there. */
-export interface GovernanceMaskedSpan {
-  start: number;
-  end: number;
-  category: string;
-  /** The category's display name at the time the message was masked. */
-  label?: string;
-  /** The text of the range, so a text changed since then is not taken for masked. */
-  replacement: string;
-}
-
 export interface GovernanceMaskedContent {
   location: string;
   text: string;
-  /** Where `text` holds the gateway's replacements, kept on the sent message. */
-  masks?: GovernanceMaskedSpan[];
 }
 
 /** A code-point range of the submitted text that the gateway replaces. */

@@ -1,15 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { readFileSync } from 'fs';
-import path from 'path';
 import type { Locator, Page } from '@playwright/test';
-import { getAccessToken, isAgentsStream, messagesView, sendMessage } from '../mock/helpers';
+import { getAccessToken, messagesView, sendMessage } from '../mock/helpers';
 import { newGovernedChat } from './helpers';
 
 /**
  * Text attachments in the governed pilot (#150), end to end through the fork's DLP review
  * against `e2e/setup/fake-governance-gateway.js`. The fake gateway masks IBANs, warns on email
  * addresses and blocks `PROJECT-NIGHTSHADE`, and its reply states what reached the model.
- * A masked prompt keeps its replacements as bars in the chat history.
  */
 
 const IBAN = 'DE89370400440532013000';
@@ -46,16 +43,6 @@ async function attach(page: Page, file: UploadFile) {
   await chooseUploadFile(page, file);
   expect((await uploaded).status()).toBe(200);
   await expect(composerFile(page, file.name)).toBeVisible();
-}
-
-async function sendWithoutText(page: Page) {
-  await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
-  await expect(page.getByTestId('send-button')).toBeEnabled();
-  const [response] = await Promise.all([
-    page.waitForResponse(isAgentsStream),
-    page.getByTestId('send-button').click(),
-  ]);
-  expect(response.request().postDataJSON()).toMatchObject({ text: '' });
 }
 
 async function expectUnclippedPopup(popup: Locator) {
@@ -238,91 +225,17 @@ test.describe('governed text attachments', () => {
   });
 });
 
-test.describe('governed documents without a typed message', () => {
+test.describe('governed attachment findings', () => {
   test.beforeEach(async ({ page }) => {
     await newGovernedChat(page);
   });
 
-  test('allow: sends a clean document alone and keeps an empty composer disabled afterward', async ({
-    page,
-  }) => {
-    await expect(page.getByTestId('send-button')).toBeDisabled();
-    await attach(page, textFile('agenda-only.txt', 'Agenda: budget review and hiring plan.'));
+  test('an attachment still requires a typed message before sending', async ({ page }) => {
+    await attach(page, textFile('agenda.txt', 'Agenda: budget review and hiring plan.'));
 
-    await sendWithoutText(page);
-
-    await expect(reply(page, 'attachment=yes iban=none email=no history-iban=none')).toBeVisible();
-    await expect(page.getByRole('dialog')).not.toBeVisible();
-    await expect(page.getByTestId('send-button')).toBeDisabled();
-  });
-
-  test('warn: cancellation restores the document and approval sends it without adding text', async ({
-    page,
-  }) => {
-    await attach(page, textFile('contacts-only.csv', 'Max,max@example.com', 'text/csv'));
-    await sendWithoutText(page);
-
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Sensitive information detected')).toBeVisible();
-    await expect(dialog.getByRole('region', { name: /prompt/i })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(composerFile(page, 'contacts-only.csv')).toBeVisible();
     await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
-
-    await sendWithoutText(page);
-    await dialog.getByRole('button', { name: 'Continue anyway' }).click();
-
-    await expect(reply(page, 'attachment=yes iban=none email=yes history-iban=none')).toBeVisible();
-    await expect(dialog).not.toBeVisible();
-  });
-
-  test('mask: reviews a PDF alone and reuses its governed content in a later turn', async ({
-    page,
-  }) => {
-    await attach(page, {
-      name: 'invoice-only.pdf',
-      mimeType: 'application/pdf',
-      buffer: readFileSync(path.resolve(__dirname, '../../fixtures/governance/invoice.pdf')),
-    });
-    await sendWithoutText(page);
-
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Sensitive information will be masked')).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'invoice-only.pdf' })).toBeVisible();
-    await expect(dialog.getByRole('region', { name: /prompt/i })).toHaveCount(0);
-    await dialog.getByRole('button', { name: 'Send masked' }).click();
-    await expect(
-      reply(page, 'attachment=yes iban=masked email=no history-iban=none'),
-    ).toBeVisible();
-
-    await page.reload();
-    await expect(
-      reply(page, 'attachment=yes iban=masked email=no history-iban=none'),
-    ).toBeVisible();
-    await sendMessage(page, 'What is the total?');
-    await expect(reply(page, 'attachment=no iban=none email=no history-iban=masked')).toBeVisible();
-  });
-
-  test('block: removes only the blocked document and restores the clean one without text', async ({
-    page,
-  }) => {
-    await attach(page, textFile('blocked-only.txt', 'PROJECT-NIGHTSHADE launches in May.'));
-    await attach(page, textFile('clean-only.txt', 'Press kit is ready.'));
-    await sendWithoutText(page);
-
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Sensitive prompt blocked')).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /Send masked|Continue anyway/ })).toHaveCount(
-      0,
-    );
-    await dialog.getByRole('button', { name: 'Close' }).click();
-
-    await expect(composerFile(page, 'clean-only.txt')).toBeVisible();
-    await expect(composerFile(page, 'blocked-only.txt')).not.toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue('');
-    await expect(page.getByTestId('send-button')).toBeEnabled();
-    await expect.poll(() => listFileNames(page)).not.toContain('blocked-only.txt');
-    await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
+    await expect(page.getByTestId('send-button')).toBeDisabled();
+    await expect(composerFile(page, 'agenda.txt')).toBeVisible();
   });
 
   test('finding values expand and collapse without approving or closing the review', async ({
@@ -333,7 +246,7 @@ test.describe('governed documents without a typed message', () => {
       page,
       textFile('many-values.txt', [...emails, emails[0], emails[0].toUpperCase()].join('\n')),
     );
-    await sendWithoutText(page);
+    await sendMessage(page, 'Review the attached contacts');
 
     const dialog = page.getByRole('dialog', { name: 'Sensitive information detected' });
     const badge = dialog.getByRole('button', { name: 'Email address · Warn' });
@@ -375,7 +288,7 @@ test.describe('governed documents without a typed message', () => {
           ),
         );
       } else {
-        await sendWithoutText(page);
+        await sendMessage(page, 'Review the attached contacts');
       }
 
       const dialog = page.getByRole('dialog', { name: 'Sensitive information detected' });
@@ -416,7 +329,7 @@ test.describe('governed prompts', () => {
     await newGovernedChat(page);
   });
 
-  test('mask: the sent message shows its replacements as bars, also after a reload', async ({
+  test('mask: the review shows friendly labels before sending governed content', async ({
     page,
   }) => {
     await sendMessage(page, `Pay ${IBAN} or ${IBAN} today`);
@@ -436,58 +349,7 @@ test.describe('governed prompts', () => {
     await dialog.getByRole('button', { name: 'Send masked' }).click();
     await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
 
-    const bars = messagesView(page).locator('mark', { hasText: 'IBAN' });
-    await expect(bars).toHaveCount(2);
-    await expect(bars.first()).toHaveClass(/bg-text-primary/);
-    await expect(bars.first()).not.toHaveAttribute('tabindex');
-    await bars.first().hover();
-    await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
-
-    await page.reload();
-
-    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
-    await expect(messagesView(page).locator('mark', { hasText: 'IBAN' })).toHaveCount(2);
-    await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
-  });
-
-  test('mask: Markdown formatting and prose bars survive approval and reload', async ({ page }) => {
-    await sendMessage(
-      page,
-      [
-        '# Invoice review',
-        '',
-        `- Pay **${IBAN}** today.`,
-        '- Read [payment instructions](https://example.com/payment).',
-        `- Reference \`${IBAN}\`.`,
-      ].join('\n'),
-    );
-    await page.getByRole('dialog').getByRole('button', { name: 'Send masked' }).click();
-    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
-
-    const message = messagesView(page)
-      .locator('.message-content')
-      .filter({ has: page.getByRole('heading', { name: 'Invoice review', exact: true }) });
-    const expectFormattedMessage = async () => {
-      await expect(
-        message.getByRole('heading', { name: 'Invoice review', level: 1 }),
-      ).toBeVisible();
-      await expect(message.getByRole('listitem')).toHaveCount(3);
-      await expect(message.locator('strong mark')).toHaveCount(1);
-      await expect(message.locator('mark')).toHaveClass(/bg-text-primary/);
-      await expect(message.getByRole('link', { name: 'payment instructions' })).toHaveAttribute(
-        'href',
-        'https://example.com/payment',
-      );
-      await expect(message.locator('code')).toHaveText('[IBAN]');
-      await expect(message.locator('code mark')).toHaveCount(0);
-      await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
-    };
-    await expectFormattedMessage();
-
-    await page.reload();
-
-    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
-    await expectFormattedMessage();
+    await expect(messagesView(page)).not.toContainText(IBAN);
   });
 
   test('mask: focused values stay revealed when the pointer moves between masks and outside', async ({

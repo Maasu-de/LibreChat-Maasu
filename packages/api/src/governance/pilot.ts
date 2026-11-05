@@ -4,7 +4,6 @@ import type { RequestHandler, Response } from 'express';
 import {
   GOVERNANCE_ENDPOINT,
   isGovernancePilotEnabled,
-  hasGovernanceFileReferences,
   isGovernanceAttachmentsEnabled,
 } from './mode';
 
@@ -136,7 +135,7 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
       Array.isArray(body) ||
       body.endpoint !== GOVERNANCE_ENDPOINT ||
       typeof body.text !== 'string' ||
-      (!body.text.trim() && !hasGovernanceFileReferences(body.files)) ||
+      !body.text.trim() ||
       hasUnsupportedSettings(body)
     ) {
       deny(res);
