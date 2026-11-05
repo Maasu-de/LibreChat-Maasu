@@ -436,7 +436,7 @@ test.describe('governed prompts', () => {
     await dialog.getByRole('button', { name: 'Send masked' }).click();
     await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
 
-    const bars = messagesView(page).locator('mark', { hasText: '[IBAN]' });
+    const bars = messagesView(page).locator('mark', { hasText: 'IBAN' });
     await expect(bars).toHaveCount(2);
     await expect(bars.first()).toHaveClass(/bg-text-primary/);
     await expect(bars.first()).not.toHaveAttribute('tabindex');
@@ -446,8 +446,82 @@ test.describe('governed prompts', () => {
     await page.reload();
 
     await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
-    await expect(messagesView(page).locator('mark', { hasText: '[IBAN]' })).toHaveCount(2);
+    await expect(messagesView(page).locator('mark', { hasText: 'IBAN' })).toHaveCount(2);
     await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
+  });
+
+  test('mask: Markdown formatting and prose bars survive approval and reload', async ({ page }) => {
+    await sendMessage(
+      page,
+      [
+        '# Invoice review',
+        '',
+        `- Pay **${IBAN}** today.`,
+        '- Read [payment instructions](https://example.com/payment).',
+        `- Reference \`${IBAN}\`.`,
+      ].join('\n'),
+    );
+    await page.getByRole('dialog').getByRole('button', { name: 'Send masked' }).click();
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+
+    const message = messagesView(page)
+      .locator('.message-content')
+      .filter({ has: page.getByRole('heading', { name: 'Invoice review', exact: true }) });
+    const expectFormattedMessage = async () => {
+      await expect(
+        message.getByRole('heading', { name: 'Invoice review', level: 1 }),
+      ).toBeVisible();
+      await expect(message.getByRole('listitem')).toHaveCount(3);
+      await expect(message.locator('strong mark')).toHaveCount(1);
+      await expect(message.locator('mark')).toHaveClass(/bg-text-primary/);
+      await expect(message.getByRole('link', { name: 'payment instructions' })).toHaveAttribute(
+        'href',
+        'https://example.com/payment',
+      );
+      await expect(message.locator('code')).toHaveText('[IBAN]');
+      await expect(message.locator('code mark')).toHaveCount(0);
+      await expect(messagesView(page).getByText(IBAN)).toHaveCount(0);
+    };
+    await expectFormattedMessage();
+
+    await page.reload();
+
+    await expect(reply(page, 'attachment=no iban=masked email=no history-iban=none')).toBeVisible();
+    await expectFormattedMessage();
+  });
+
+  test('mask: focused values stay revealed when the pointer moves between masks and outside', async ({
+    page,
+  }) => {
+    const text = `Pay ${IBAN} or ${IBAN} today`;
+    await sendMessage(page, text);
+    const dialog = page.getByRole('dialog');
+    const prompt = dialog.getByRole('region', { name: 'Masked prompt' });
+    const first = prompt.locator('mark').first();
+    const second = prompt.locator('mark').last();
+
+    await first.focus();
+    await expect(first.getByText(IBAN, { exact: true })).toBeVisible();
+    await second.hover();
+    await expect(first).toBeFocused();
+    await expect(first.getByText(IBAN, { exact: true })).toBeVisible();
+    await expect(second.getByText(IBAN, { exact: true })).toBeVisible();
+
+    await page.mouse.move(0, 0);
+    await expect(first).toBeFocused();
+    await expect(first.getByText(IBAN, { exact: true })).toBeVisible();
+    await expect(second.getByText('IBAN', { exact: true })).toBeVisible();
+
+    await second.focus();
+    await page.mouse.move(1, 1);
+    await expect(first.getByText('IBAN', { exact: true })).toBeVisible();
+    await expect(second).toBeFocused();
+    await expect(second.getByText(IBAN, { exact: true })).toBeVisible();
+    await expect(messagesView(page).getByText('E2E gateway reply')).not.toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue(text);
   });
 
   test('keyboard: Escape puts the prompt back, Enter sends it, a held Enter does not', async ({

@@ -159,7 +159,7 @@ const messageSchema: Schema<IMessage> = new Schema(
     dlpMasks: {
       type: [
         new Schema(
-          { start: Number, end: Number, category: String, replacement: String },
+          { start: Number, end: Number, category: String, label: String, replacement: String },
           { _id: false },
         ),
       ],

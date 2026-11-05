@@ -1,10 +1,39 @@
 import {
+  tMessageSchema,
   AnthropicEffort,
   googleSettings,
   anthropicSettings,
   compactGoogleSchema,
   eAnthropicEffortSchema,
 } from './schemas';
+
+describe('tMessageSchema DLP masks', () => {
+  it.each([undefined, 'Codenames'])(
+    'preserves mask metadata with category label %j without changing the message text',
+    (label) => {
+      const mask = {
+        start: 8,
+        end: 18,
+        category: 'CUSTOM_CODENAMES',
+        ...(label !== undefined && { label }),
+        replacement: '[REDACTED]',
+      };
+      const text = 'Discuss [REDACTED] today';
+
+      const result = tMessageSchema.parse({
+        messageId: 'message-1',
+        conversationId: 'conversation-1',
+        parentMessageId: null,
+        isCreatedByUser: true,
+        text,
+        dlpMasks: [mask],
+      });
+
+      expect(result.text).toBe(text);
+      expect(result.dlpMasks).toEqual([mask]);
+    },
+  );
+});
 
 describe('anthropicSettings', () => {
   describe('maxOutputTokens.reset()', () => {

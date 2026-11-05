@@ -831,6 +831,7 @@ export const tMessageSchema = z.object({
         start: z.number(),
         end: z.number(),
         category: z.string(),
+        label: z.string().optional(),
         replacement: z.string(),
       }),
     )

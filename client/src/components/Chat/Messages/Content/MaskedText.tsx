@@ -97,10 +97,8 @@ function MaskedText({ segments }: { segments: MaskedSegment[] }) {
       {segments.map(({ text, mask }, index) =>
         mask ? (
           <mark key={index} className={cn(REDACTION_BAR, REDACTED)}>
-            <span className="font-semibold">{text}</span>
-            <span className="sr-only">
-              {` (${categoryLabel(mask)} · ${localize('com_ui_dlp_decision_mask')})`}
-            </span>
+            <span className="font-semibold">{categoryLabel(mask)}</span>
+            <span className="sr-only">{` (${localize('com_ui_dlp_decision_mask')})`}</span>
           </mark>
         ) : (
           <span key={index}>{text}</span>

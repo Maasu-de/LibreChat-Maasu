@@ -16,6 +16,8 @@ export interface GovernanceMaskedSpan {
   start: number;
   end: number;
   category: string;
+  /** The category's display name at the time the message was masked. */
+  label?: string;
   /** The text of the range, so a text changed since then is not taken for masked. */
   replacement: string;
 }

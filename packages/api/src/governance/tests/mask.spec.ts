@@ -23,6 +23,32 @@ const termFinding = (start: number, end: number): GovernanceFinding => ({
 });
 
 describe('getGovernanceMasking', () => {
+  it('preserves a custom category label without changing the gateway replacement or ranges', () => {
+    const finding: GovernanceFinding = {
+      location: LOCATION,
+      start: 8,
+      end: 14,
+      category: 'CUSTOM_CODENAMES',
+      label: 'Codenames',
+      action: 'MASK',
+      replacement: '[REDACTED]',
+    };
+
+    expect(getGovernanceMasking('Discuss Apollo today', [finding])).toEqual({
+      text: 'Discuss [REDACTED] today',
+      masks: [
+        {
+          start: 8,
+          end: 18,
+          category: 'CUSTOM_CODENAMES',
+          label: 'Codenames',
+          replacement: '[REDACTED]',
+        },
+      ],
+      ranges: [{ start: 8, end: 14, finding: 0 }],
+    });
+  });
+
   it('masks by code point like the gateway, with the range of each replacement on both sides', () => {
     const text = '🙂 max@example.com and max@example.com';
 

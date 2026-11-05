@@ -4,6 +4,8 @@ import { render, screen } from '@testing-library/react';
 import type { GovernanceMaskedSpan, TMessage } from 'librechat-data-provider';
 import MaskedText, { getMaskedSegments } from '../MaskedText';
 import MessageContent from '../MessageContent';
+import MarkdownLite from '../MarkdownLite';
+import store from '~/store';
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
@@ -20,7 +22,9 @@ jest.mock('../Container', () => ({
 
 jest.mock('../MarkdownLite', () => ({
   __esModule: true,
-  default: ({ content }: { content: string }) => <div data-testid="markdown">{content}</div>,
+  default: jest.fn(({ content }: { content: string }) => (
+    <div data-testid="markdown">{content}</div>
+  )),
 }));
 
 const TEXT = '🙂 Mail [EMAIL] or [EMAIL]\nthanks';
@@ -39,9 +43,11 @@ const userMessage = (text: string, dlpMasks?: GovernanceMaskedSpan[]): TMessage 
   dlpMasks,
 });
 
-const renderMessage = (message: TMessage) =>
+const renderMessage = (message: TMessage, enableUserMsgMarkdown = true) =>
   render(
-    <RecoilRoot>
+    <RecoilRoot
+      initializeState={({ set }) => set(store.enableUserMsgMarkdown, enableUserMsgMarkdown)}
+    >
       <MessageContent
         text={message.text}
         edit={false}
@@ -96,19 +102,71 @@ describe('MaskedText', () => {
     const bars = container.querySelectorAll('mark');
     expect(bars).toHaveLength(2);
     for (const bar of bars) {
-      expect(bar).toHaveTextContent(
-        '[EMAIL] (com_ui_dlp_category_email_address · com_ui_dlp_decision_mask)',
-      );
+      expect(bar).toHaveTextContent('com_ui_dlp_category_email_address (com_ui_dlp_decision_mask)');
       expect(bar).toHaveClass('bg-text-primary', 'text-surface-primary');
       expect(bar).not.toHaveAttribute('tabindex');
     }
-    expect(container).toHaveTextContent(/^🙂 Mail \[EMAIL\].* or \[EMAIL\].*thanks$/);
+    expect(container).toHaveTextContent(
+      /^🙂 Mail com_ui_dlp_category_email_address.* or com_ui_dlp_category_email_address.*thanks$/,
+    );
+    expect(container).not.toHaveTextContent('[EMAIL]');
+  });
+
+  it('shows each custom category label while keeping a shared replacement in the stored text', () => {
+    const text = '[REDACTED] or [REDACTED]';
+    const masks: GovernanceMaskedSpan[] = [
+      {
+        start: 0,
+        end: 10,
+        category: 'CUSTOM_codenames',
+        label: 'Codenames',
+        replacement: '[REDACTED]',
+      },
+      {
+        start: 14,
+        end: 24,
+        category: 'CUSTOM_clients',
+        label: 'Client names',
+        replacement: '[REDACTED]',
+      },
+    ];
+    const segments = getMaskedSegments(text, masks) ?? [];
+    const { container } = render(<MaskedText segments={segments} />);
+
+    expect(segments.map((segment) => segment.text).join('')).toBe(text);
+    expect(container.querySelectorAll('mark')[0]).toHaveTextContent('Codenames');
+    expect(container.querySelectorAll('mark')[1]).toHaveTextContent('Client names');
+    expect(container).not.toHaveTextContent('[REDACTED]');
+    expect(container).not.toHaveTextContent('CUSTOM_');
+  });
+
+  it('gives older custom masks without labels a readable category fallback', () => {
+    const text = '[REDACTED]';
+    const segments =
+      getMaskedSegments(text, [
+        { start: 0, end: 10, category: 'CUSTOM_legacy', replacement: text },
+      ]) ?? [];
+    const { container } = render(<MaskedText segments={segments} />);
+
+    expect(container.querySelector('mark')).toHaveTextContent('com_ui_dlp_category_custom_term');
+    expect(container).not.toHaveTextContent('CUSTOM_legacy');
   });
 });
 
 describe('MessageContent with masks', () => {
-  it('shows a masked user message as plain text with bars', () => {
+  it('keeps Markdown enabled for masked user messages', () => {
     const { container } = renderMessage(userMessage(TEXT, MASKS));
+
+    expect(screen.getByTestId('markdown')).toHaveTextContent('Mail [EMAIL] or [EMAIL]');
+    expect(jest.mocked(MarkdownLite).mock.calls[0][0]).toEqual({
+      content: TEXT,
+      maskedSegments: getMaskedSegments(TEXT, MASKS),
+    });
+    expect(container.querySelector('.message-content')).not.toHaveClass('whitespace-pre-wrap');
+  });
+
+  it('shows plain text with bars when user Markdown is disabled', () => {
+    const { container } = renderMessage(userMessage(TEXT, MASKS), false);
 
     expect(container.querySelectorAll('mark')).toHaveLength(2);
     expect(screen.queryByTestId('markdown')).not.toBeInTheDocument();

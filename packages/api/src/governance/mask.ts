@@ -39,7 +39,7 @@ export function getGovernanceMasking(
   let copied = 0;
   let length = 0;
   for (const { finding, index } of candidates) {
-    const { start, end, category, replacement = '' } = finding;
+    const { start, end, category, label, replacement = '' } = finding;
     if (end <= covered) {
       continue;
     }
@@ -55,7 +55,13 @@ export function getGovernanceMasking(
     const offset = length + from - copied;
     length = offset + Array.from(replacement).length;
     if (length > offset) {
-      masking.masks.push({ start: offset, end: length, category, replacement });
+      masking.masks.push({
+        start: offset,
+        end: length,
+        category,
+        ...(label !== undefined && { label }),
+        replacement,
+      });
     }
     masking.text += chars.slice(copied, from).join('') + replacement;
     copied = end;

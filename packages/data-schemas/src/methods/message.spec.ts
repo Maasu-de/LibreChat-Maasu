@@ -91,6 +91,30 @@ describe('Message Operations', () => {
   });
 
   describe('saveMessage', () => {
+    it.each([undefined, 'Codenames'])(
+      'round-trips DLP mask metadata with category label %j without changing the stored text',
+      async (label) => {
+        const mask = {
+          start: 8,
+          end: 18,
+          category: 'CUSTOM_CODENAMES',
+          ...(label !== undefined && { label }),
+          replacement: '[REDACTED]',
+        };
+        const text = 'Discuss [REDACTED] today';
+        await saveMessage(mockCtx, { ...mockMessageData, text, dlpMasks: [mask] });
+
+        const messages = await getMessages({
+          conversationId: mockMessageData.conversationId,
+          user: mockCtx.userId,
+        });
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0].text).toBe(text);
+        expect(messages[0].dlpMasks).toEqual([mask]);
+      },
+    );
+
     it('should save a message for an authenticated user', async () => {
       const result = await saveMessage(mockCtx, mockMessageData);
 
