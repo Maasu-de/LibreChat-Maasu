@@ -390,6 +390,8 @@ export type TPendingDlpReview = {
   manualSkills?: string[];
   /** The files the reviewed turn was sent with, sent again so the approved message shows them. */
   files?: t.TMessage['files'];
+  /** The second model of a reviewed comparison, so the approved text is sent to both models. */
+  addedConvo?: t.TConversation;
   /**
    * `sending` from the user's approval until the approved turn starts, while the dialog is
    * hidden; `failed` once that send failed and the review can be sent again; `rejected` once it

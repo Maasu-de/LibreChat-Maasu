@@ -1,4 +1,4 @@
-import type { TFeedbackRating, TFeedbackTag } from 'librechat-data-provider';
+import type { TFeedbackRating, TFeedbackTag, TParallelFeedback } from 'librechat-data-provider';
 import type { Document } from 'mongoose';
 
 // @ts-ignore
@@ -27,6 +27,8 @@ export interface IMessage extends Document {
     tag: TFeedbackTag | undefined;
     text?: string;
   };
+  /** Feedback on each of the message's parallel responses, such as a model comparison's. */
+  parallelFeedback?: TParallelFeedback[];
   _meiliIndex?: boolean;
   files?: unknown[];
   plugin?: {

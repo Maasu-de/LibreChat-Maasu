@@ -14,7 +14,6 @@ import {
   apiBaseUrl,
   SystemRoles,
   setTokenHeader,
-  isSystemRoleName,
   buildLoginRedirectUrl,
 } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
@@ -53,7 +52,12 @@ const AuthContextProvider = ({
   const setQueriesEnabled = useSetRecoilState<boolean>(store.queriesEnabled);
 
   const userRoleName = user?.role ?? '';
-  const isCustomRole = isAuthenticated && !!user?.role && !isSystemRoleName(user.role);
+  /** Any role besides USER and ADMIN, such as GOVERNANCE_ADMIN, is fetched by its own name. */
+  const isCustomRole =
+    isAuthenticated &&
+    !!user?.role &&
+    user.role !== SystemRoles.USER &&
+    user.role !== SystemRoles.ADMIN;
 
   const { data: userRole = null } = useGetRole(SystemRoles.USER, {
     enabled: !!(isAuthenticated && (user?.role ?? '')),

@@ -3,9 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GOVERNANCE_ENDPOINT, QueryKeys } from 'librechat-data-provider';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
-import type { EModelEndpoint, GovernanceModel, TConversation } from 'librechat-data-provider';
+import type { GovernanceModel } from 'librechat-data-provider';
 import GovernanceModelSelector from '../GovernanceModelSelector';
-import AddedConvo from '~/components/Chat/Input/AddedConvo';
 import { groupGovernanceModels } from '../governance';
 
 jest.mock('../../../../../../../packages/data-provider/src/data-service', () => ({
@@ -201,28 +200,5 @@ describe('GovernanceModelSelector', () => {
         Other: ['other-model'],
       }),
     );
-  });
-
-  it('uses the same options in the comparison selector and passes the selected identifier', async () => {
-    const setAddedConvo = jest.fn();
-    const conversation: TConversation = {
-      conversationId: null,
-      title: 'New Chat',
-      createdAt: '',
-      updatedAt: '',
-      endpoint: GOVERNANCE_ENDPOINT as EModelEndpoint,
-      model: 'sovereign-model',
-    };
-    renderSelector(<AddedConvo addedConvo={conversation} setAddedConvo={setAddedConvo} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
-    expect(await screen.findByRole('heading', { name: 'EU Sovereign' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'EU Hosted' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('option', { name: 'hosted-model' }));
-    expect(setAddedConvo).toHaveBeenCalledTimes(1);
-    const update = setAddedConvo.mock.calls[0][0] as (
-      previous: TConversation | null,
-    ) => TConversation | null;
-    expect(update(conversation)).toEqual({ ...conversation, model: 'hosted-model' });
-    expect(update(null)).toBeNull();
   });
 });

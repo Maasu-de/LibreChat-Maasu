@@ -13,6 +13,8 @@ export type SendFeedbackScoreParams = {
   feedback?: LangfuseFeedback | null;
   metadata?: LangfuseFeedbackMetadata;
   observationId?: string;
+  /** The parallel response the feedback is for, which gets a score of its own on the trace. */
+  agentId?: string;
 };
 
 const DEFAULT_BASE_URL = 'https://cloud.langfuse.com';
@@ -66,12 +68,13 @@ export async function sendFeedbackScore({
   feedback,
   metadata = {},
   observationId,
+  agentId,
 }: SendFeedbackScoreParams): Promise<void> {
   if (!ENABLED || !AUTHORIZATION || !traceId) {
     return;
   }
 
-  const scoreId = `feedback-${traceId}`;
+  const scoreId = agentId ? `feedback-${traceId}-${agentId}` : `feedback-${traceId}`;
 
   if (!feedback?.rating) {
     const res = await fetch(`${BASE}/api/public/scores/${encodeURIComponent(scoreId)}`, {
@@ -91,7 +94,7 @@ export async function sendFeedbackScore({
     value: feedback.rating === 'thumbsUp' ? 1 : 0,
     dataType: 'BOOLEAN',
     comment: [feedback.tag, feedback.text].filter(Boolean).join(' — ') || undefined,
-    metadata: cleanMetadata({ ...metadata, rating: feedback.rating, tag: feedback.tag }),
+    metadata: cleanMetadata({ ...metadata, agentId, rating: feedback.rating, tag: feedback.tag }),
     ...(observationId ? { observationId } : {}),
     ...(ENVIRONMENT ? { environment: ENVIRONMENT } : {}),
   };

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useSetRecoilState, useRecoilValue } from 'recoil';
+import { useRecoilState, useRecoilValue } from 'recoil';
 import { PlusCircle } from 'lucide-react';
 import { TooltipAnchor } from '@librechat/client';
 import { isAssistantsEndpoint } from 'librechat-data-provider';
@@ -12,7 +12,7 @@ function AddMultiConvo() {
   const localize = useLocalize();
   const getConversation = useGetConversation(0);
   const endpoint = useRecoilValue(store.conversationEndpointByIndex(0));
-  const setAddedConvo = useSetRecoilState(store.conversationByIndex(1));
+  const [addedConvo, setAddedConvo] = useRecoilState(store.conversationByIndex(1));
 
   const clickHandler = useCallback(() => {
     const conversation = getConversation();
@@ -28,7 +28,7 @@ function AddMultiConvo() {
     }
   }, [getConversation, setAddedConvo]);
 
-  if (!endpoint) {
+  if (!endpoint || addedConvo) {
     return null;
   }
 

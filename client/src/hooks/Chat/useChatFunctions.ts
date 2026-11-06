@@ -745,6 +745,7 @@ export default function useChatFunctions({
         dlpReviewId: result.reviewId,
         overrideManualSkills: pendingDlpReview.manualSkills ?? [],
         overrideFiles: pendingDlpReview.files,
+        addedConvo: pendingDlpReview.addedConvo,
       },
     );
     return true;

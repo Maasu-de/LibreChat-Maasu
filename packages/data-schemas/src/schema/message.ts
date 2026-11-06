@@ -97,6 +97,19 @@ const messageSchema: Schema<IMessage> = new Schema(
       default: undefined,
       required: false,
     },
+    /** Feedback on each of the message's parallel responses, such as a model comparison's. */
+    parallelFeedback: {
+      type: [
+        {
+          _id: false,
+          agentId: { type: String, required: true },
+          rating: { type: String, enum: ['thumbsUp', 'thumbsDown'], required: true },
+          tag: { type: mongoose.Schema.Types.Mixed, required: false },
+          text: { type: String, required: false },
+        },
+      ],
+      default: undefined,
+    },
     _meiliIndex: {
       type: Boolean,
       required: false,

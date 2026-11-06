@@ -45,6 +45,12 @@ export interface GovernanceFileFinding {
   terms?: string[];
 }
 
+/** Compared models that findings of these categories may not be sent to. */
+export interface GovernanceModelRestriction {
+  models: string[];
+  categories: string[];
+}
+
 export interface GovernanceDlpResult {
   decision: GovernanceDecision;
   policyVersion?: number;
@@ -53,6 +59,8 @@ export interface GovernanceDlpResult {
   maskedRanges?: GovernanceMaskedRange[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
+  /** Set on a blocked comparison when the findings do not allow some of the compared models. */
+  modelRestriction?: GovernanceModelRestriction;
   /** Set when the content does not allow the selected model, which blocks the prompt. */
   modelNotAllowed?: { model: string; allowedTiers: GovernanceTier[] };
 }

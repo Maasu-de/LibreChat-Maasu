@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { TMessageContentParts, FunctionTool, FunctionToolCall } from './types/assistants';
 import type { SearchResultData } from './types/web';
 import type { TFile } from './types/files';
-import { TFeedback, feedbackSchema } from './feedback';
+import { TFeedback, feedbackSchema, parallelFeedbackSchema } from './feedback';
 import { Tools } from './types/assistants';
 
 export const isUUID = z.string().uuid();
@@ -776,6 +776,8 @@ export const tMessageSchema = z.object({
   /* frontend components */
   iconURL: z.string().nullable().optional(),
   feedback: feedbackSchema.optional(),
+  /** Feedback on each of the message's parallel responses, by agent ID. */
+  parallelFeedback: z.array(parallelFeedbackSchema).optional(),
   /** metadata */
   metadata: z.record(z.unknown()).optional(),
   /** Output tokens for assistant messages, calibrated prompt-side estimate for user messages */

@@ -1,7 +1,11 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('@librechat/data-schemas');
-const { ContentTypes, isAssistantsEndpoint } = require('librechat-data-provider');
+const {
+  ContentTypes,
+  isAssistantsEndpoint,
+  parallelFeedbackRequestSchema,
+} = require('librechat-data-provider');
 const {
   unescapeLaTeX,
   countTokens,
@@ -382,8 +386,56 @@ router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) =
   }
 });
 
+/** Sends the feedback score for `updatedMessage`, or for one of its parallel responses. */
+function scoreFeedback(req, updatedMessage, feedback, agentId) {
+  // Best-effort: Assistants messages do not have deterministic AgentRun traces.
+  if (isAssistantsEndpoint(updatedMessage.endpoint)) {
+    return;
+  }
+  const { conversationId, messageId } = req.params;
+  sendFeedbackScore({
+    traceId: traceIdForMessage(messageId),
+    feedback,
+    agentId,
+    metadata: {
+      messageId: updatedMessage.messageId ?? messageId,
+      parentMessageId: updatedMessage.parentMessageId,
+      conversationId: updatedMessage.conversationId ?? conversationId,
+      sessionId: updatedMessage.conversationId ?? conversationId,
+      userId: req?.user?.id,
+      endpoint: updatedMessage.endpoint,
+      sender: updatedMessage.sender,
+      isCreatedByUser: updatedMessage.isCreatedByUser,
+      tokenCount: updatedMessage.tokenCount,
+    },
+  }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
+}
+
+/** Stores feedback on one parallel response of a message, such as one model of a comparison. */
+async function updateParallelFeedback(req, res) {
+  const parsed = parallelFeedbackRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid feedback' });
+  }
+  const { conversationId, messageId } = req.params;
+  const { agentId, feedback } = parsed.data;
+  const updatedMessage = await db.updateParallelFeedback(req.user.id, {
+    messageId,
+    agentId,
+    feedback,
+  });
+  if (!updatedMessage) {
+    return res.status(404).json({ error: 'Message response not found' });
+  }
+  scoreFeedback(req, updatedMessage, feedback, agentId);
+  return res.json({ messageId, conversationId, agentId, feedback: feedback ?? undefined });
+}
+
 router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (req, res) => {
   try {
+    if (req.body?.agentId != null) {
+      return await updateParallelFeedback(req, res);
+    }
     const { conversationId, messageId } = req.params;
     const { feedback } = req.body;
 
@@ -396,24 +448,7 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
       { context: 'updateFeedback' },
     );
 
-    // Best-effort: Assistants messages do not have deterministic AgentRun traces.
-    if (!isAssistantsEndpoint(updatedMessage.endpoint)) {
-      sendFeedbackScore({
-        traceId: traceIdForMessage(messageId),
-        feedback: updatedMessage.feedback,
-        metadata: {
-          messageId: updatedMessage.messageId ?? messageId,
-          parentMessageId: updatedMessage.parentMessageId,
-          conversationId: updatedMessage.conversationId ?? conversationId,
-          sessionId: updatedMessage.conversationId ?? conversationId,
-          userId: req?.user?.id,
-          endpoint: updatedMessage.endpoint,
-          sender: updatedMessage.sender,
-          isCreatedByUser: updatedMessage.isCreatedByUser,
-          tokenCount: updatedMessage.tokenCount,
-        },
-      }).catch((err) => logger.error('[langfuse] feedback score failed:', err));
-    }
+    scoreFeedback(req, updatedMessage, updatedMessage.feedback);
 
     res.json({
       messageId,
