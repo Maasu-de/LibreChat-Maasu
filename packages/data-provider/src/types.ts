@@ -754,12 +754,15 @@ export type TBannerResponse = TBanner | null;
 
 export type TUpdateFeedbackRequest = {
   feedback?: TMinimalFeedback;
+  /** The parallel response the feedback is for, by its agent ID, instead of the whole message. */
+  agentId?: string;
 };
 
 export type TUpdateFeedbackResponse = {
   messageId: string;
   conversationId: string;
   feedback?: TMinimalFeedback;
+  agentId?: string;
 };
 
 export type TBalanceResponse = {

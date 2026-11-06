@@ -29,7 +29,6 @@ import { mainTextareaId, BadgeItem } from '~/common';
 import PendingQuoteChips from './PendingQuoteChips';
 import AttachFileChat from './Files/AttachFileChat';
 import FileFormChat from './Files/FileFormChat';
-import TextareaHeader from './TextareaHeader';
 import PromptsCommand from './PromptsCommand';
 import SkillsCommand from './SkillsCommand';
 import AudioRecorder from './AudioRecorder';
@@ -105,11 +104,7 @@ const ChatForm = memo(function ChatForm({
 
   const { requiresKey } = useRequiresKey();
   const methods = useChatFormContext();
-  const {
-    generateConversation,
-    conversation: addedConvo,
-    setConversation: setAddedConvo,
-  } = useAddedChatContext();
+  const { generateConversation } = useAddedChatContext();
   const assistantMap = useAssistantsMapContext();
   const { data: startupConfig } = useGetStartupConfig();
   const governancePilot = startupConfig?.governancePilotEnabled === true;
@@ -361,7 +356,6 @@ const ChatForm = memo(function ChatForm({
               !isTemporary && (isTextAreaFocused ? 'border-[#0071e3]' : 'border-aimo-line'),
             )}
           >
-            <TextareaHeader addedConvo={addedConvo} setAddedConvo={setAddedConvo} />
             {!governancePilot && <PendingManualSkillsChips conversationId={conversationId} />}
             {quotesEnabled && <PendingQuoteChips conversationId={conversationId} />}
             {/* WIP */}

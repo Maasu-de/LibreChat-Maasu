@@ -6,6 +6,7 @@ const {
   countTokens,
   isDlpUnsent,
   checkBalance,
+  isComparisonUnanswered,
   getBalanceConfig,
   buildMessageFiles,
   addDlpFileContext,
@@ -392,6 +393,10 @@ class BaseClient {
           text: message,
         });
 
+    if (this.options.req) {
+      this.options.req.governanceMessageId = userMessage.messageId;
+    }
+
     /**
      * Attach quoted excerpts (the "Add to chat" selections from `req.body.quotes`)
      * before `getReqData`/`onStart` fire, so the optimistic bubble, resumable job
@@ -767,6 +772,10 @@ class BaseClient {
       if (usage != null && Number(usage[this.outputTokensKey]) > 0) {
         responseMessage.tokenCount = usage[this.outputTokensKey];
         completionTokens = responseMessage.tokenCount;
+      } else if (isComparisonUnanswered(this.options.req)) {
+        /** Only governance notices were shown, so no model ran and nothing is billed. */
+        responseMessage.tokenCount = this.getTokenCountForResponse(responseMessage);
+        completionTokens = 0;
       } else {
         responseMessage.tokenCount = this.getTokenCountForResponse(responseMessage);
         completionTokens = responseMessage.tokenCount;

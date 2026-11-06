@@ -1119,6 +1119,72 @@ describe('BaseClient', () => {
         expect(TestClient.saveMessageToDatabase).not.toHaveBeenCalled();
       });
     });
+
+    describe('governed comparison turn', () => {
+      const blocked = () =>
+        new Response('{"error":{"code":"governance_blocked"}}', {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const completion = () =>
+        new Response('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n\n', {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+
+      /** Sends the turn after both compared models' gateway calls came back as `responses` give. */
+      const sendComparison = async (...responses) => {
+        const req = { body: { text: 'Hello, world!', addedConvo: {} }, user: { id: 'user-1' } };
+        TestClient.options.req = req;
+        TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({});
+        TestClient.getTokenCountForResponse = jest.fn().mockReturnValue(50);
+        TestClient.recordTokenUsage = jest.fn().mockResolvedValue(undefined);
+        TestClient.buildMessages.mockReturnValue({ prompt: [], tokenCountMap: { res: 50 } });
+        const sendCompletion = TestClient.sendCompletion.bind(TestClient);
+        TestClient.sendCompletion = async (...args) => {
+          await Promise.all(
+            responses.map((response) =>
+              createRequestDlpFetch(req, async () => response())(
+                'http://governance.test/v1/chat/completions',
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    model: 'governed-model',
+                    messages: [{ role: 'user', content: 'Hello, world!' }],
+                    stream: true,
+                  }),
+                },
+              ),
+            ),
+          );
+          return sendCompletion(...args);
+        };
+        await TestClient.sendMessage('Hello, world!');
+      };
+
+      let originalReq;
+
+      beforeEach(() => {
+        originalReq = TestClient.options.req;
+      });
+
+      afterEach(() => {
+        TestClient.options.req = originalReq;
+      });
+
+      test('keeps the turn but bills no model when both compared models were blocked', async () => {
+        await sendComparison(blocked, blocked);
+
+        expect(TestClient.saveMessageToDatabase).toHaveBeenCalled();
+        expect(TestClient.recordTokenUsage).not.toHaveBeenCalled();
+      });
+
+      test('bills the turn when one compared model answered', async () => {
+        await sendComparison(blocked, completion);
+
+        expect(TestClient.recordTokenUsage).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('recordTokenUsage model assignment', () => {

@@ -1037,6 +1037,55 @@ describe('useStepHandler', () => {
         groupId: 2,
       });
     });
+
+    it('keeps the column of a parallel agent that has not streamed while the other streams', () => {
+      const placeholders = [
+        { type: '', agentId: 'primary', groupId: 1 },
+        { type: '', agentId: 'added____1', groupId: 1 },
+      ] as unknown as TMessageContentParts[];
+      mockGetMessages.mockReturnValue([createResponseMessage({ content: placeholders })]);
+      const { result } = renderHook(() => useStepHandler(createHookParams()));
+      const submission = createSubmission();
+      const stream = (id: string, index: number, agentId: string, text: string) => {
+        act(() => {
+          result.current.stepHandler(
+            {
+              event: StepEvents.ON_RUN_STEP,
+              data: createRunStep({ id, index, agentId, groupId: 1 }),
+            },
+            submission,
+          );
+          result.current.stepHandler(
+            { event: StepEvents.ON_MESSAGE_DELTA, data: createMessageDelta(id, text) },
+            submission,
+          );
+        });
+      };
+      const columns = () => {
+        const lastCall = mockSetMessages.mock.calls[mockSetMessages.mock.calls.length - 1][0];
+        const content = lastCall.find((m: TMessage) => !m.isCreatedByUser)?.content ?? [];
+        return content
+          .filter(Boolean)
+          .map((part: TMessageContentParts & { agentId?: string }) => [part.agentId, part.type]);
+      };
+
+      stream('primary-think', 0, 'primary', 'Thinking');
+      stream('primary-text', 1, 'primary', 'Answer');
+
+      expect(columns()).toEqual([
+        ['primary', ContentTypes.TEXT],
+        ['primary', ContentTypes.TEXT],
+        ['added____1', ''],
+      ]);
+
+      stream('added-text', 2, 'added____1', 'Other answer');
+
+      expect(columns()).toEqual([
+        ['primary', ContentTypes.TEXT],
+        ['primary', ContentTypes.TEXT],
+        ['added____1', ContentTypes.TEXT],
+      ]);
+    });
   });
 
   describe('on_agent_update event', () => {

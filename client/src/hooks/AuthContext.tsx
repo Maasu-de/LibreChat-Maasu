@@ -52,6 +52,7 @@ const AuthContextProvider = ({
   const setQueriesEnabled = useSetRecoilState<boolean>(store.queriesEnabled);
 
   const userRoleName = user?.role ?? '';
+  /** Any role besides USER and ADMIN, such as GOVERNANCE_ADMIN, is fetched by its own name. */
   const loadActiveRole =
     isAuthenticated &&
     !!userRoleName &&

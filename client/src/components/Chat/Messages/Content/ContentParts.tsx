@@ -2,11 +2,13 @@ import { memo, useRef, useMemo, useCallback } from 'react';
 import { ContentTypes } from 'librechat-data-provider';
 import type {
   TMessageContentParts,
+  TParallelFeedback,
   SearchResultData,
   TAttachment,
   Agents,
 } from 'librechat-data-provider';
 import type { ToolCallGroupExpansionState } from './ToolCallGroup';
+import type { ParallelFeedbackHandler } from './ParallelContent';
 import { ParallelContentRenderer, type PartWithIndex } from './ParallelContent';
 import { mapAttachments, groupSequentialToolCalls } from '~/utils';
 import { MessageContext, SearchContext } from '~/Providers';
@@ -107,6 +109,10 @@ type ContentPartsProps = {
   manualSkills?: string[];
   /** ISO timestamp of the parent message, surfaced in parallel column headers. */
   createdAt?: string | null;
+  /** The message's feedback on each parallel response, shown in that response's column. */
+  parallelFeedback?: TParallelFeedback[];
+  /** Rates one parallel response; without it, the columns show no feedback controls. */
+  onParallelFeedback?: ParallelFeedbackHandler;
   conversationId?: string | null;
   attachments?: TAttachment[];
   searchResults?: { [key: string]: SearchResultData };
@@ -145,6 +151,8 @@ const ContentParts = memo(function ContentParts({
   isCreatedByUser,
   isLatestMessage,
   createdAt,
+  parallelFeedback,
+  onParallelFeedback,
 }: ContentPartsProps) {
   const attachmentMap = useMemo(() => mapAttachments(attachments ?? []), [attachments]);
   const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
@@ -376,6 +384,7 @@ const ContentParts = memo(function ContentParts({
       <>
         {renderPendingSkills()}
         <ParallelContentRenderer
+          isLast={isLast}
           content={content}
           messageId={messageId}
           createdAt={createdAt}
@@ -384,6 +393,8 @@ const ContentParts = memo(function ContentParts({
           searchResults={searchResults}
           isSubmitting={effectiveIsSubmitting}
           renderPart={renderPart}
+          parallelFeedback={parallelFeedback}
+          onParallelFeedback={onParallelFeedback}
         />
       </>
     );

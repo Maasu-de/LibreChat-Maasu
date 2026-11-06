@@ -1,4 +1,5 @@
 import { useId, useRef, useMemo, useState, useEffect, useCallback } from 'react';
+import { Trans } from 'react-i18next';
 import { ChevronDown } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
@@ -388,8 +389,13 @@ export default function DlpInterventionDialog({
   onConfirm: () => void;
 }) {
   const localize = useLocalize();
-  const { decision, modelNotAllowed } = result;
+  const { decision, modelNotAllowed, modelRestriction } = result;
   const copy = modelNotAllowed ? MODEL_BLOCK_COPY : COPY[decision];
+  const title = localize(modelRestriction ? 'com_ui_dlp_model_restricted_title' : copy.title);
+  /** The restriction names the models in the text, which the dialog's plain description cannot. */
+  const description = modelRestriction
+    ? undefined
+    : localize(copy.description, modelNotAllowed && { 0: modelNotAllowed.model });
   const [revealed, setRevealed] = useState<RevealedValue | null>(null);
   const [focusedIndex, setFocusedIndex] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -562,8 +568,8 @@ export default function DlpInterventionDialog({
   return (
     <OGDialog open onOpenChange={(open) => !open && onCancel()}>
       <OGDialogTemplate
-        title={localize(copy.title)}
-        description={localize(copy.description, modelNotAllowed && { 0: modelNotAllowed.model })}
+        title={title}
+        description={description}
         className="max-w-[760px] grid-rows-[auto_minmax(0,1fr)_auto] overflow-visible"
         mainClassName="flex min-h-0 overflow-hidden"
         headerClassName="[&_h2]:text-[28px] [&_h2]:leading-[1.14] [&_p]:text-sm [&_p]:tracking-[-0.016em]"
@@ -578,6 +584,22 @@ export default function DlpInterventionDialog({
             className="flex max-h-[65vh] min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-1"
             role="document"
           >
+            {modelRestriction && (
+              <p className="text-sm tracking-[-0.016em] text-text-secondary">
+                <Trans
+                  i18nKey="com_ui_dlp_model_restricted_description"
+                  values={{
+                    models: modelRestriction.models.join(', '),
+                    categories: modelRestriction.categories
+                      .map((category) => categoryLabel({ category }))
+                      .join(', '),
+                  }}
+                  components={{
+                    model: <span className={cn(BADGE, 'px-2 py-0.5', ACTION_STYLE.BLOCK.chip)} />,
+                  }}
+                />
+              </p>
+            )}
             {sendFailed && (
               <p
                 role="alert"

@@ -396,6 +396,27 @@ describe('Governance DLP', () => {
     expect(headers.get('X-Existing-Header')).toBe('kept');
   });
 
+  it("correlates each gateway call with the turn's conversation and user message", async () => {
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+        new Response('ok'),
+    );
+    const req = {
+      body: { conversationId: 'conversation-1' },
+      user: { id: 'user-123' },
+      governanceMessageId: 'message-1',
+    } as unknown as ServerRequest;
+
+    await createGovernanceAttributionFetch(req, upstreamFetch)(
+      'http://governance.test/v1/chat/completions',
+      { method: 'POST' },
+    );
+
+    const headers = new Headers(upstreamFetch.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('X-LibreChat-Conversation-ID')).toBe('conversation-1');
+    expect(headers.get('X-LibreChat-Message-ID')).toBe('message-1');
+  });
+
   describe('a model the content does not allow', () => {
     const req = { user: { id: 'user-123' } } as unknown as ServerRequest;
     const send = (response: Response) =>
@@ -623,6 +644,410 @@ describe('governed turn sent state', () => {
     expect(
       getDlpSideCallFetch(createRequestDlpFetch(governedRequest(), upstreamFetch, false)),
     ).toBeUndefined();
+  });
+});
+
+describe('two-model comparison', () => {
+  const text = 'Please email max@example.com today';
+  let reviewCount = 0;
+
+  const comparisonRequest = (body: Record<string, string> = {}): ServerRequest =>
+    ({
+      body: { text, addedConvo: { model: 'second-model' }, ...body },
+      user: { id: 'user-123' } as ServerRequest['user'],
+    }) as ServerRequest;
+
+  const sse = (data: object): Response =>
+    new Response(`data: ${JSON.stringify(data)}\n\ndata: [DONE]\n\n`, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+
+  const completion = (): Response => sse({ choices: [{ delta: { content: 'Hi' } }] });
+
+  const review = (action: 'WARN' | 'MASK' | 'BLOCK'): Response =>
+    sse({
+      choices: [],
+      dlp: {
+        review_id: `comparison-review-${++reviewCount}`,
+        action,
+        findings: [
+          {
+            location: '/messages/0/content',
+            start: 13,
+            end: 28,
+            category: 'EMAIL_ADDRESS',
+            action,
+            ...(action === 'MASK' ? { replacement: '[EMAIL]' } : {}),
+          },
+        ],
+        ...(action === 'BLOCK'
+          ? {}
+          : {
+              messages: [
+                {
+                  role: 'user',
+                  content: action === 'MASK' ? 'Please email [EMAIL] today' : text,
+                },
+              ],
+              dlp_token: 'approval-token',
+            }),
+      },
+    });
+
+  /** A block because the findings do not allow the requested model. */
+  const restricted = (): Response =>
+    sse({
+      choices: [],
+      dlp: {
+        review_id: `comparison-review-${++reviewCount}`,
+        action: 'BLOCK',
+        restricted_categories: ['EMAIL_ADDRESS'],
+        findings: [
+          {
+            location: '/messages/0/content',
+            start: 13,
+            end: 28,
+            category: 'EMAIL_ADDRESS',
+            action: 'WARN',
+          },
+        ],
+      },
+    });
+
+  const send = (governedFetch: GovernanceFetch, signal?: AbortSignal, model = 'governed-model') =>
+    governedFetch('http://governance.test/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: text }],
+        stream: true,
+      }),
+      signal,
+    });
+
+  const responseText = async (response: Response): Promise<string> =>
+    JSON.parse((await response.text()).split('\n\n')[0].replace('data: ', '')).choices[0].delta
+      .content;
+
+  const streamEvents = async (response: Response): Promise<string[]> =>
+    (await response.text())
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.slice('data: '.length));
+
+  /** A completion that streams its first answer, then breaks partway through the next event. */
+  const broken = (error: Error = new TypeError('terminated'), onBreak = () => {}): Response => {
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(
+              encoder.encode('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\ndata: {"choi'),
+            );
+            return;
+          }
+          onBreak();
+          controller.error(error);
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    );
+  };
+
+  it('streams an allowed call and marks the turn sent', async () => {
+    const req = comparisonRequest();
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => completion(),
+    );
+
+    const response = await send(createRequestDlpFetch(req, upstreamFetch));
+
+    expect(await responseText(response)).toBe('Hi');
+    expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      require_user_approval: true,
+    });
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(req.governanceDlpReview).toBeUndefined();
+  });
+
+  it('ends the turn with the block review when both models are blocked', async () => {
+    const req = comparisonRequest();
+
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, async () => review('BLOCK'))),
+      send(createRequestDlpFetch(req, async () => review('BLOCK'))),
+    ]);
+
+    for (const response of responses) {
+      expect(await responseText(response)).toContain('AI governance policy blocks this message');
+    }
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(req.governanceDlpReview?.decision).toBe('BLOCK');
+  });
+
+  it.each<[string, () => Promise<Response>, string]>([
+    [
+      'failed at the gateway',
+      async () => new Response('{"error":{}}', { status: 503 }),
+      'could not respond',
+    ],
+    [
+      'unreachable',
+      async () => {
+        throw new TypeError('fetch failed');
+      },
+      'could not respond',
+    ],
+    [
+      'denied by the gateway',
+      async () => new Response('{"error":{"code":"governance_blocked"}}', { status: 403 }),
+      'AI governance policy blocks this message',
+    ],
+  ])(
+    'answers for both models whose calls were %s and keeps the turn',
+    async (_label, gateway, expected) => {
+      const req = comparisonRequest();
+
+      const responses = await Promise.all([
+        send(createRequestDlpFetch(req, jest.fn(gateway))),
+        send(createRequestDlpFetch(req, jest.fn(gateway))),
+      ]);
+
+      for (const response of responses) {
+        expect(response.ok).toBe(true);
+        expect(await responseText(response)).toContain(expected);
+      }
+      expect(isDlpUnsent(req)).toBe(false);
+    },
+  );
+
+  it('keeps a pending model call when the review stops waiting for it', async () => {
+    jest.useFakeTimers();
+    try {
+      const req = comparisonRequest();
+      let answer = (_response: Response) => {};
+      const pending = new Promise<Response>((resolve) => {
+        answer = resolve;
+      });
+
+      const reviewed = send(createRequestDlpFetch(req, async () => review('WARN')));
+      const delayed = send(createRequestDlpFetch(req, () => pending));
+      await jest.advanceTimersByTimeAsync(30_000);
+      const notice = await reviewed;
+      answer(completion());
+
+      expect(notice.ok).toBe(true);
+      expect(await responseText(notice)).toContain('needs your review first');
+      expect(await responseText(await delayed)).toBe('Hi');
+      expect(isDlpUnsent(req)).toBe(false);
+      expect(req.governanceDlpReview).toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('asks the user to review a masked message, ahead of the other model being blocked', async () => {
+    const req = comparisonRequest();
+
+    const [masked, blocked] = await Promise.all([
+      send(createRequestDlpFetch(req, async () => review('MASK'))),
+      send(createRequestDlpFetch(req, async () => review('BLOCK'))),
+    ]);
+
+    expect(masked.status).toBe(400);
+    expect(await responseText(blocked)).toContain('blocks this message');
+    expect(req.governanceDlpReview?.decision).toBe('MASK');
+    expect(isDlpUnsent(req)).toBe(true);
+    expect(await getReviewStore().get(req.governanceDlpReview?.reviewId ?? '')).toMatchObject({
+      userId: 'user-123',
+      text: 'Please email [EMAIL] today',
+    });
+  });
+
+  it('sends the approved text to both models with one approval', async () => {
+    await getReviewStore().set(
+      'approved-review',
+      {
+        userId: 'user-123',
+        model: 'first-model',
+        text,
+        messages: [{ role: 'user', content: text }],
+        dlpToken: 'earlier-token',
+      },
+      60_000,
+    );
+    const req = comparisonRequest({ dlpReviewId: 'approved-review' });
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        String(init?.body).includes('dlp_token') ? completion() : review('WARN'),
+    );
+
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, upstreamFetch)),
+      send(createRequestDlpFetch(req, upstreamFetch)),
+    ]);
+
+    expect(await Promise.all(responses.map(responseText))).toEqual(['Hi', 'Hi']);
+    const approvals = upstreamFetch.mock.calls
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.dlp_token != null);
+    expect(approvals).toHaveLength(2);
+    expect(approvals.every((body) => body.dlp_token === 'approval-token')).toBe(true);
+    expect(await getReviewStore().get('approved-review')).toBeUndefined();
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(req.governanceDlpReview).toBeUndefined();
+  });
+
+  it('asks again when the approval is no longer valid', async () => {
+    const req = comparisonRequest({ dlpReviewId: 'expired-review' });
+
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, async () => review('WARN'))),
+      send(createRequestDlpFetch(req, async () => review('WARN'))),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([400, 400]);
+    expect(req.governanceDlpReview?.decision).toBe('WARN');
+  });
+
+  it('names a model the findings do not allow, even after the other model asked for a review', async () => {
+    const req = comparisonRequest();
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const restrictedGateway = jest.fn(async (): Promise<Response> => {
+      await released;
+      return restricted();
+    });
+    let reviewedSettled = false;
+
+    const reviewed = send(createRequestDlpFetch(req, async () => review('MASK'))).finally(() => {
+      reviewedSettled = true;
+    });
+    const blocked = send(createRequestDlpFetch(req, restrictedGateway), undefined, 'public-s2');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(req.governanceDlpReview?.decision).toBe('MASK');
+    expect(reviewedSettled).toBe(false);
+
+    release();
+    const responses = await Promise.all([reviewed, blocked]);
+
+    expect(responses.map((response) => response.ok)).toEqual([false, false]);
+    expect(req.governanceDlpReview).toMatchObject({
+      decision: 'BLOCK',
+      modelRestriction: { models: ['public-s2'], categories: ['EMAIL_ADDRESS'] },
+    });
+    expect(isDlpUnsent(req)).toBe(true);
+  });
+
+  it('names both models when the findings allow neither', async () => {
+    const req = comparisonRequest();
+
+    await Promise.all([
+      send(
+        createRequestDlpFetch(req, async () => restricted()),
+        undefined,
+        'public-s2',
+      ),
+      send(
+        createRequestDlpFetch(req, async () => restricted()),
+        undefined,
+        'public-s3',
+      ),
+    ]);
+
+    expect(req.governanceDlpReview?.modelRestriction?.models.sort()).toEqual([
+      'public-s2',
+      'public-s3',
+    ]);
+    expect(req.governanceDlpReview?.modelRestriction?.categories).toEqual(['EMAIL_ADDRESS']);
+  });
+
+  it.each<[string, () => Response, string]>([
+    ['not allowed', restricted, "can't receive prompts that contain email address"],
+    ['held for review', () => review('WARN'), 'needs your review first'],
+  ])(
+    'answers with a notice for a model %s once the other model already answered',
+    async (_label, gateway, expected) => {
+      const req = comparisonRequest();
+
+      const [answered, notified] = await Promise.all([
+        send(createRequestDlpFetch(req, async () => completion())),
+        send(
+          createRequestDlpFetch(req, async () => gateway()),
+          undefined,
+          'public-s2',
+        ),
+      ]);
+
+      expect(await responseText(answered)).toBe('Hi');
+      expect(await responseText(notified)).toContain(expected);
+      expect(req.governanceDlpReview).toBeUndefined();
+    },
+  );
+
+  it("keeps a model's partial answer when its stream breaks, so the other model can finish", async () => {
+    const req = comparisonRequest();
+
+    const [answered, interrupted] = await Promise.all([
+      send(createRequestDlpFetch(req, async () => completion())),
+      send(
+        createRequestDlpFetch(req, async () => broken()),
+        undefined,
+        'public-s2',
+      ),
+    ]);
+
+    expect(await responseText(answered)).toBe('Hi');
+    const events = await streamEvents(interrupted);
+    expect(events).toHaveLength(3);
+    expect(JSON.parse(events[0]).choices[0].delta.content).toBe('Hel');
+    expect(JSON.parse(events[1]).choices[0]).toMatchObject({
+      delta: { content: expect.stringContaining('stopped responding') },
+      finish_reason: 'stop',
+    });
+    expect(events[2]).toBe('[DONE]');
+  });
+
+  it('still ends a broken stream when the user stops the turn', async () => {
+    const controller = new AbortController();
+    const stopped = () =>
+      broken(new DOMException('aborted', 'AbortError'), () => controller.abort());
+
+    const response = await send(
+      createRequestDlpFetch(comparisonRequest(), async () => stopped()),
+      controller.signal,
+    );
+
+    await expect(response.text()).rejects.toThrow('aborted');
+  });
+
+  it('keeps a single-model block as it was', async () => {
+    const req = { ...comparisonRequest(), body: { text } } as ServerRequest;
+
+    const response = await send(createRequestDlpFetch(req, async () => restricted()));
+
+    expect(response.status).toBe(400);
+    expect(req.governanceDlpReview?.decision).toBe('BLOCK');
+    expect(req.governanceDlpReview?.modelRestriction).toBeUndefined();
+  });
+
+  it('still ends the call when the user stops the turn', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = jest.fn(async (): Promise<Response> => {
+      throw new DOMException('aborted', 'AbortError');
+    });
+
+    await expect(
+      send(createRequestDlpFetch(comparisonRequest(), aborted), controller.signal),
+    ).rejects.toThrow('aborted');
   });
 });
 

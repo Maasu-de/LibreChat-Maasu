@@ -19,7 +19,6 @@ const restrictedFields = new Set([
   'tool_calls',
   'functions',
   'assistant_id',
-  'addedConvo',
   'editedContent',
   'isContinued',
   'isRegenerate',
@@ -58,6 +57,19 @@ function hasUnsupportedSettings(body: Submission, agentChat = false): boolean {
   return Object.entries(body).some(([key, value]) => {
     if (key === 'files' && isGovernanceAttachmentsEnabled()) {
       return false;
+    }
+    if (key === 'addedConvo' && agentChat && value != null) {
+      return true;
+    }
+    if (
+      key === 'addedConvo' &&
+      value != null &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      /** A saved conversation's `messages` are message ID references, not submitted content. */
+      const { messages: _messages, ...settings } = value;
+      return hasUnsupportedSettings(settings);
     }
     if (restrictedFields.has(key) && populated(value)) {
       return true;

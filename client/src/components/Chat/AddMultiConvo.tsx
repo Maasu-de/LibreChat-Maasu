@@ -1,10 +1,11 @@
-import { useCallback } from 'react';
-import { useSetRecoilState, useRecoilValue } from 'recoil';
+import { useCallback, useEffect } from 'react';
+import { useRecoilState, useRecoilValue } from 'recoil';
 import { PlusCircle } from 'lucide-react';
 import { TooltipAnchor } from '@librechat/client';
-import { isAssistantsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import { useGetConversation, useLocalize } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { mainTextareaId } from '~/common';
 import store from '~/store';
 
@@ -12,7 +13,16 @@ function AddMultiConvo() {
   const localize = useLocalize();
   const getConversation = useGetConversation(0);
   const endpoint = useRecoilValue(store.conversationEndpointByIndex(0));
-  const setAddedConvo = useSetRecoilState(store.conversationByIndex(1));
+  const [addedConvo, setAddedConvo] = useRecoilState(store.conversationByIndex(1));
+  const { data: startupConfig } = useGetStartupConfig();
+  const governedAgent =
+    startupConfig?.governancePilotEnabled === true && isAgentsEndpoint(endpoint);
+
+  useEffect(() => {
+    if (governedAgent && addedConvo) {
+      setAddedConvo(null);
+    }
+  }, [governedAgent, addedConvo, setAddedConvo]);
 
   const clickHandler = useCallback(() => {
     const conversation = getConversation();
@@ -28,7 +38,7 @@ function AddMultiConvo() {
     }
   }, [getConversation, setAddedConvo]);
 
-  if (!endpoint) {
+  if (!endpoint || addedConvo || governedAgent) {
     return null;
   }
 

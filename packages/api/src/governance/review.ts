@@ -6,6 +6,7 @@ import type {
   GovernanceDlpReview,
   GovernanceFileFinding,
   GovernanceInstructionReview,
+  GovernanceModelRestriction,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
 import type { FileContext } from '~/files/context';
@@ -27,6 +28,8 @@ export interface GatewayReview {
   messages?: GovernanceChatMessage[];
   dlp_token?: string;
   expires_at?: number;
+  /** Set on a block when these categories do not allow the requested model. */
+  restricted_categories?: string[];
   /** Why a BLOCK review cannot be sent: `policy_blocked` or `model_not_allowed`. */
   block_reason?: string;
   /** For `model_not_allowed`: the tiers whose models may take the content. */
@@ -405,6 +408,17 @@ function createUnsentTurnEvent(userMessage?: ReviewedUserMessage): FinalEvent {
     aborted: true,
     earlyAbort: true,
   };
+}
+
+/** The categories a blocked review names as not allowing `model`, which another model may receive. */
+export function toModelRestriction(
+  review: GatewayReview,
+  model: string,
+): GovernanceModelRestriction | undefined {
+  const categories = Array.isArray(review.restricted_categories)
+    ? review.restricted_categories.filter((category) => typeof category === 'string')
+    : [];
+  return categories.length > 0 ? { models: [model], categories } : undefined;
 }
 
 /**

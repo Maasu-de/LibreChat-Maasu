@@ -115,6 +115,19 @@ export const feedbackSchema = z.object({
 
 export type TMinimalFeedback = z.infer<typeof feedbackSchema>;
 
+/** Feedback on one response of a message with parallel responses, such as a model comparison. */
+export const parallelFeedbackSchema = feedbackSchema.extend({
+  agentId: z.string().min(1),
+});
+
+export type TParallelFeedback = z.infer<typeof parallelFeedbackSchema>;
+
+/** A feedback update for one parallel response; without `feedback`, it clears that response's. */
+export const parallelFeedbackRequestSchema = z.object({
+  agentId: z.string().min(1),
+  feedback: feedbackSchema.nullish(),
+});
+
 export type TFeedback = {
   rating: TFeedbackRating;
   tag: TFeedbackTag | undefined;

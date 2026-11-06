@@ -1,14 +1,28 @@
-import { memo, useMemo } from 'react';
-import type { TMessageContentParts, SearchResultData, TAttachment } from 'librechat-data-provider';
+import { memo, useMemo, useCallback } from 'react';
+import { getTagByKey } from 'librechat-data-provider';
+import type {
+  TMessageContentParts,
+  TParallelFeedback,
+  SearchResultData,
+  TAttachment,
+  TFeedback,
+} from 'librechat-data-provider';
 import MemoryArtifacts from './MemoryArtifacts';
 import Sources from '~/components/Web/Sources';
 import { SearchContext } from '~/Providers';
 import SiblingHeader from './SiblingHeader';
 import { EmptyText } from './Parts';
 import Container from './Container';
+import Feedback from '../Feedback';
 import { cn } from '~/utils';
 
+/** The column of parallel content that names no agent. */
+const UNKNOWN_AGENT_ID = 'unknown';
+
 export type PartWithIndex = { part: TMessageContentParts; idx: number };
+
+/** Rates one parallel response of a message, by its agent ID. */
+export type ParallelFeedbackHandler = (agentId: string, feedback: TFeedback | undefined) => void;
 
 export type ParallelColumn = {
   agentId: string;
@@ -80,7 +94,7 @@ export function groupParallelContent(
 
     for (const { part, idx } of parts) {
       // Read agentId directly from content part (TMessageContentParts includes ContentMetadata)
-      const agentId = part.agentId ?? 'unknown';
+      const agentId = part.agentId ?? UNKNOWN_AGENT_ID;
 
       if (!columnMap.has(agentId)) {
         columnMap.set(agentId, []);
@@ -133,6 +147,31 @@ export function groupParallelContent(
   return { parallelSections: sections, sequentialParts: noGroup };
 }
 
+type ColumnFeedbackProps = {
+  agentId: string;
+  isLast: boolean;
+  feedback?: TFeedback;
+  onFeedback: ParallelFeedbackHandler;
+};
+
+/** The thumbs-up/down controls for one parallel response, rated on its own. */
+const ColumnFeedback = memo(function ColumnFeedback({
+  agentId,
+  isLast,
+  feedback,
+  onFeedback,
+}: ColumnFeedbackProps) {
+  const handleFeedback = useCallback(
+    ({ feedback: next }: { feedback: TFeedback | undefined }) => onFeedback(agentId, next),
+    [agentId, onFeedback],
+  );
+  return (
+    <div className="mt-2 flex items-center gap-0.5" data-testid={`column-feedback-${agentId}`}>
+      <Feedback handleFeedback={handleFeedback} feedback={feedback} isLast={isLast} />
+    </div>
+  );
+});
+
 type ParallelColumnsProps = {
   columns: ParallelColumn[];
   groupId: number;
@@ -142,6 +181,9 @@ type ParallelColumnsProps = {
   lastContentIdx: number;
   conversationId?: string | null;
   renderPart: (part: TMessageContentParts, idx: number, isLastPart: boolean) => React.ReactNode;
+  isLast?: boolean;
+  feedbackByAgent?: Map<string, TFeedback>;
+  onFeedback?: ParallelFeedbackHandler;
 };
 
 /**
@@ -156,6 +198,9 @@ export const ParallelColumns = memo(function ParallelColumns({
   isSubmitting,
   lastContentIdx,
   renderPart,
+  isLast = false,
+  feedbackByAgent,
+  onFeedback,
 }: ParallelColumnsProps) {
   return (
     <div className={cn('flex w-full flex-col gap-3 md:flex-row', 'sibling-content-group')}>
@@ -186,6 +231,14 @@ export const ParallelColumns = memo(function ParallelColumns({
                 return renderPart(part, idx, isLastInColumn && isLastContent);
               })
             )}
+            {onFeedback && !isSubmitting && agentId !== UNKNOWN_AGENT_ID && (
+              <ColumnFeedback
+                agentId={agentId}
+                isLast={isLast}
+                feedback={feedbackByAgent?.get(agentId)}
+                onFeedback={onFeedback}
+              />
+            )}
           </div>
         );
       })}
@@ -202,6 +255,9 @@ type ParallelContentRendererProps = {
   searchResults?: { [key: string]: SearchResultData };
   isSubmitting: boolean;
   renderPart: (part: TMessageContentParts, idx: number, isLastPart: boolean) => React.ReactNode;
+  isLast?: boolean;
+  parallelFeedback?: TParallelFeedback[];
+  onParallelFeedback?: ParallelFeedbackHandler;
 };
 
 /**
@@ -217,10 +273,24 @@ export const ParallelContentRenderer = memo(function ParallelContentRenderer({
   searchResults,
   isSubmitting,
   renderPart,
+  isLast,
+  parallelFeedback,
+  onParallelFeedback,
 }: ParallelContentRendererProps) {
   const { parallelSections, sequentialParts } = useMemo(
     () => groupParallelContent(content),
     [content],
+  );
+
+  const feedbackByAgent = useMemo(
+    () =>
+      new Map<string, TFeedback>(
+        parallelFeedback?.map(({ agentId, rating, tag, text }) => [
+          agentId,
+          { rating, tag: getTagByKey(tag), text },
+        ]),
+      ),
+    [parallelFeedback],
   );
 
   const lastContentIdx = (content?.length ?? 0) - 1;
@@ -263,6 +333,9 @@ export const ParallelContentRenderer = memo(function ParallelContentRenderer({
           isSubmitting={isSubmitting}
           conversationId={conversationId}
           lastContentIdx={lastContentIdx}
+          isLast={isLast}
+          feedbackByAgent={feedbackByAgent}
+          onFeedback={onParallelFeedback}
         />
       ))}
 

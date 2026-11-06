@@ -100,6 +100,11 @@ describe('pilot HTTP boundary', () => {
     { provider: 'openAI' },
     { tools: ['execute_code'] },
     { capabilities: ['unknown'] },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, endpointType: 'custom', model: 'other-model' } },
+    { addedConvo: {} },
+    { addedConvo: false },
+    { addedConvo: '' },
+    { addedConvo: [] },
   ])('rejects unsupported saved-agent UI submissions %j', async (extra) => {
     const response = await request(app())
       .post('/api/agents/chat/agents')
@@ -226,6 +231,8 @@ describe('pilot HTTP boundary', () => {
     { endpointOption: { modelOptions: { disableStreaming: false } } },
     { files: [], tools: [], ephemeralAgent: { web_search: false, mcp: [] } },
     { conversationId: 'existing', parentMessageId: 'reply', isRegenerate: false },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, endpointType: 'custom', model: 'other-model' } },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, model: 'other-model', messages: ['saved-id'] } },
   ])('allows ordinary text chat and follow-ups: %j', async (extra) => {
     await expect(
       request(app())
@@ -282,7 +289,9 @@ describe('pilot HTTP boundary', () => {
     { assistant_id: 'asst_external' },
     { isRegenerate: true },
     { isContinued: true },
-    { addedConvo: { model: 'other' } },
+    { addedConvo: { endpoint: 'external', model: 'other' } },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, agent_id: 'agent_saved' } },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, tools: ['web_search'] } },
     { editedContent: { text: 'edited' } },
     { useResponsesApi: true },
     { disableStreaming: true },
