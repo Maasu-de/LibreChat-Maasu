@@ -56,6 +56,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
    * unset for a turn that is not governed. An unsent turn stores nothing.
    */
   governanceDlpSent?: boolean;
+  /** `false` for a comparison turn until the gateway starts a compared model's completion. */
+  governanceComparisonAnswered?: boolean;
   /** Run once when `governanceDlpSent` turns `true`. */
   governanceDlpSentCallbacks?: Array<() => void>;
 };

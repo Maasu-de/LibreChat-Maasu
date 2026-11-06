@@ -642,6 +642,11 @@ export function isDlpUnsent(req?: ServerRequest): boolean {
   return req?.governanceDlpSent === false;
 }
 
+/** True for a comparison turn that only got notices: no compared model ran, so none is billed. */
+export function isComparisonUnanswered(req?: ServerRequest): boolean {
+  return req?.governanceComparisonAnswered === false;
+}
+
 /**
  * The approved review of an unsent turn whose send failed but put the review back, so the user
  * can send it again. Undefined for any other turn.
@@ -866,6 +871,7 @@ async function isGovernanceBlocked(response: Response): Promise<boolean> {
  */
 function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): GovernanceFetch {
   req.governanceDlpSent ??= false;
+  req.governanceComparisonAnswered ??= false;
   let firstCall = true;
   return async (input, init) => {
     const counted = firstCall;
@@ -900,7 +906,10 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
           review = result;
           restriction = restricted;
         },
-        onSent: () => markDlpSent(req),
+        onSent: () => {
+          req.governanceComparisonAnswered = true;
+          markDlpSent(req);
+        },
       })(input, init);
     try {
       const response = await send();
