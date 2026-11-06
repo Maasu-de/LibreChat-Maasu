@@ -61,7 +61,10 @@ describe('useMessageActions handleParallelFeedback', () => {
       </QueryClientProvider>
     );
     const chatContext = { conversation, index: 0 } as unknown as TMessageChatContext;
-    const { result } = renderHook(() => useMessageActions({ message, chatContext }), { wrapper });
+    const { result } = renderHook(
+      () => useMessageActions({ message, chatContext, currentEditId: null }),
+      { wrapper },
+    );
 
     act(() => {
       result.current.handleParallelFeedback('agent-a', feedback);
