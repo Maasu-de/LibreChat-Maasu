@@ -2,7 +2,12 @@ const mongoose = require('mongoose');
 const { nanoid } = require('nanoid');
 const { v4: uuidv4 } = require('uuid');
 const { agentSchema, fileSchema } = require('@librechat/data-schemas');
-const { FileSources, PermissionBits, ResourceType } = require('librechat-data-provider');
+const {
+  FileSources,
+  PermissionBits,
+  ResourceType,
+  GOVERNANCE_ENDPOINT,
+} = require('librechat-data-provider');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
 // Only mock the dependencies that are not database-related
@@ -139,6 +144,142 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockReturnThis(),
     };
+  });
+
+  describe('governed agent version restore', () => {
+    const savedPilot = process.env.GOVERNANCE_PILOT_ENABLED;
+    const historical = {
+      name: 'Historical Agent',
+      instructions: 'Historical instructions',
+      provider: GOVERNANCE_ENDPOINT,
+      model: 'historical-model',
+      model_parameters: { temperature: 0.4, max_tokens: 512 },
+      tools: [],
+      actions: [],
+      edges: [],
+      skills_enabled: false,
+    };
+
+    beforeEach(() => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    });
+
+    afterEach(() => {
+      if (savedPilot === undefined) {
+        delete process.env.GOVERNANCE_PILOT_ENABLED;
+      } else {
+        process.env.GOVERNANCE_PILOT_ENABLED = savedPilot;
+      }
+    });
+
+    const createVersionedAgent = (version = historical, current = {}) =>
+      Agent.create({
+        id: `agent_${uuidv4()}`,
+        name: 'Current Agent',
+        instructions: 'Current instructions',
+        provider: GOVERNANCE_ENDPOINT,
+        model: 'current-model',
+        author: new mongoose.Types.ObjectId(mockReq.user.id),
+        tools: [],
+        versions: [version],
+        ...current,
+      });
+
+    test('restores the selected model-only version and preserves author and history', async () => {
+      const agent = await createVersionedAgent();
+      mockReq.params.id = agent.id;
+      mockReq.body = { version_index: 0 };
+
+      await revertAgentVersionHandler(mockReq, mockRes);
+
+      expect(mockRes.status).not.toHaveBeenCalled();
+      const stored = await Agent.findOne({ id: agent.id }).lean();
+      expect(stored).toMatchObject(historical);
+      expect(stored.author.toString()).toBe(mockReq.user.id);
+      expect(stored.versions).toHaveLength(1);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining(historical));
+    });
+
+    test.each([
+      { provider: 'openAI' },
+      { tools: ['execute_code'] },
+      { tools: ['unknown'] },
+      { actions: ['action_test'] },
+      { tool_resources: { context: { file_ids: ['file_test'] } } },
+      { tool_options: { shell: true } },
+      { edges: [{ to: 'agent_other' }] },
+      { subagents: { enabled: true } },
+      { skills_enabled: true },
+      { model_parameters: { useResponsesApi: true } },
+      { model_parameters: { configuration: { baseURL: 'https://provider.test' } } },
+      { id: 'ephemeral', tools: ['execute_code'] },
+    ])('rejects an unsafe historical version before writing: %j', async (extra) => {
+      const agent = await createVersionedAgent({ ...historical, ...extra });
+      const before = await Agent.findOne({ id: agent.id }).lean();
+      mockReq.params.id = agent.id;
+      mockReq.body = { version_index: 0 };
+
+      await revertAgentVersionHandler(mockReq, mockRes);
+
+      expect(mockRes.status).toHaveBeenCalledWith(403);
+      expect(await Agent.findOne({ id: agent.id }).lean()).toEqual(before);
+    });
+
+    test('rejects unsafe current settings that the selected snapshot would leave in place', async () => {
+      const agent = await createVersionedAgent(historical, { tool_options: { shell: true } });
+      const before = await Agent.findOne({ id: agent.id }).lean();
+      mockReq.params.id = agent.id;
+      mockReq.body = { version_index: 0 };
+
+      await revertAgentVersionHandler(mockReq, mockRes);
+
+      expect(mockRes.status).toHaveBeenCalledWith(403);
+      expect(await Agent.findOne({ id: agent.id }).lean()).toEqual(before);
+    });
+
+    test('restores default parameters without inheriting current unsupported settings', async () => {
+      const { model_parameters: _parameters, ...version } = historical;
+      const agent = await createVersionedAgent(version, {
+        model_parameters: { useResponsesApi: true },
+      });
+      mockReq.params.id = agent.id;
+      mockReq.body = { version_index: 0 };
+
+      await revertAgentVersionHandler(mockReq, mockRes);
+
+      expect(mockRes.status).not.toHaveBeenCalled();
+      const stored = await Agent.findOne({ id: agent.id }).lean();
+      expect(stored.model_parameters).toEqual({});
+      expect(stored.instructions).toBe(historical.instructions);
+      expect(stored.model).toBe(historical.model);
+    });
+
+    test.each([[null], [12], [[]]])('rejects a malformed stored snapshot: %j', async (version) => {
+      const agent = await createVersionedAgent(version);
+      const before = await Agent.findOne({ id: agent.id }).lean();
+      mockReq.params.id = agent.id;
+      mockReq.body = { version_index: 0 };
+
+      await revertAgentVersionHandler(mockReq, mockRes);
+
+      expect(mockRes.status).toHaveBeenCalledWith(400);
+      expect(await Agent.findOne({ id: agent.id }).lean()).toEqual(before);
+    });
+
+    test.each([undefined, null, -1, 0.5, '0', 10])(
+      'rejects an invalid version index without writing: %j',
+      async (versionIndex) => {
+        const agent = await createVersionedAgent();
+        const before = await Agent.findOne({ id: agent.id }).lean();
+        mockReq.params.id = agent.id;
+        mockReq.body = { version_index: versionIndex };
+
+        await revertAgentVersionHandler(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(400);
+        expect(await Agent.findOne({ id: agent.id }).lean()).toEqual(before);
+      },
+    );
   });
 
   describe('createAgentHandler', () => {

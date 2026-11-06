@@ -128,6 +128,10 @@ describe('pilot HTTP boundary', () => {
     await request(app()).get('/api/agents/agent_test/expanded').expect(204);
     await request(app()).get('/api/agents/categories').expect(204);
     await request(app())
+      .post('/api/agents/agent_test/revert')
+      .send({ version_index: 0 })
+      .expect(204);
+    await request(app())
       .post('/api/agents/chat')
       .send({
         endpoint: 'agents',
@@ -137,6 +141,33 @@ describe('pilot HTTP boundary', () => {
       })
       .expect(204);
   });
+
+  it.each([
+    {},
+    { version_index: -1 },
+    { version_index: 0.5 },
+    { version_index: '0' },
+    { version_index: null },
+    { version_index: 0, tools: ['execute_code'] },
+    { version_index: 0, provider: 'openAI' },
+  ])('rejects malformed or extended agent restore requests %j', async (body) => {
+    const response = await request(app())
+      .post('/api/agents/agent_test/revert')
+      .send(body)
+      .expect(403);
+    expect(response.body.type).toBe('governance_feature_unsupported');
+  });
+
+  it.each(['get', 'patch', 'delete'] as const)(
+    'does not enable other methods on the restore route: %s',
+    async (method) => {
+      const response = await request(app())
+        [method]('/api/agents/agent_test/revert')
+        .send({ version_index: 0 })
+        .expect(403);
+      expect(response.body.type).toBe('governance_feature_unsupported');
+    },
+  );
 
   it.each([
     { provider: 'openAI' },

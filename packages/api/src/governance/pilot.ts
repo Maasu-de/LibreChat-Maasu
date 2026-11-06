@@ -127,6 +127,22 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     next();
     return;
   }
+  if (req.method === 'POST' && /^\/agents\/agent_[\w-]+\/revert$/.test(path)) {
+    const body: Submission = req.body;
+    if (
+      body &&
+      !Array.isArray(body) &&
+      Object.keys(body).length === 1 &&
+      typeof body.version_index === 'number' &&
+      Number.isSafeInteger(body.version_index) &&
+      body.version_index >= 0
+    ) {
+      next();
+      return;
+    }
+    deny(res);
+    return;
+  }
   const chat = '/agents/chat';
   if (path.startsWith(`${chat}/`) || path === chat) {
     if (

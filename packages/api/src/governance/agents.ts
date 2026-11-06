@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { isEphemeralAgentId, GOVERNANCE_AGENT_MODEL_PARAMETERS } from 'librechat-data-provider';
+import type { IAgent } from '@librechat/data-schemas';
 import type { Agent } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types/http';
 import type { GovernanceFetch } from './dlp';
@@ -81,6 +82,29 @@ export function assertGovernanceAgent(agent: Agent): void {
     (agent.provider !== GOVERNANCE_ENDPOINT || !isGovernanceAgentConfiguration(agent))
   ) {
     throw new Error('Only model-only agents using the Governance Gateway are available.');
+  }
+}
+
+export function getGovernanceAgentRestoreError(
+  agent: IAgent,
+  versionIndex: number,
+): { status: 400 | 403; message: string } | undefined {
+  if (!isGovernancePilotEnabled()) {
+    return;
+  }
+  if (!Number.isSafeInteger(versionIndex) || versionIndex < 0) {
+    return { status: 400, message: 'version_index must be a non-negative integer' };
+  }
+  const version = agent.versions?.[versionIndex];
+  if (!version || typeof version !== 'object' || Array.isArray(version)) {
+    return { status: 400, message: 'Agent version not found' };
+  }
+  const restored = { ...agent, ...version, model_parameters: version.model_parameters ?? {} };
+  if (restored.provider !== GOVERNANCE_ENDPOINT || !isGovernanceAgentConfiguration(restored)) {
+    return {
+      status: 403,
+      message: 'Only model-only agent versions using the Governance Gateway can be restored.',
+    };
   }
 }
 
