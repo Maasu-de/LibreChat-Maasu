@@ -45,6 +45,13 @@ export interface GovernanceFileFinding {
   terms?: string[];
 }
 
+export interface GovernanceInstructionReview {
+  text: string;
+  /** Findings use `GOVERNANCE_DLP_TEXT_LOCATION` within this instruction's text. */
+  findings: GovernanceFinding[];
+  maskedRanges?: GovernanceMaskedRange[];
+}
+
 export interface GovernanceDlpResult {
   decision: GovernanceDecision;
   policyVersion?: number;
@@ -53,6 +60,7 @@ export interface GovernanceDlpResult {
   maskedRanges?: GovernanceMaskedRange[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
+  instructions?: GovernanceInstructionReview[];
   /** Set when the content does not allow the selected model, which blocks the prompt. */
   modelNotAllowed?: { model: string; allowedTiers: GovernanceTier[] };
 }
@@ -63,8 +71,9 @@ export const GOVERNANCE_DLP_TEXT_LOCATION = '/messages/0/content';
 /**
  * A DLP review the Governance Backend returned instead of a completion. Findings and the masked
  * preview refer to the submitted text at `GOVERNANCE_DLP_TEXT_LOCATION`; findings in attached
- * files are listed per file in `fileFindings`. Sending that text again with `dlpReviewId` sends
- * the approved request to the model.
+ * files are listed per file in `fileFindings`, and agent instructions are reviewed separately
+ * in `instructions`. Sending the submitted text again with `dlpReviewId` sends the approved
+ * request to the model.
  */
 export interface GovernanceDlpReview extends GovernanceDlpResult {
   reviewId: string;

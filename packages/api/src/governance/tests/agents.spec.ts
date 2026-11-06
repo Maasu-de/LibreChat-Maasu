@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { FakeChatModel } from '@librechat/agents';
 import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
 import { HumanMessage } from '@librechat/agents/langchain/messages';
-import { Constants, agentsEndpointSchema } from 'librechat-data-provider';
+import { Constants, agentsEndpointSchema, replaceSpecialVars } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types/http';
 import { createRun } from '~/agents/run';
@@ -284,4 +284,83 @@ it('restores approval correlation before graph creation and consumes it before t
   expect(calls[0].headers.get('X-LibreChat-Request-ID')).toBe(context.requestId);
   expect(calls[1].headers.get('X-LibreChat-Request-ID')).not.toBe(context.requestId);
   expect(calls[1].headers.get('X-LibreChat-Run-ID')).toBe(context.runId);
+});
+
+it('keeps temporal agent instructions stable while a new-conversation review awaits approval', async () => {
+  const reviewId = randomUUID();
+  const prompt = 'Hello';
+  const source = 'Contact max@example.com. Session opened at {{iso_datetime}}';
+  const anchor = '2026-11-06T12:00:00.000Z';
+  const first = {
+    body: { endpoint: 'agents', agent_id: 'agent_test', text: prompt },
+    user: { id: 'user-1' },
+    conversationCreatedAt: anchor,
+  } as ServerRequest;
+  const renderInstructions = (request: ServerRequest) =>
+    replaceSpecialVars({ text: source, now: request.conversationCreatedAt, user: null });
+  const initialInstruction = renderInstructions(first);
+  const sent: Array<{ messages: Array<{ role: string; content: string }>; dlp_token?: string }> =
+    [];
+  const upstream = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const request = JSON.parse(String(init?.body)) as (typeof sent)[number];
+    sent.push(request);
+    return new Response(
+      JSON.stringify(
+        request.dlp_token
+          ? {}
+          : {
+              choices: [],
+              dlp: {
+                review_id: reviewId,
+                action: 'WARN',
+                findings: [
+                  {
+                    location: '/messages/0/content',
+                    start: initialInstruction.indexOf('max@example.com'),
+                    end: initialInstruction.indexOf('max@example.com') + 'max@example.com'.length,
+                    category: 'EMAIL_ADDRESS',
+                    action: 'WARN',
+                  },
+                ],
+                messages: request.messages,
+                dlp_token: 'temporal-instruction-approval',
+              },
+            },
+      ),
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+  const send = (request: ServerRequest) =>
+    createRequestDlpFetch(request, upstream)(url, {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'logical-model',
+        messages: [
+          { role: 'system', content: renderInstructions(request) },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    });
+
+  try {
+    expect((await send(first)).status).toBe(400);
+    expect(first.governanceDlpReview?.reviewId).toBe(reviewId);
+    const confirmation = {
+      body: { ...first.body, dlpReviewId: reviewId },
+      user: first.user,
+      conversationCreatedAt: '2026-11-06T12:00:05.000Z',
+    } as ServerRequest;
+    expect(renderInstructions(confirmation)).not.toBe(initialInstruction);
+
+    await prepareGovernanceAgentRun(confirmation);
+
+    expect(confirmation.conversationCreatedAt).toBe(anchor);
+    expect(renderInstructions(confirmation)).toBe(initialInstruction);
+    expect((await send(confirmation)).ok).toBe(true);
+    expect(sent).toHaveLength(2);
+    expect(sent[1].dlp_token).toBe('temporal-instruction-approval');
+    expect(sent[1].messages).toEqual(sent[0].messages);
+  } finally {
+    await getReviewStore().delete(reviewId);
+  }
 });

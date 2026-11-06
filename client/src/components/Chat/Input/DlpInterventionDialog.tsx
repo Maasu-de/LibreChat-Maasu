@@ -23,7 +23,7 @@ type FoundValue = { text: string; finding: GovernanceFinding };
 /** The prompt: text without findings, and found values. */
 type PromptSegment = { text: string } | FoundValue;
 /** The redacted value shown in the text, and the place its bar took before the text reflowed. */
-type RevealedValue = { index: number; bar: DOMRect[]; element: HTMLElement };
+type RevealedValue = { index: string; bar: DOMRect[]; element: HTMLElement };
 /** The findings of one category and action in a file, with the distinct values they matched. */
 type FindingGroup = Pick<
   GovernanceFileFinding,
@@ -391,7 +391,7 @@ export default function DlpInterventionDialog({
   const { decision, modelNotAllowed } = result;
   const copy = modelNotAllowed ? MODEL_BLOCK_COPY : COPY[decision];
   const [revealed, setRevealed] = useState<RevealedValue | null>(null);
-  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const categoryLabel = useCategoryLabel();
@@ -403,6 +403,13 @@ export default function DlpInterventionDialog({
   const promptSegments = useMemo(
     () => buildPromptSegments(originalText, result.findings, result.maskedRanges),
     [originalText, result.findings, result.maskedRanges],
+  );
+  const instructionSegments = useMemo(
+    () =>
+      (result.instructions ?? []).map(({ text, findings, maskedRanges }) =>
+        buildPromptSegments(text, findings, maskedRanges),
+      ),
+    [result.instructions],
   );
 
   /** The text reflows around a revealed value, so it stays until the pointer leaves both places. */
@@ -427,7 +434,7 @@ export default function DlpInterventionDialog({
    * pointer is on it, or it has focus, the original value takes its place, centered on the bar's
    * width when it is shorter, so the text after it doesn't move. Only that bar lights up.
    */
-  const renderRedacted = ({ text, finding }: FoundValue, index: number) => {
+  const renderRedacted = ({ text, finding }: FoundValue, index: string) => {
     const shown = revealed?.index === index || focusedIndex === index;
     const reveal = ({ currentTarget }: SyntheticEvent<HTMLElement>) => {
       const bar = Array.from(currentTarget.getClientRects());
@@ -478,14 +485,14 @@ export default function DlpInterventionDialog({
     onConfirm();
   };
 
-  const renderFlagged = ({ text, finding }: FoundValue, index: number) => (
+  const renderFlagged = ({ text, finding }: FoundValue, index: string) => (
     <mark key={index} className={cn(FLAGGED, ACTION_STYLE[finding.action].highlight)}>
       {text}
       <span className="sr-only">{` (${findingLabel(finding)})`}</span>
     </mark>
   );
 
-  const renderSegment = (segment: PromptSegment, index: number) => {
+  const renderSegment = (segment: PromptSegment, index: string) => {
     if (!('finding' in segment)) {
       return <span key={index}>{segment.text}</span>;
     }
@@ -609,13 +616,35 @@ export default function DlpInterventionDialog({
               </section>
             )}
 
+            {instructionSegments.length > 0 && (
+              <section
+                aria-label={localize('com_ui_agent_instructions')}
+                className="flex flex-col gap-2"
+              >
+                <h3 className="text-sm font-semibold text-text-primary">
+                  {localize('com_ui_agent_instructions')}
+                </h3>
+                {instructionSegments.map((segments, instructionIndex) => (
+                  <p key={instructionIndex} className={PROMPT_BOX}>
+                    {segments.map((segment, index) =>
+                      renderSegment(segment, `instruction:${instructionIndex}:${index}`),
+                    )}
+                  </p>
+                ))}
+              </section>
+            )}
+
             {(!modelNotAllowed || result.findings.length > 0) && (
               <section
                 aria-label={localize(
                   decision === 'MASK' ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
                 )}
               >
-                <p className={PROMPT_BOX}>{promptSegments.map(renderSegment)}</p>
+                <p className={PROMPT_BOX}>
+                  {promptSegments.map((segment, index) =>
+                    renderSegment(segment, `prompt:${index}`),
+                  )}
+                </p>
               </section>
             )}
           </div>

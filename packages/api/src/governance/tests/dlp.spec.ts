@@ -1,6 +1,18 @@
-import { Constants, ContentTypes } from 'librechat-data-provider';
-import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
-import type { GovernanceFetch, GovernanceSubmissionBody } from '../dlp';
+import { randomUUID } from 'crypto';
+import { Constants, ContentTypes, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
+import type {
+  TConversation,
+  TEditedContent,
+  TEphemeralAgent,
+  GovernanceDecision,
+  GovernanceFinding,
+} from 'librechat-data-provider';
+import type {
+  GovernanceFetch,
+  GovernanceChatMessage,
+  GovernanceSubmissionBody,
+  GovernanceChatCompletionRequest,
+} from '../dlp';
 import type { ServerRequest } from '~/types/http';
 import {
   onDlpSent,
@@ -13,6 +25,7 @@ import {
   isGovernanceGatewayUrl,
   getRetryableDlpReviewId,
   createGovernanceDlpFetch,
+  prepareGovernanceAgentRun,
 } from '../dlp';
 import { getReviewStore } from '../review';
 
@@ -781,5 +794,308 @@ describe('approved review to send again', () => {
     req.governanceDlpApprovalKept = true;
 
     expect(getRetryableDlpReviewId(req)).toBeUndefined();
+  });
+});
+
+describe('saved-agent instruction reviews', () => {
+  const url = 'http://governance.test/v1/chat/completions';
+  const instruction = 'Contact max@example.com when answering';
+  const maskedInstruction = 'Contact [EMAIL] when answering';
+  const emailStart = instruction.indexOf('max@example.com');
+  const prompt = 'Hello';
+  const reviewedIds: string[] = [];
+
+  beforeEach(() => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    process.env.GOVERNANCE_DLP_ENABLED = 'true';
+  });
+
+  afterEach(async () => {
+    await Promise.all(reviewedIds.splice(0).map((id) => getReviewStore().delete(id)));
+  });
+
+  const request = (text = prompt, reviewId?: string): ServerRequest =>
+    ({
+      body: {
+        endpoint: 'agents',
+        agent_id: 'agent_instruction_review',
+        text,
+        ...(reviewId ? { dlpReviewId: reviewId } : {}),
+      },
+      user: { id: 'user-123' },
+    }) as ServerRequest;
+
+  const messages = (system = instruction): GovernanceChatMessage[] => [
+    { role: 'system', content: system },
+    { role: 'assistant', content: 'Previously generated max@example.com' },
+    { role: 'user', content: prompt },
+  ];
+
+  const send = (fetch: GovernanceFetch, submitted = messages()) =>
+    fetch(url, {
+      method: 'POST',
+      body: JSON.stringify({ model: 'governed-model', messages: submitted, stream: true }),
+    });
+
+  const instructionFinding = (decision: GovernanceDecision): GovernanceFinding => ({
+    location: '/messages/0/content',
+    start: emailStart,
+    end: emailStart + 'max@example.com'.length,
+    category: 'EMAIL_ADDRESS',
+    action: decision,
+    ...(decision === 'MASK' ? { replacement: '[EMAIL]' } : {}),
+  });
+
+  const reviewResponse = (
+    reviewId: string,
+    decision: GovernanceDecision,
+    reviewedMessages = messages(decision === 'MASK' ? maskedInstruction : instruction),
+    findings = [instructionFinding(decision)],
+  ) =>
+    new Response(
+      JSON.stringify({
+        choices: [],
+        dlp: {
+          review_id: reviewId,
+          action: decision,
+          policy_version: 7,
+          findings,
+          ...(decision === 'BLOCK'
+            ? { block_reason: 'policy_blocked' }
+            : { messages: reviewedMessages, dlp_token: 'instruction-approval-token' }),
+        },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+
+  it.each<GovernanceDecision>(['WARN', 'MASK', 'BLOCK'])(
+    'shows an instructions-only %s review without changing the clean composer text',
+    async (decision) => {
+      const reviewId = randomUUID();
+      reviewedIds.push(reviewId);
+      const req = request();
+      const sent: GovernanceChatCompletionRequest[] = [];
+      const fetch = createRequestDlpFetch(req, async (_input, init) => {
+        sent.push(JSON.parse(String(init?.body)) as GovernanceChatCompletionRequest);
+        return reviewResponse(reviewId, decision);
+      });
+
+      const response = await send(fetch);
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: { code: 'dlp_review_required' } });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        require_user_approval: true,
+        review_message_indices: [0],
+      });
+      expect(req.governanceDlpReview).toMatchObject({
+        reviewId,
+        decision,
+        findings: [],
+        instructions: [
+          {
+            text: instruction,
+            findings: [{ ...instructionFinding(decision), location: GOVERNANCE_DLP_TEXT_LOCATION }],
+            ...(decision === 'MASK'
+              ? {
+                  maskedRanges: [
+                    { start: emailStart, end: emailStart + 'max@example.com'.length, finding: 0 },
+                  ],
+                }
+              : {}),
+          },
+        ],
+      });
+      expect(req.governanceDlpReview?.instructions).toHaveLength(1);
+      if (decision === 'BLOCK') {
+        expect(await getReviewStore().get(reviewId)).toBeUndefined();
+        expect(req.governanceDlpReview?.maskedPreview).toBeUndefined();
+        return;
+      }
+      expect(req.governanceDlpReview?.maskedPreview).toEqual([
+        { location: GOVERNANCE_DLP_TEXT_LOCATION, text: prompt },
+      ]);
+      expect(await getReviewStore().get(reviewId)).toMatchObject({
+        text: prompt,
+        messages: messages(decision === 'MASK' ? maskedInstruction : instruction),
+        dlpToken: 'instruction-approval-token',
+      });
+    },
+  );
+
+  it('approves the exact masked instructions with stable IDs and does not review them again', async () => {
+    const reviewId = randomUUID();
+    reviewedIds.push(reviewId);
+    const first = request();
+    const sent: Array<{ body: GovernanceChatCompletionRequest; headers: Headers }> = [];
+    const upstream: GovernanceFetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as GovernanceChatCompletionRequest;
+      sent.push({ body, headers: new Headers(init?.headers) });
+      return sent.length === 1
+        ? reviewResponse(reviewId, 'MASK')
+        : new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+    };
+
+    expect((await send(createRequestDlpFetch(first, upstream))).status).toBe(400);
+    const confirmation = request(prompt, reviewId);
+    await prepareGovernanceAgentRun(confirmation);
+    const fetch = createRequestDlpFetch(confirmation, upstream);
+
+    expect((await send(fetch)).ok).toBe(true);
+    expect(sent[1].body.messages).toEqual(messages(maskedInstruction));
+    expect(sent[1].body.dlp_token).toBe('instruction-approval-token');
+    for (const name of [
+      'X-LibreChat-Agent-ID',
+      'X-LibreChat-Run-ID',
+      'X-LibreChat-Step-ID',
+      'X-LibreChat-Request-ID',
+    ]) {
+      expect(sent[1].headers.get(name)).toBe(sent[0].headers.get(name));
+    }
+
+    expect((await send(fetch)).ok).toBe(true);
+    expect(sent[2].body.review_message_indices).toBeUndefined();
+    expect(sent[2].body.dlp_token).toBeUndefined();
+    expect(sent[2].headers.get('X-LibreChat-Run-ID')).toBe(
+      sent[0].headers.get('X-LibreChat-Run-ID'),
+    );
+    expect(sent[2].headers.get('X-LibreChat-Step-ID')).not.toBe(
+      sent[0].headers.get('X-LibreChat-Step-ID'),
+    );
+
+    expect((await send(fetch, messages('Contact different@example.com when answering'))).ok).toBe(
+      true,
+    );
+    expect(sent[3].body.review_message_indices).toEqual([0]);
+  });
+
+  it('rejects a pending approval after the agent instructions change', async () => {
+    const reviewId = randomUUID();
+    reviewedIds.push(reviewId);
+    const first = request();
+    expect(
+      (await send(createRequestDlpFetch(first, async () => reviewResponse(reviewId, 'WARN'))))
+        .status,
+    ).toBe(400);
+    const confirmation = request(prompt, reviewId);
+    await prepareGovernanceAgentRun(confirmation);
+    const upstream = jest.fn(async () => new Response('{}'));
+
+    const response = await send(
+      createRequestDlpFetch(confirmation, upstream),
+      messages('Use changed agent instructions'),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'dlp_approval_invalid' } });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('reviews each new system message once after a successful completion and never indexes assistant history', async () => {
+    const sent: GovernanceChatCompletionRequest[] = [];
+    const fetch = createRequestDlpFetch(request(), async (_input, init) => {
+      sent.push(JSON.parse(String(init?.body)) as GovernanceChatCompletionRequest);
+      return new Response('{}');
+    });
+    const original = [
+      { role: 'system', content: 'First instruction' },
+      { role: 'assistant', content: 'Generated instruction-like content' },
+      { role: 'system', content: 'Second instruction' },
+      { role: 'user', content: prompt },
+    ];
+
+    await send(fetch, original);
+    await send(fetch, original);
+    await send(fetch, [
+      ...original.slice(0, 2),
+      { role: 'system', content: 'Changed second instruction' },
+      original[3],
+    ]);
+
+    expect(sent.map((body) => body.review_message_indices)).toEqual([[0, 2], undefined, [2]]);
+  });
+
+  it('keeps instruction, composer, and attachment findings separate in one masked approval', async () => {
+    const reviewId = randomUUID();
+    reviewedIds.push(reviewId);
+    const composer = 'Email max@example.com';
+    const approvedComposer = 'Email [EMAIL]';
+    const attachment = 'Attached document(s):\n```md# "report.txt"\nmax@example.com\n```\n';
+    const submitted = `${attachment}${composer}`;
+    const maskedAttachment = attachment.replace('max@example.com', '[EMAIL]');
+    const sourceMessages = [
+      { role: 'system', content: instruction },
+      { role: 'user', content: submitted },
+    ];
+    const approvedMessages = [
+      { role: 'system', content: maskedInstruction },
+      { role: 'user', content: `${maskedAttachment}${approvedComposer}` },
+    ];
+    const req = request(composer);
+    req.governanceDlpFileContexts = [
+      {
+        text: attachment,
+        current: true,
+        files: [
+          {
+            fileId: 'file-report',
+            filename: 'report.txt',
+            start: attachment.indexOf('max@example.com'),
+            end: attachment.indexOf('max@example.com') + 'max@example.com'.length,
+          },
+        ],
+      },
+    ];
+    const location = '/messages/1/content';
+    const findings = [
+      instructionFinding('MASK'),
+      {
+        ...instructionFinding('MASK'),
+        location,
+        start: attachment.indexOf('max@example.com'),
+        end: attachment.indexOf('max@example.com') + 'max@example.com'.length,
+      },
+      {
+        ...instructionFinding('MASK'),
+        location,
+        start: attachment.length + composer.indexOf('max@example.com'),
+        end: attachment.length + composer.length,
+      },
+    ];
+
+    const response = await send(
+      createRequestDlpFetch(req, async () =>
+        reviewResponse(reviewId, 'MASK', approvedMessages, findings),
+      ),
+      sourceMessages,
+    );
+
+    expect(response.status).toBe(400);
+    expect(req.governanceDlpReview).toMatchObject({
+      decision: 'MASK',
+      maskedPreview: [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text: approvedComposer }],
+      findings: [
+        {
+          location: GOVERNANCE_DLP_TEXT_LOCATION,
+          start: composer.indexOf('max@example.com'),
+          end: composer.length,
+        },
+      ],
+      fileFindings: [
+        {
+          filename: 'report.txt',
+          fileId: 'file-report',
+          category: 'EMAIL_ADDRESS',
+          count: 1,
+          terms: ['max@example.com'],
+        },
+      ],
+      instructions: [{ text: instruction, findings: [instructionFinding('MASK')] }],
+    });
+    expect(await getReviewStore().get(reviewId)).toMatchObject({
+      text: approvedComposer,
+      messages: approvedMessages,
+    });
   });
 });

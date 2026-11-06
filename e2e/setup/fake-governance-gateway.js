@@ -5,9 +5,9 @@
  *
  * Serves the two routes LibreChat's pilot mode calls under `GOVERNANCE_API_BASE_URL`:
  * `GET /v1/models` and `POST /v1/chat/completions`. It follows the real
- * gateway's review protocol: with `require_user_approval`, findings in the last message
- * return a stage 1 review instead of a completion, and a stage 2 request with the review's
- * `dlp_token` completes the approved messages. Findings in earlier messages never open a
+ * gateway's review protocol: with `require_user_approval`, findings in the last message or
+ * `review_message_indices` return a stage 1 review, and a stage 2 request with the review's
+ * `dlp_token` completes the approved messages. Other earlier messages do not open a
  * review; the policy still applies to them. Assistant messages are not scanned.
  *
  * Detection is deterministic, so specs choose the outcome through their content:
@@ -58,7 +58,7 @@ const codePoints = (text) => Array.from(text).length;
 function scan(messages) {
   const findings = [];
   messages.forEach((message, index) => {
-    if (message.role !== 'user' || typeof message.content !== 'string') {
+    if (!['user', 'system'].includes(message.role) || typeof message.content !== 'string') {
       return;
     }
     for (const { pattern, category, label, action, replacement } of RULES) {
@@ -111,12 +111,16 @@ function ibanState(text) {
 }
 
 /** Describes what reached the model, for the specs to assert on. */
-function describe(messages) {
+function describe(messages, agent) {
   const users = messages.filter((m) => m.role === 'user');
   const last = users.at(-1)?.content ?? '';
   const history = users
     .slice(0, -1)
     .map((m) => m.content)
+    .join('\n');
+  const instructions = messages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content)
     .join('\n');
   return [
     `attachment=${last.includes('Attached document(s):') ? 'yes' : 'no'}`,
@@ -124,6 +128,12 @@ function describe(messages) {
     `email=${new RegExp(EMAIL.source, 'i').test(last) ? 'yes' : 'no'}`,
     `history-iban=${ibanState(history)}`,
     ...(last.includes('[REDACTED]') ? ['codename=masked'] : []),
+    ...(agent
+      ? [
+          `instruction-iban=${ibanState(instructions)}`,
+          `instruction-email=${new RegExp(EMAIL.source, 'i').test(instructions) ? 'yes' : 'no'}`,
+        ]
+      : []),
   ].join(' ');
 }
 
@@ -154,11 +164,11 @@ function chunk(id, delta, finishReason = null) {
   };
 }
 
-function complete(res, messages) {
+function complete(res, messages, agent) {
   const id = `chatcmpl-${randomUUID()}`;
   sendEvents(res, [
     chunk(id, { role: 'assistant', content: '' }),
-    chunk(id, { content: `E2E gateway reply [${describe(messages)}]` }),
+    chunk(id, { content: `E2E gateway reply [${describe(messages, agent)}]` }),
     chunk(id, {}, 'stop'),
     '[DONE]',
   ]);
@@ -187,7 +197,7 @@ function review(res, messages, findings, decision) {
   ]);
 }
 
-function handleCompletion(res, body) {
+function handleCompletion(res, body, agent) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   console.log(
     `[e2e-gateway] completion messages=${messages.length} approval=${body.require_user_approval === true} token=${body.dlp_token !== undefined}`,
@@ -202,14 +212,21 @@ function handleCompletion(res, body) {
       });
       return;
     }
-    complete(res, approved);
+    complete(res, approved, agent);
     return;
   }
 
   const findings = scan(messages);
   const decision = decide(findings);
   const lastLocation = `/messages/${messages.length - 1}/content`;
-  if (body.require_user_approval === true && findings.some((f) => f.location === lastLocation)) {
+  const reviewLocations = new Set([
+    lastLocation,
+    ...(body.review_message_indices ?? []).map((index) => `/messages/${index}/content`),
+  ]);
+  if (
+    body.require_user_approval === true &&
+    findings.some((f) => reviewLocations.has(f.location))
+  ) {
     const content = messages.at(-1)?.content;
     const delay = typeof content === 'string' && content.includes(SLOW_MARKER) ? SLOW_REVIEW_MS : 0;
     setTimeout(() => review(res, messages, findings, decision), delay);
@@ -221,7 +238,7 @@ function handleCompletion(res, body) {
     });
     return;
   }
-  complete(res, mask(messages, findings));
+  complete(res, mask(messages, findings), agent);
 }
 
 function readBody(req) {
@@ -256,7 +273,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 400, { error: { message: 'Invalid JSON', code: 'invalid_request' } });
       return;
     }
-    handleCompletion(res, body);
+    handleCompletion(res, body, Boolean(req.headers['x-librechat-agent-id']));
     return;
   }
   res.writeHead(404);

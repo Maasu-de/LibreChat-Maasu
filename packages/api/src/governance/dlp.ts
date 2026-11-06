@@ -19,6 +19,7 @@ import {
   toClientReview,
   findSubmittedText,
   findingsInFiles,
+  findingsInInstructions,
   toModelBlockReview,
   findingsInSubmittedText,
 } from './review';
@@ -65,6 +66,8 @@ export interface GovernanceChatCompletionRequest {
   require_user_approval?: boolean;
   /** Approval token of the stage 1 review being completed. */
   dlp_token?: string;
+  /** Additional user-provided messages newly introduced to this agent run. */
+  review_message_indices?: number[];
 }
 
 export type GovernanceFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -90,6 +93,8 @@ export interface GovernanceFetchParams {
   /** Server-owned saved-agent context, which enables the agent parameter allowlist. */
   agentRequest?: (init?: RequestInit) => GovernanceAgentRequest | undefined;
   onAgentApproval?: (context: GovernanceAgentRequest) => void;
+  reviewedInstructions?: Set<string>;
+  conversationCreatedAt?: () => string | undefined;
 }
 
 /** Raised when the DLP integration cannot be set up. A rejected completion is a 400 instead. */
@@ -401,6 +406,7 @@ interface ApprovalParams {
   reviews: ReviewStore;
   agentRequest?: (init?: RequestInit) => GovernanceAgentRequest | undefined;
   onAgentApproval?: (context: GovernanceAgentRequest) => void;
+  conversationCreatedAt?: () => string | undefined;
 }
 
 function withApproval(
@@ -412,16 +418,15 @@ function withApproval(
     ...request,
     messages,
     require_user_approval: true,
-    ...(dlpToken !== undefined ? { dlp_token: dlpToken } : {}),
+    ...(dlpToken !== undefined ? { dlp_token: dlpToken, review_message_indices: undefined } : {}),
   };
   return withGovernanceRequest(input, init, approval, userId, groupIds);
 }
 
 /**
  * Handles a stage 1 review: it is stored for the user's approval and handed to `onReview`, and
- * the model call ends. Only findings in the submitted text or in files attached to user messages
- * are shown to the user, so a review with neither is rejected, never approved on their behalf.
- * An approval sends the gateway's masked messages, files included.
+ * the model call ends. Findings in the submitted text, attached files, and newly introduced
+ * agent instructions are shown separately. Approval sends the gateway's exact masked messages.
  */
 async function handleReview(params: ApprovalParams, review: GatewayReview): Promise<Response> {
   const decision = normalizeDecision(review.action);
@@ -442,11 +447,16 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
     fileContexts,
   );
   const masking = getGovernanceMasking(params.text, findings);
+  const instructions = findingsInInstructions(
+    params.request.messages,
+    review.findings ?? [],
+    params.request.review_message_indices,
+  );
   if (decision === 'BLOCK') {
     params.onReview(
       review.block_reason === 'model_not_allowed'
-        ? toModelBlockReview(review, params.request.model, findings, fileFindings)
-        : toClientReview(review, decision, findings, masking, fileFindings),
+        ? toModelBlockReview(review, params.request.model, findings, fileFindings, instructions)
+        : toClientReview(review, decision, findings, masking, fileFindings, instructions),
     );
     return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
   }
@@ -455,13 +465,23 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
   if (!messages || !dlpToken) {
     return rejectCompletion('dlp_malformed_response');
   }
-  if (findings.length === 0 && fileFindings.length === 0) {
+  if (findings.length === 0 && fileFindings.length === 0 && instructions.length === 0) {
     return rejectCompletion('dlp_malformed_response');
   }
 
   const { text: approvedText } = masking;
   if (!messages[submitted.messageIndex]?.content.endsWith(approvedText)) {
     return rejectCompletion('dlp_malformed_response');
+  }
+  for (const index of params.request.review_message_indices ?? []) {
+    const message = params.request.messages[index];
+    const instructionFindings = (review.findings ?? []).filter(
+      (finding) => finding.location === `/messages/${index}/content`,
+    );
+    const masked = getGovernanceMasking(message.content, instructionFindings).text;
+    if (messages[index]?.role !== message.role || messages[index]?.content !== masked) {
+      return rejectCompletion('dlp_malformed_response');
+    }
   }
 
   await params.reviews.set(
@@ -474,10 +494,16 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
       dlpToken,
       expiresAt: review.expires_at,
       agentRequest: params.agentRequest?.(params.init),
+      ...(params.agentRequest?.(params.init)
+        ? {
+            instructionMessages: systemInstructions(params.request.messages),
+            conversationCreatedAt: params.conversationCreatedAt?.(),
+          }
+        : {}),
     },
     reviewTtl(review.expires_at),
   );
-  params.onReview(toClientReview(review, decision, findings, masking, fileFindings));
+  params.onReview(toClientReview(review, decision, findings, masking, fileFindings, instructions));
   return rejectCompletion('dlp_review_required', DLP_REVIEW_PENDING_MESSAGE);
 }
 
@@ -499,6 +525,9 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
     stored.userId !== userId ||
     stored.model !== request.model ||
     stored.text !== text ||
+    (stored.instructionMessages !== undefined &&
+      JSON.stringify(stored.instructionMessages) !==
+        JSON.stringify(systemInstructions(request.messages))) ||
     stored.agentRequest?.agentId !== params.agentRequest?.(params.init)?.agentId ||
     !(await reviews.delete(reviewId))
   ) {
@@ -570,6 +599,8 @@ export function createGovernanceDlpFetch({
   reviews,
   agentRequest,
   onAgentApproval,
+  reviewedInstructions = new Set<string>(),
+  conversationCreatedAt,
 }: GovernanceFetchParams): GovernanceFetch {
   let pendingReviewId = reviewId;
   return async (input, init) => {
@@ -597,6 +628,14 @@ export function createGovernanceDlpFetch({
     if (!request) {
       return rejectCompletion('dlp_unsupported_request');
     }
+    if (onReview && agentRequest?.(init)) {
+      const indices = request.messages.flatMap((message, index) =>
+        message.role === 'system' && !reviewedInstructions.has(message.content) ? [index] : [],
+      );
+      if (indices.length > 0) {
+        request.review_message_indices = indices;
+      }
+    }
 
     const response = onReview
       ? await sendForApproval({
@@ -614,16 +653,26 @@ export function createGovernanceDlpFetch({
           reviews: reviews ?? getReviewStore(),
           agentRequest,
           onAgentApproval,
+          conversationCreatedAt,
         })
       : await fetch(input, withGovernanceRequest(input, init, request, userId, groupIds));
     if (response.ok) {
       if (agentRequest?.(init)) {
         pendingReviewId = undefined;
+        if (onReview) {
+          for (const instruction of systemInstructions(request.messages)) {
+            reviewedInstructions.add(instruction);
+          }
+        }
       }
       onSent?.();
     }
     return response;
   };
+}
+
+function systemInstructions(messages: GovernanceChatMessage[]): string[] {
+  return messages.filter((message) => message.role === 'system').map((message) => message.content);
 }
 
 /** The gateway's 403 for a selected model that the content does not allow. */
@@ -772,6 +821,8 @@ export function createRequestDlpFetch(
       text: typeof text === 'string' ? text : '',
       reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
       agentRequest,
+      reviewedInstructions: (req.governanceDlpReviewedInstructions ??= new Set<string>()),
+      conversationCreatedAt: () => req.conversationCreatedAt,
       onAgentApproval: (context) => {
         if (req.governanceAgentRun) {
           Object.assign(req.governanceAgentRun, context);
@@ -808,6 +859,9 @@ export async function prepareGovernanceAgentRun(req: ServerRequest): Promise<voi
     review?.userId === req.user?.id && review?.agentRequest?.agentId === req.body.agent_id
       ? review.agentRequest
       : undefined;
+  if (previous && review?.conversationCreatedAt) {
+    req.conversationCreatedAt = review.conversationCreatedAt;
+  }
   req.governanceAgentRun = previous
     ? { agentId: previous.agentId, runId: previous.runId, steps: 0 }
     : { agentId: req.body.agent_id, runId: randomUUID(), steps: 0 };

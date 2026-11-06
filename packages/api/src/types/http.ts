@@ -39,6 +39,7 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpEligible?: boolean;
   governanceAgentRun?: GovernanceAgentRun;
   governanceAgentRequest?: GovernanceAgentRequest;
+  governanceDlpReviewedInstructions?: Set<string>;
   /** Server-resolved LibreChat group IDs used by the governed completion. */
   governanceGroupIds?: string[];
   /** The attached-document blocks this turn added to messages, for naming files in DLP findings. */
