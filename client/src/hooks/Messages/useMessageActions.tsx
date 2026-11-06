@@ -171,35 +171,37 @@ export default function useMessageActions(props: TMessageActions) {
   );
 
   const queryClient = useQueryClient();
-  const { mutate: mutateFeedback } = feedbackMutation;
+  const { mutateAsync: mutateFeedbackAsync } = feedbackMutation;
   const conversationId = conversation?.conversationId;
-  /** Rates one parallel response of the message, such as one model of a comparison. */
+  /**
+   * Rates one parallel response of the message, such as one model of a comparison.
+   * Uses the per-call promise so concurrent ratings each update the cached conversation.
+   */
   const handleParallelFeedback = useCallback(
     (agentId: string, newFeedback: TFeedback | undefined) =>
-      mutateFeedback(
-        { agentId, feedback: newFeedback ? toMinimalFeedback(newFeedback) : undefined },
-        {
-          /** Keeps the rating when the message is shown again from the cached conversation. */
-          onSuccess: ({ feedback }) =>
-            queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], (messages) =>
-              messages?.map((cached) =>
-                cached.messageId !== messageId
-                  ? cached
-                  : {
-                      ...cached,
-                      parallelFeedback: [
-                        ...(cached.parallelFeedback ?? []).filter(
-                          (entry) => entry.agentId !== agentId,
-                        ),
-                        ...(feedback ? [{ ...feedback, agentId }] : []),
-                      ],
-                    },
-              ),
+      mutateFeedbackAsync({
+        agentId,
+        feedback: newFeedback ? toMinimalFeedback(newFeedback) : undefined,
+      })
+        .then(({ feedback }) =>
+          queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], (messages) =>
+            messages?.map((cached) =>
+              cached.messageId !== messageId
+                ? cached
+                : {
+                    ...cached,
+                    parallelFeedback: [
+                      ...(cached.parallelFeedback ?? []).filter(
+                        (entry) => entry.agentId !== agentId,
+                      ),
+                      ...(feedback ? [{ ...feedback, agentId }] : []),
+                    ],
+                  },
             ),
-          onError: (error) => console.error('Failed to update feedback:', error),
-        },
-      ),
-    [mutateFeedback, queryClient, conversationId, messageId],
+          ),
+        )
+        .catch((error) => console.error('Failed to update feedback:', error)),
+    [mutateFeedbackAsync, queryClient, conversationId, messageId],
   );
 
   return {
