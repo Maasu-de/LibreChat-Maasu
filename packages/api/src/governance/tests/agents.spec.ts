@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { FakeChatModel } from '@librechat/agents';
 import { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
 import { HumanMessage } from '@librechat/agents/langchain/messages';
-import { Constants } from 'librechat-data-provider';
+import { Constants, agentsEndpointSchema } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types/http';
 import { createRun } from '~/agents/run';
@@ -175,7 +175,10 @@ async function agentLoop(
       { messages },
       {
         configurable: { thread_id: 'governance-test' },
-        recursionLimit: resolveRecursionLimit(config.endpoints?.agents, modelOnlyAgent),
+        recursionLimit: resolveRecursionLimit(
+          agentsEndpointSchema.parse(config.endpoints?.agents),
+          modelOnlyAgent,
+        ),
         version: 'v2',
         signal: controller.signal,
       },
@@ -210,14 +213,15 @@ it('stops the native loop at the configured model-step limit', async () => {
   expect(error?.message).toContain('agent_max_steps');
 });
 
-it.each(['agent_test', Constants.EPHEMERAL_AGENT_ID])(
+it.each(['agent_test', String(Constants.EPHEMERAL_AGENT_ID)])(
   'completes a model-only %s run when the configured maximum is one model request',
   async (agentId) => {
     const { calls, echo, error, run } = await agentLoop('1', { agentId, useTool: false });
     expect(error).toBeUndefined();
     expect(calls).toHaveLength(1);
     expect(echo).not.toHaveBeenCalled();
-    expect(run.getRunMessages()?.at(-1)?.content).toBe('Done');
+    const messages = run.getRunMessages() ?? [];
+    expect(messages[messages.length - 1]?.content).toBe('Done');
   },
 );
 

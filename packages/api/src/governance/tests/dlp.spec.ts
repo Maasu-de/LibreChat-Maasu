@@ -1,4 +1,4 @@
-import { ContentTypes } from 'librechat-data-provider';
+import { Constants, ContentTypes } from 'librechat-data-provider';
 import type { TConversation, TEditedContent, TEphemeralAgent } from 'librechat-data-provider';
 import type { GovernanceFetch, GovernanceSubmissionBody } from '../dlp';
 import type { ServerRequest } from '~/types/http';
@@ -100,10 +100,6 @@ describe('Governance DLP', () => {
       JSON.stringify({
         model: 'governed-model',
         messages: [{ role: 'user', content: 'sensitive text' }],
-        top_p: 0.8,
-        frequency_penalty: 0.2,
-        presence_penalty: -0.1,
-        max_tokens: 512,
         stream: true,
         temperature: 0.4,
       }),
@@ -119,7 +115,11 @@ describe('Governance DLP', () => {
         async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
           new Response('ok'),
       );
-      const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+      const req = {
+        body: { endpoint: 'agents', agent_id: 'agent_test' },
+        user: { id: 'user-123' },
+      } as ServerRequest;
+      const governedFetch = createRequestDlpFetch(req, upstreamFetch, false);
       const request = {
         model,
         messages: [{ role: 'user', content: 'Hello' }],
@@ -141,8 +141,8 @@ describe('Governance DLP', () => {
     },
   );
 
-  it.each([undefined, 'false'])(
-    'preserves model parameters outside the pilot (%s)',
+  it.each([undefined, 'false', 'true'])(
+    'preserves classic-chat filtering with pilot %s',
     async (enabled) => {
       if (enabled !== undefined) {
         process.env.GOVERNANCE_PILOT_ENABLED = enabled;
@@ -168,25 +168,125 @@ describe('Governance DLP', () => {
       });
 
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual(request);
+      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+        model: request.model,
+        messages: request.messages,
+        temperature: request.temperature,
+      });
     },
   );
 
   it.each([
-    { temperature: 'secret text' },
     { top_p: 1.1 },
     { frequency_penalty: -2.1 },
     { presence_penalty: 'secret text' },
-  ])('validates unsupported numeric parameters %j before stripping', async (parameters) => {
-    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
-    const upstreamFetch = jest.fn();
-    const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
-    const response = await governedFetch('http://governance.test/v1/chat/completions', {
-      method: 'POST',
-      body: JSON.stringify({
+    { max_tokens: 0 },
+    { max_completion_tokens: 'secret text' },
+  ])(
+    'strips unsupported classic-chat parameters %j without validating them',
+    async (parameters) => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const upstreamFetch = jest.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+          new Response('ok'),
+      );
+      const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+      const response = await governedFetch('http://governance.test/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'gemini-3.6-flash',
+          messages: [{ role: 'user', content: 'Hello' }],
+          ...parameters,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
         model: 'gemini-3.6-flash',
         messages: [{ role: 'user', content: 'Hello' }],
+      });
+    },
+  );
+
+  it.each([
+    ['AI Governance Gateway', undefined],
+    ['AI Governance Gateway', Constants.EPHEMERAL_AGENT_ID],
+    ['agents', Constants.EPHEMERAL_AGENT_ID],
+  ])('keeps %s / %s requests classic despite agent headers', async (endpoint, agent_id) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+        new Response('ok'),
+    );
+    const req = { body: { endpoint, agent_id }, user: { id: 'user-123' } } as ServerRequest;
+    await createRequestDlpFetch(
+      req,
+      upstreamFetch,
+      false,
+    )('http://governance.test/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'X-LibreChat-Agent-ID': 'agent_test' },
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'Hello' }],
+        frequency_penalty: 0,
+        max_completion_tokens: 512,
+      }),
+    });
+
+    expect(req.governanceAgentRequest).toBeUndefined();
+    expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      model: 'governed-model',
+      messages: [{ role: 'user', content: 'Hello' }],
+    });
+  });
+
+  it.each([
+    { max_tokens: 512 },
+    { max_completion_tokens: 512 },
+    { max_tokens: 512, max_completion_tokens: 512 },
+  ])('normalizes the agent output limit %j', async (parameters) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    const upstreamFetch = jest.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+        new Response('ok'),
+    );
+    const req = {
+      body: { endpoint: 'agents', agent_id: 'agent_test' },
+      user: { id: 'user-123' },
+    } as ServerRequest;
+    const response = await createRequestDlpFetch(
+      req,
+      upstreamFetch,
+      false,
+    )('http://governance.test/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'Hello' }],
         ...parameters,
+      }),
+    });
+
+    expect(response.ok).toBe(true);
+    expect(JSON.parse(String(upstreamFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      model: 'governed-model',
+      messages: [{ role: 'user', content: 'Hello' }],
+      max_tokens: 512,
+    });
+  });
+
+  it('still rejects an invalid classic-chat temperature', async () => {
+    const upstreamFetch = jest.fn();
+    const response = await createGovernanceDlpFetch({
+      userId: 'user-123',
+      fetch: upstreamFetch,
+    })('http://governance.test/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'governed-model',
+        messages: [{ role: 'user', content: 'Hello' }],
+        temperature: 'secret text',
       }),
     });
 
@@ -195,6 +295,7 @@ describe('Governance DLP', () => {
   });
 
   it.each([
+    { temperature: 'secret text' },
     { top_p: 'secret text' },
     { top_p: -0.1 },
     { top_p: 1.1 },
@@ -202,9 +303,18 @@ describe('Governance DLP', () => {
     { presence_penalty: 2.1 },
     { max_tokens: 0 },
     { max_tokens: 1.5 },
+    { max_completion_tokens: 0 },
+    { max_completion_tokens: 1.5 },
+    { max_completion_tokens: 'secret text' },
+    { max_tokens: 512, max_completion_tokens: 1024 },
   ])('rejects invalid numeric model parameters %j before sending', async (parameters) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
     const upstreamFetch = jest.fn();
-    const governedFetch = createGovernanceDlpFetch({ userId: 'user-123', fetch: upstreamFetch });
+    const req = {
+      body: { endpoint: 'agents', agent_id: 'agent_test' },
+      user: { id: 'user-123' },
+    } as ServerRequest;
+    const governedFetch = createRequestDlpFetch(req, upstreamFetch, false);
     const response = await governedFetch('http://governance.test/v1/chat/completions', {
       method: 'POST',
       body: JSON.stringify({

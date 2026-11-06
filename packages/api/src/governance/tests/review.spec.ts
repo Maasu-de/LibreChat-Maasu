@@ -521,7 +521,6 @@ describe('DLP approval flow', () => {
 
     expect(sentBody(0)).toEqual({
       model: 'governed-model',
-      top_p: 0.5,
       messages,
       stream: true,
       require_user_approval: true,
@@ -819,7 +818,6 @@ describe('DLP approval flow', () => {
     expect(response).toBe(completion);
     expect(sentBody(0)).toEqual({
       model: 'governed-model',
-      top_p: 0.5,
       messages: approved,
       stream: true,
       require_user_approval: true,

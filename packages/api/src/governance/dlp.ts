@@ -87,6 +87,7 @@ export interface GovernanceFetchParams {
   /** Told after each send of the approved review whether a failure put it back for another try. */
   onApprovalKept?: (kept: boolean) => void;
   reviews?: ReviewStore;
+  /** Server-owned saved-agent context, which enables the agent parameter allowlist. */
   agentRequest?: (init?: RequestInit) => GovernanceAgentRequest | undefined;
   onAgentApproval?: (context: GovernanceAgentRequest) => void;
 }
@@ -248,7 +249,10 @@ function isTextMessage(value: unknown): value is GovernanceChatMessage {
   );
 }
 
-function parseChatCompletionRequest(body: string): GovernanceChatCompletionRequest | undefined {
+function parseChatCompletionRequest(
+  body: string,
+  agentParameters: boolean,
+): GovernanceChatCompletionRequest | undefined {
   let value: unknown;
   try {
     value = JSON.parse(body);
@@ -269,6 +273,7 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     frequency_penalty?: unknown;
     presence_penalty?: unknown;
     max_tokens?: unknown;
+    max_completion_tokens?: unknown;
   };
   if (
     (isGovernancePilotEnabled() &&
@@ -288,6 +293,23 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     return undefined;
   }
 
+  const normalizedRequest: GovernanceChatCompletionRequest = {
+    model: request.model,
+    messages: request.messages,
+    ...(typeof request.stream === 'boolean' ? { stream: request.stream } : {}),
+    ...(typeof request.temperature === 'number' ? { temperature: request.temperature } : {}),
+  };
+  if (!agentParameters) {
+    return normalizedRequest;
+  }
+  if (
+    request.max_tokens !== undefined &&
+    request.max_completion_tokens !== undefined &&
+    request.max_tokens !== request.max_completion_tokens
+  ) {
+    return undefined;
+  }
+
   const parameters: Pick<
     GovernanceChatCompletionRequest,
     'top_p' | 'frequency_penalty' | 'presence_penalty' | 'max_tokens'
@@ -298,7 +320,10 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     ['presence_penalty', -2, 2, false],
     ['max_tokens', 1, Infinity, true],
   ] as const) {
-    const parameter = request[key];
+    const parameter =
+      key === 'max_tokens' && request.max_tokens === undefined
+        ? request.max_completion_tokens
+        : request[key];
     if (parameter === undefined) continue;
     if (
       typeof parameter !== 'number' ||
@@ -312,15 +337,7 @@ function parseChatCompletionRequest(body: string): GovernanceChatCompletionReque
     parameters[key] = parameter;
   }
 
-  const normalizedRequest: GovernanceChatCompletionRequest = {
-    model: request.model,
-    messages: request.messages,
-    ...parameters,
-    ...(typeof request.stream === 'boolean' ? { stream: request.stream } : {}),
-    ...(typeof request.temperature === 'number' ? { temperature: request.temperature } : {}),
-  };
-
-  return normalizedRequest;
+  return { ...normalizedRequest, ...parameters };
 }
 
 function withGovernanceRequest(
@@ -572,7 +589,9 @@ export function createGovernanceDlpFetch({
     }
 
     const body = await getRequestBody(input, init);
-    const request = body ? parseChatCompletionRequest(body) : undefined;
+    const request = body
+      ? parseChatCompletionRequest(body, agentRequest?.(init) !== undefined)
+      : undefined;
     // Non-streaming requests (LibreChat's conversation title) are allowed: the
     // Governance Backend serves both forms through the same governed path.
     if (!request) {
@@ -720,6 +739,17 @@ export function createRequestDlpFetch(
   fetch?: GovernanceFetch,
   approval: boolean = true,
 ): GovernanceFetch {
+  const agentRequest = (init?: RequestInit): GovernanceAgentRequest | undefined => {
+    const context = req.governanceAgentRequest;
+    if (!context) return undefined;
+    const headers = new Headers(init?.headers);
+    return {
+      ...context,
+      runId: headers.get('X-LibreChat-Run-ID') ?? context.runId,
+      stepId: headers.get('X-LibreChat-Step-ID') ?? context.stepId,
+      requestId: headers.get('X-LibreChat-Request-ID') ?? context.requestId,
+    };
+  };
   if (!approval) {
     return createGovernanceAgentFetch(
       req,
@@ -727,6 +757,7 @@ export function createRequestDlpFetch(
         userId: req.user?.id ?? '',
         groupIds: req.governanceGroupIds,
         fetch,
+        agentRequest,
       }),
     );
   }
@@ -740,17 +771,7 @@ export function createRequestDlpFetch(
       fetch,
       text: typeof text === 'string' ? text : '',
       reviewId: typeof dlpReviewId === 'string' && dlpReviewId !== '' ? dlpReviewId : undefined,
-      agentRequest: (init) => {
-        const context = req.governanceAgentRequest;
-        if (!context) return undefined;
-        const headers = new Headers(init?.headers);
-        return {
-          ...context,
-          runId: headers.get('X-LibreChat-Run-ID') ?? context.runId,
-          stepId: headers.get('X-LibreChat-Step-ID') ?? context.stepId,
-          requestId: headers.get('X-LibreChat-Request-ID') ?? context.requestId,
-        };
-      },
+      agentRequest,
       onAgentApproval: (context) => {
         if (req.governanceAgentRun) {
           Object.assign(req.governanceAgentRun, context);
