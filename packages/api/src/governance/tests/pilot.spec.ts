@@ -1,7 +1,12 @@
 import express from 'express';
 import request from 'supertest';
 import { AppService } from '@librechat/data-schemas';
-import { AgentCapabilities } from 'librechat-data-provider';
+import {
+  AgentCapabilities,
+  createPayload,
+  EModelEndpoint,
+  GOVERNANCE_AGENT_MODEL_PARAMETERS,
+} from 'librechat-data-provider';
 import { Constants, FileSources } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types';
@@ -45,6 +50,150 @@ function app() {
 }
 
 describe('pilot HTTP boundary', () => {
+  it.each(GOVERNANCE_AGENT_MODEL_PARAMETERS)(
+    'allows saving the visible Agent Builder parameter %s',
+    async (key) => {
+      const values = {
+        maxContextTokens: 4096,
+        max_tokens: 512,
+        temperature: 0.4,
+        top_p: 0.7,
+        frequency_penalty: 0.1,
+        presence_penalty: -0.1,
+      };
+      const response = await request(app())
+        .patch('/api/agents/agent_test')
+        .send({ model_parameters: { [key]: values[key] } })
+        .expect(204);
+      expect(response.status).toBe(204);
+    },
+  );
+
+  it.each([null, 'conversation-1'])(
+    'allows the actual saved-agent UI submission for conversation %s',
+    async (conversationId) => {
+      const { server, payload } = createPayload({
+        conversation: { conversationId, endpoint: EModelEndpoint.agents, agent_id: 'agent_test' },
+        endpointOption: {
+          endpoint: EModelEndpoint.agents,
+          endpointType: EModelEndpoint.agents,
+          agent_id: 'agent_test',
+        },
+        userMessage: {
+          messageId: 'message-1',
+          parentMessageId: conversationId ? 'reply' : String(Constants.NO_PARENT),
+          conversationId,
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+        isTemporary: false,
+        messages: [],
+      });
+
+      expect(server).toBe('/api/agents/chat/agents');
+      await request(app()).post(server).send(payload).expect(204);
+    },
+  );
+
+  it.each([
+    { agent_id: null },
+    { provider: 'openAI' },
+    { tools: ['execute_code'] },
+    { capabilities: ['unknown'] },
+    { addedConvo: { endpoint: GOVERNANCE_ENDPOINT, endpointType: 'custom', model: 'other-model' } },
+    { addedConvo: {} },
+    { addedConvo: false },
+    { addedConvo: '' },
+    { addedConvo: [] },
+  ])('rejects unsupported saved-agent UI submissions %j', async (extra) => {
+    const response = await request(app())
+      .post('/api/agents/chat/agents')
+      .send({ endpoint: 'agents', agent_id: 'agent_test', text: 'Hello', ...extra })
+      .expect(403);
+    expect(response.body.type).toBe('governance_feature_unsupported');
+  });
+
+  it('allows model-only Agent Builder create, edit, list, selection, and chat', async () => {
+    const agent = {
+      provider: GOVERNANCE_ENDPOINT,
+      model: 'logical-model',
+      name: 'My agent',
+      instructions: 'Answer briefly',
+      tools: [],
+      tool_options: {},
+      edges: [],
+      artifacts: '',
+      model_parameters: { useResponsesApi: false },
+      skills_enabled: false,
+    };
+    const created = await request(app()).post('/api/agents').send(agent).expect(204);
+    expect(created.status).toBe(204);
+    await request(app()).patch('/api/agents/agent_test').send(agent).expect(204);
+    await request(app()).get('/api/agents').expect(204);
+    await request(app()).get('/api/agents/agent_test/expanded').expect(204);
+    await request(app()).get('/api/agents/categories').expect(204);
+    await request(app())
+      .post('/api/agents/agent_test/revert')
+      .send({ version_index: 0 })
+      .expect(204);
+    await request(app())
+      .post('/api/agents/chat')
+      .send({
+        endpoint: 'agents',
+        agent_id: 'agent_test',
+        endpointType: 'agents',
+        text: 'Hello',
+      })
+      .expect(204);
+  });
+
+  it.each([
+    {},
+    { version_index: -1 },
+    { version_index: 0.5 },
+    { version_index: '0' },
+    { version_index: null },
+    { version_index: 0, tools: ['execute_code'] },
+    { version_index: 0, provider: 'openAI' },
+  ])('rejects malformed or extended agent restore requests %j', async (body) => {
+    const response = await request(app())
+      .post('/api/agents/agent_test/revert')
+      .send(body)
+      .expect(403);
+    expect(response.body.type).toBe('governance_feature_unsupported');
+  });
+
+  it.each(['get', 'patch', 'delete'] as const)(
+    'does not enable other methods on the restore route: %s',
+    async (method) => {
+      const response = await request(app())
+        [method]('/api/agents/agent_test/revert')
+        .send({ version_index: 0 })
+        .expect(403);
+      expect(response.body.type).toBe('governance_feature_unsupported');
+    },
+  );
+
+  it.each([
+    { provider: 'openAI' },
+    { tools: ['execute_code'] },
+    { tools: ['unknown'] },
+    { capabilities: ['unknown'] },
+    { model_parameters: { useResponsesApi: true } },
+    { tool_options: { shell: true } },
+    { subagents: { enabled: true } },
+  ])('denies executable Agent Builder settings %j', async (extra) => {
+    const denied = await request(app())
+      .post('/api/agents')
+      .send({
+        provider: GOVERNANCE_ENDPOINT,
+        model: 'logical-model',
+        ...extra,
+      })
+      .expect(403);
+    expect(denied.body.type).toBe('governance_feature_unsupported');
+  });
+
   it.each(['', '   '])('rejects documents without typed text: %j', async (text) => {
     process.env.GOVERNANCE_ATTACHMENTS_ENABLED = 'true';
     await expect(
@@ -369,7 +518,7 @@ describe('pilot configuration', () => {
     expect(result.endpoints?.agents?.capabilities).toEqual([]);
     expect(result.interfaceConfig).toMatchObject({
       skills: false,
-      agents: false,
+      agents: { use: true, create: true, share: false, public: false },
       webSearch: false,
     });
     expect(result.mcpConfig).toBeNull();
@@ -432,7 +581,7 @@ describe('pilot configuration', () => {
     const result = restrictGovernanceAppConfig(base);
     expect(result.endpoints?.openAI).toBeUndefined();
     expect(result.interfaceConfig).toMatchObject({
-      agents: false,
+      agents: { use: true, create: true, share: false, public: false },
       modelSelect: true,
       contextUsage: false,
       privacyPolicy: { externalUrl: 'https://example.com/privacy' },
@@ -464,7 +613,7 @@ describe('pilot configuration', () => {
       body: { endpoint: GOVERNANCE_ENDPOINT, endpointType: 'custom' },
     } as ServerRequest;
     const endpoints = await services.getEndpointsConfig(req);
-    expect(Object.keys(endpoints ?? {})).toEqual([GOVERNANCE_ENDPOINT]);
+    expect(Object.keys(endpoints ?? {})).toEqual([GOVERNANCE_ENDPOINT, 'agents']);
     expect(endpoints?.[GOVERNANCE_ENDPOINT]).toMatchObject({ type: 'custom', userProvide: false });
     expect(await services.checkCapability(req, AgentCapabilities.tools)).toBe(false);
     expect(await services.checkCapability(req, AgentCapabilities.skills)).toBe(false);

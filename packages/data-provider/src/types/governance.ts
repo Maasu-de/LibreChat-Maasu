@@ -45,6 +45,13 @@ export interface GovernanceFileFinding {
   terms?: string[];
 }
 
+export interface GovernanceInstructionReview {
+  text: string;
+  /** Findings use `GOVERNANCE_DLP_TEXT_LOCATION` within this instruction's text. */
+  findings: GovernanceFinding[];
+  maskedRanges?: GovernanceMaskedRange[];
+}
+
 /** Compared models that findings of these categories may not be sent to. */
 export interface GovernanceModelRestriction {
   models: string[];
@@ -59,6 +66,7 @@ export interface GovernanceDlpResult {
   maskedRanges?: GovernanceMaskedRange[];
   maskedPreview?: GovernanceMaskedContent[];
   fileFindings?: GovernanceFileFinding[];
+  instructions?: GovernanceInstructionReview[];
   /** Set on a blocked comparison when the findings do not allow some of the compared models. */
   modelRestriction?: GovernanceModelRestriction;
   /** Set when the content does not allow the selected model, which blocks the prompt. */
@@ -71,8 +79,9 @@ export const GOVERNANCE_DLP_TEXT_LOCATION = '/messages/0/content';
 /**
  * A DLP review the Governance Backend returned instead of a completion. Findings and the masked
  * preview refer to the submitted text at `GOVERNANCE_DLP_TEXT_LOCATION`; findings in attached
- * files are listed per file in `fileFindings`. Sending that text again with `dlpReviewId` sends
- * the approved request to the model.
+ * files are listed per file in `fileFindings`, and agent instructions are reviewed separately
+ * in `instructions`. Sending the submitted text again with `dlpReviewId` sends the approved
+ * request to the model.
  */
 export interface GovernanceDlpReview extends GovernanceDlpResult {
   reviewId: string;
@@ -88,8 +97,26 @@ export interface GovernanceTier {
 export interface GovernanceModel {
   id: string;
   governance_tier?: GovernanceTier | null;
+  supported_parameters?: string[] | null;
 }
 
 export type GovernanceModelsConfig = Record<string, GovernanceModel[]>;
 
 export const GOVERNANCE_ENDPOINT: string = 'AI Governance Gateway';
+
+export const GOVERNANCE_AGENT_MODEL_PARAMETERS = [
+  'maxContextTokens',
+  'max_tokens',
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+] as const;
+
+/** Gateway capabilities describe the routed model; its logical ID can be any alias. */
+export function getGovernanceAgentModelParameters(model?: GovernanceModel) {
+  const supported = new Set(model?.supported_parameters ?? ['max_tokens']);
+  return GOVERNANCE_AGENT_MODEL_PARAMETERS.filter(
+    (key) => key === 'maxContextTokens' || supported.has(key),
+  );
+}

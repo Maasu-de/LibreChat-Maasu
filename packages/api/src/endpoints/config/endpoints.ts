@@ -44,7 +44,7 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
         tenantId: req.user?.tenantId,
       }));
     const defaultEndpointsConfig = isGovernancePilotEnabled()
-      ? {}
+      ? { [EModelEndpoint.agents]: { userProvide: false } }
       : await loadDefaultEndpointsConfig(appConfig);
     const customEndpointsConfig = loadCustomEndpointsConfig(appConfig?.endpoints?.custom);
 
@@ -128,7 +128,10 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     }
 
     if (isGovernancePilotEnabled()) {
-      return { [GOVERNANCE_ENDPOINT]: mergedConfig[GOVERNANCE_ENDPOINT] } as TEndpointsConfig;
+      return {
+        [GOVERNANCE_ENDPOINT]: mergedConfig[GOVERNANCE_ENDPOINT],
+        [EModelEndpoint.agents]: mergedConfig[EModelEndpoint.agents],
+      } as TEndpointsConfig;
     }
     return orderEndpointsConfig(mergedConfig as TEndpointsConfig);
   }

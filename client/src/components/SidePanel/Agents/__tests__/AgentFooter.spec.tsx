@@ -11,6 +11,7 @@ const mockUseWatch = jest.fn();
 const mockUseAuthContext = jest.fn();
 const mockUseHasAccess = jest.fn();
 const mockUseResourcePermissions = jest.fn();
+const mockUseGetStartupConfig = jest.fn();
 
 jest.mock('react-hook-form', () => ({
   useFormContext: () => ({
@@ -123,6 +124,7 @@ const createBaseMutation = <T = Agent, P = any>(
 };
 
 jest.mock('~/data-provider', () => ({
+  useGetStartupConfig: () => mockUseGetStartupConfig(),
   useUpdateAgentMutation: () => createBaseMutation<Agent, any>(),
 }));
 
@@ -228,6 +230,7 @@ describe('AgentFooter', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseGetStartupConfig.mockReturnValue({ data: { governancePilotEnabled: false } });
     // Reset to default mock implementations
     mockUseWatch.mockImplementation(({ name }) => {
       if (name === 'agent') {
@@ -274,6 +277,19 @@ describe('AgentFooter', () => {
       expect(screen.getByTestId('duplicate-button')).toBeInTheDocument();
       expect(screen.queryByTestId('spinner')).not.toBeInTheDocument();
     });
+
+    test.each(['regular', 'admin'] as const)(
+      'hides duplication in governed mode for the %s user while keeping Save available',
+      (role) => {
+        mockUseGetStartupConfig.mockReturnValue({ data: { governancePilotEnabled: true } });
+        mockUseAuthContext.mockReturnValue(createAuthContext(mockUsers[role]));
+
+        render(<AgentFooter {...defaultProps} />);
+
+        expect(screen.queryByTestId('duplicate-button')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+      },
+    );
 
     test('handles loading states for createMutation', () => {
       const { unmount } = render(

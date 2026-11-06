@@ -7,6 +7,7 @@ import {
 } from './mode';
 import { assertOidcAdministratorConfigured } from '../auth/administrator';
 import { isEnabled } from '~/utils/common';
+import { governanceAgentMaxSteps } from './agents';
 
 /** The only attachment types the pilot accepts: txt, md, csv, pdf and docx, all parsed to text. */
 export const GOVERNANCE_ATTACHMENT_MIME_TYPES: string[] = [
@@ -50,7 +51,7 @@ function restrictGovernanceInterface(interfaceConfig: TCustomConfig['interface']
     modelSelect: true,
     parameters: false,
     presets: false,
-    agents: false,
+    agents: { use: true, create: true, share: false, public: false },
     remoteAgents: disabled,
     mcpServers: disabled,
     marketplace: { use: false },
@@ -122,6 +123,8 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
   if (!isEnabled(process.env.GOVERNANCE_DLP_ENABLED) || isEnabled(process.env.OPENAI_MODERATION)) {
     throw new Error('Governed pilot requires DLP and forbids external moderation');
   }
+  // Model/tool transitions need their own graph steps; retain the classic-chat budget too.
+  const recursionLimit = Math.max(50, governanceAgentMaxSteps() * 2 + 1);
   return {
     ...config,
     endpoints: {
@@ -135,7 +138,12 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
           ...getGovernanceTitleConfig(config),
         },
       ],
-      agents: { capabilities: [], allowedProviders: [GOVERNANCE_ENDPOINT] },
+      agents: {
+        capabilities: [],
+        allowedProviders: [GOVERNANCE_ENDPOINT],
+        recursionLimit,
+        maxRecursionLimit: recursionLimit,
+      },
     },
     interface: restrictGovernanceInterface(config.interface),
     fileConfig: {

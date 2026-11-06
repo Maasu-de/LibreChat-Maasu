@@ -59,6 +59,7 @@ export * from './governance/budgets';
 export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
+export { getGovernanceAgentRestoreError } from './governance/agents';
 export * from './governance/groups';
 export { getGovernanceGroupCapabilities } from './governance/authorization';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';

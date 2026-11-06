@@ -11,6 +11,7 @@ const {
   mergeAgentOcrConversion,
   MAX_AVATAR_REFRESH_AGENTS,
   collectToolResourceFileIds,
+  getGovernanceAgentRestoreError,
   convertOcrToContextInPlace,
   stripFileIdsFromToolResources,
 } = require('@librechat/api');
@@ -1180,7 +1181,7 @@ const uploadAgentAvatarHandler = async (req, res) => {
 
 /**
  * Reverts an agent to a previous version from its version history.
- * @route PATCH /agents/:id/revert
+ * @route POST /agents/:id/revert
  * @param {object} req - Express Request object
  * @param {object} req.params - Request parameters
  * @param {string} req.params.id - The ID of the agent to revert
@@ -1211,7 +1212,10 @@ const revertAgentVersionHandler = async (req, res) => {
       return res.status(404).json({ error: 'Agent not found' });
     }
 
-    // Permissions are enforced via route middleware (ACL EDIT)
+    const restoreError = getGovernanceAgentRestoreError(existingAgent, version_index);
+    if (restoreError) {
+      return res.status(restoreError.status).json({ error: restoreError.message });
+    }
 
     let updatedAgent = await db.revertAgentVersion({ id }, version_index);
     const revertUpdates = {};

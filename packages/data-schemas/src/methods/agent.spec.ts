@@ -1829,6 +1829,28 @@ describe('Agent Methods', () => {
       expect(revertedAgent.description).toBe('Original description');
     });
 
+    test('should restore default model parameters when reverting to an older version', async () => {
+      const agentId = `agent_${uuidv4()}`;
+      await createAgent({
+        id: agentId,
+        name: 'Default parameters',
+        instructions: 'Historical instructions',
+        provider: 'test',
+        model: 'historical-model',
+        author: new mongoose.Types.ObjectId(),
+      });
+      await updateAgent(
+        { id: agentId },
+        { model: 'current-model', model_parameters: { temperature: 0.9, max_tokens: 123 } },
+      );
+
+      const restored = await revertAgentVersion({ id: agentId }, 0);
+
+      expect(restored.model_parameters).toEqual({});
+      expect(restored.instructions).toBe('Historical instructions');
+      expect(restored.model).toBe('historical-model');
+    });
+
     test('should prune deleted skill ids when reverting to an older version', async () => {
       const agentId = `agent_${uuidv4()}`;
       const authorId = new mongoose.Types.ObjectId();

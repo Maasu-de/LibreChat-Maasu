@@ -4,6 +4,7 @@ import { AgentCapabilities } from 'librechat-data-provider';
 import { useFormContext, Controller } from 'react-hook-form';
 import type { AgentForm } from '~/common';
 import { useAgentPanelContext } from '~/Providers';
+import { useGetStartupConfig } from '~/data-provider';
 import AgentSubagents from './AgentSubagents';
 import MaxAgentSteps from './MaxAgentSteps';
 import AgentHandoffs from './AgentHandoffs';
@@ -16,6 +17,8 @@ export default function AdvancedPanel() {
   const methods = useFormContext<AgentForm>();
   const { control, watch } = methods;
   const currentAgentId = watch('id');
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
 
   const { agentsConfig, setActivePanel } = useAgentPanelContext();
   const chainEnabled = useMemo(
@@ -55,12 +58,14 @@ export default function AdvancedPanel() {
             render={({ field }) => <AgentSubagents field={field} currentAgentId={currentAgentId} />}
           />
         )}
-        <Controller
-          name="edges"
-          control={control}
-          defaultValue={[]}
-          render={({ field }) => <AgentHandoffs field={field} currentAgentId={currentAgentId} />}
-        />
+        {!governancePilot && (
+          <Controller
+            name="edges"
+            control={control}
+            defaultValue={[]}
+            render={({ field }) => <AgentHandoffs field={field} currentAgentId={currentAgentId} />}
+          />
+        )}
         {chainEnabled && (
           <Controller
             name="agent_ids"

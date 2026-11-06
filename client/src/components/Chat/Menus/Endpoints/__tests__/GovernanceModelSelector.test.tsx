@@ -5,6 +5,7 @@ import { GOVERNANCE_ENDPOINT, QueryKeys } from 'librechat-data-provider';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
 import type { GovernanceModel } from 'librechat-data-provider';
 import GovernanceModelSelector from '../GovernanceModelSelector';
+import { CustomMenuItem } from '../CustomMenu';
 import { groupGovernanceModels } from '../governance';
 
 jest.mock('../../../../../../../packages/data-provider/src/data-service', () => ({
@@ -82,6 +83,20 @@ describe('governance model grouping', () => {
 });
 
 describe('GovernanceModelSelector', () => {
+  it('keeps an authorized agent selectable alongside the governed models', async () => {
+    const onSelectAgent = jest.fn();
+    const agent = { id: 'agent_governed', name: 'Governed agent' };
+    renderSelector(
+      <GovernanceModelSelector endpoint={GOVERNANCE_ENDPOINT} value={null} onSelect={jest.fn()}>
+        <CustomMenuItem onClick={() => onSelectAgent(agent.id)}>{agent.name}</CustomMenuItem>
+      </GovernanceModelSelector>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
+    expect(screen.getByRole('option', { name: 'sovereign-model' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: agent.name }));
+    expect(onSelectAgent).toHaveBeenCalledWith(agent.id);
+  });
+
   it.each(models)('renders both canonical tiers and selects $id unchanged', async ({ id }) => {
     const onSelect = jest.fn();
     renderSelector(
