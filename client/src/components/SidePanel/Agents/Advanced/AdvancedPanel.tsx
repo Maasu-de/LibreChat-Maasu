@@ -31,25 +31,24 @@ export default function AdvancedPanel() {
   );
 
   return (
-    <div className="mb-1 flex w-full flex-col gap-2 text-sm">
-      <div className="advanced-panel relative flex flex-col items-center px-16 pt-2 text-center">
-        <div className="absolute left-0 top-4">
-          <button
-            type="button"
-            className="btn btn-neutral relative"
-            onClick={() => {
-              setActivePanel(Panel.builder);
-            }}
-            aria-label={localize('com_ui_back_to_builder')}
-          >
-            <div className="advanced-panel-content flex w-full items-center justify-center gap-2">
-              <ChevronLeft aria-hidden="true" />
-            </div>
-          </button>
-        </div>
-        <div className="mb-2 mt-2 text-xl font-medium">{localize('com_ui_advanced_settings')}</div>
+    <div className="mb-1 flex w-full min-w-0 flex-col gap-2 text-sm">
+      <div className="advanced-panel mb-2 flex items-center gap-2 pt-2">
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+          onClick={() => {
+            setActivePanel(Panel.builder);
+          }}
+          aria-label={localize('com_ui_back_to_builder')}
+          title={localize('com_ui_back_to_builder')}
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <h2 className="min-w-0 text-base font-semibold text-text-primary">
+          {localize('com_ui_advanced_settings')}
+        </h2>
       </div>
-      <div className="flex flex-col gap-4 px-2 pb-2">
+      <div className="flex min-w-0 flex-col gap-4 px-2 pb-2">
         <MaxAgentSteps />
         {subagentsEnabled && (
           <Controller
