@@ -78,6 +78,7 @@ export interface AdminGroupsDeps {
   findUsers: (
     searchCriteria: FilterQuery<IUser>,
     fieldsToSelect?: string | string[] | null,
+    options?: { session?: ClientSession },
   ) => Promise<IUser[]>;
   deleteConfig: (
     principalType: PrincipalType,
@@ -113,6 +114,28 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
     deleteConfig,
     deleteAclEntries,
   } = deps;
+
+  async function resolveAuditMembers(
+    ids: string[],
+    session: ClientSession,
+  ): Promise<Map<string, string>> {
+    if (!ids.length) return new Map();
+    const objectIds = ids.filter(isValidObjectIdString);
+    const conditions: FilterQuery<IUser>[] = [{ idOnTheSource: { $in: ids } }];
+    if (objectIds.length) conditions.push({ _id: { $in: objectIds } });
+    const users = await findUsers({ $or: conditions }, 'idOnTheSource', { session });
+    const resolved = new Map<string, string>();
+    for (const user of users) {
+      const nativeId = user._id.toString();
+      resolved.set(nativeId, nativeId);
+      if (user.idOnTheSource) resolved.set(user.idOnTheSource, nativeId);
+    }
+    for (const id of objectIds) {
+      const nativeId = resolved.get(id.toLowerCase());
+      if (nativeId && !resolved.has(id)) resolved.set(id, nativeId);
+    }
+    return resolved;
+  }
 
   async function listGroupsHandler(req: ServerRequest, res: Response) {
     try {
@@ -237,7 +260,8 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
             },
             ...groupSessionArgs(session),
           ),
-        rawIds,
+        undefined,
+        resolveAuditMembers,
       );
       return res.status(201).json({ group });
     } catch (error) {
@@ -305,8 +329,12 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         return res.status(400).json({ error: 'No valid fields to update' });
       }
 
-      const group = await mutateGovernanceGroup(req, 'group.updated', (session) =>
-        updateGroupById(id, updateData, ...groupSessionArgs(session)),
+      const group = await mutateGovernanceGroup(
+        req,
+        'group.updated',
+        (session) => updateGroupById(id, updateData, ...groupSessionArgs(session)),
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
@@ -330,8 +358,12 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
       if (!isValidObjectIdString(id)) {
         return res.status(400).json({ error: 'Invalid group ID format' });
       }
-      const deleted = await mutateGovernanceGroup(req, 'group.deleted', (session) =>
-        deleteGroup(id, ...groupSessionArgs(session)),
+      const deleted = await mutateGovernanceGroup(
+        req,
+        'group.deleted',
+        (session) => deleteGroup(id, ...groupSessionArgs(session)),
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
       if (!deleted) {
         return res.status(404).json({ error: 'Group not found' });
@@ -450,7 +482,8 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         req,
         'membership.added',
         async (session) => (await addUserToGroup(userId, id, ...groupSessionArgs(session))).group,
-        [userId],
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
@@ -506,7 +539,8 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
           isValidObjectIdString(userId)
             ? removeObjectIdMember(id, userId, session)
             : removeMemberById(id, userId, ...groupSessionArgs(session)),
-        [userId],
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
 
       if (!group) {

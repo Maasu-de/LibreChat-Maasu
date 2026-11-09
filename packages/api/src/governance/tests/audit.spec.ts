@@ -7,6 +7,7 @@ import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import { createAdminGroupsHandlers } from '../../admin/groups';
 import {
+  affectedSubjectRef,
   flushGovernanceGroupAudit,
   startGovernanceGroupAuditDelivery,
   replayGovernanceGroupAudit,
@@ -69,6 +70,8 @@ beforeEach(async () => {
     GOVERNANCE_PILOT_ENABLED: 'true',
     GOVERNANCE_AUDIT_URL: 'https://gateway.example/internal/group-audit',
     LIBRECHAT_SERVICE_CREDENTIAL: 'test-credential',
+    PILOT_TENANT_ID: '00000000-0000-0000-0000-000000000001',
+    USAGE_PSEUDONYMIZATION_SECRET: 'audit-test-secret',
   };
   delete process.env.GOVERNANCE_API_BASE_URL;
   await runAsSystem(async () => {
@@ -139,7 +142,7 @@ it.each(['true', 'TRUE', 'True', ' true '])(
       expect(event).not.toHaveProperty('email');
       expect(event).not.toHaveProperty('token');
       if (event.action.startsWith('membership.'))
-        expect(event.resource.affected_user_id).toBe(user._id.toString());
+        expect(event.resource.affected_subject_ref).toBe(affectedSubjectRef(user._id.toString()));
     }
     expect(await outbox().countDocuments()).toBe(0);
   },
@@ -335,4 +338,149 @@ it('recovers abandoned delivery leases and excludes active leases across workers
   await outbox().updateMany({}, { $set: { leaseUntil: new Date(0) } });
   await flushGovernanceGroupAudit();
   expect(await outbox().countDocuments()).toBe(0);
+});
+
+it('preserves historical names and safe update details, suppressing no-op updates', async () => {
+  const created = await request(app).post('/groups').send({ name: 'Engineering' });
+  const id = created.body.group._id;
+  await request(app)
+    .patch(`/groups/${id}`)
+    .send({ name: 'Platform', email: 'group@private.example' });
+  await request(app).patch(`/groups/${id}`).send({ name: 'Platform' });
+  await request(app).delete(`/groups/${id}`);
+  const records = await outbox().find().sort({ createdAt: 1 }).toArray();
+  expect(records.map((record) => record.payload.action)).toEqual([
+    'group.created',
+    'group.updated',
+    'group.deleted',
+  ]);
+  expect(records[0].payload.resource.name).toBe('Engineering');
+  expect(records[1].payload).toMatchObject({
+    before: { name: 'Engineering', has_email: false },
+    after: { name: 'Platform', has_email: true },
+    changed_fields: ['name', 'email'],
+  });
+  expect(records[2].payload.resource.name).toBe('Platform');
+  expect(JSON.stringify(records)).not.toContain('group@private.example');
+});
+
+it('uses the native request actor pseudonym for external members through every mutation', async () => {
+  const user = await runAsSystem(() =>
+    models.User.create({
+      email: 'member@private.example',
+      provider: 'openid',
+      role: 'USER',
+      idOnTheSource: 'external-member',
+    }),
+  );
+  const created = await request(app)
+    .post('/groups')
+    .send({
+      name: 'History',
+      memberIds: [user._id.toString(), 'external-member'],
+    });
+  const id = created.body.group._id;
+  expect(created.status).toBe(201);
+  await request(app).post(`/groups/${id}/members`).send({ userId: user._id.toString() });
+  await request(app).delete(`/groups/${id}/members/${user._id}`);
+  await request(app).delete(`/groups/${id}/members/${user._id}`);
+  await request(app).post(`/groups/${id}/members`).send({ userId: user._id.toString() });
+  await request(app).delete(`/groups/${id}`);
+  const records = await outbox().find().sort({ createdAt: 1 }).toArray();
+  const memberships = records
+    .map((record) => record.payload)
+    .filter((event) => event.action.startsWith('membership.'));
+  expect(memberships.map((event) => [event.action, event.cause])).toEqual([
+    ['membership.added', undefined],
+    ['membership.removed', 'member_removed'],
+    ['membership.added', undefined],
+    ['membership.removed', 'group_deleted'],
+  ]);
+  for (const event of memberships) {
+    expect(event.resource.affected_subject_ref).toBe(affectedSubjectRef(user._id.toString()));
+    expect(event.resource).not.toHaveProperty('affected_user_id');
+  }
+  expect(records.filter((record) => record.payload.action === 'group.deleted')).toHaveLength(1);
+  expect(JSON.stringify(records)).not.toContain('external-member');
+  expect(JSON.stringify(records)).not.toContain(user._id.toString());
+});
+
+it('records one removal per former member on group deletion, including unresolved external IDs', async () => {
+  const created = await request(app)
+    .post('/groups')
+    .send({
+      name: 'External',
+      memberIds: ['external-one', 'external-two', 'external-one'],
+    });
+  expect(created.status).toBe(201);
+  await outbox().deleteMany({});
+  await request(app).delete(`/groups/${created.body.group._id}`);
+  const records = await outbox().find().toArray();
+  expect(records).toHaveLength(3);
+  expect(records.filter((record) => record.payload.action === 'membership.removed')).toHaveLength(
+    2,
+  );
+  for (const record of records.filter((record) => record.payload.action === 'membership.removed')) {
+    expect(record.payload.cause).toBe('group_deleted');
+    expect(record.payload.resource.affected_subject_ref).toMatch(/^sha256:[a-f0-9]{64}$/);
+  }
+});
+
+it('scopes pseudonyms to the tenant and matches the Gateway HMAC contract', () => {
+  expect(affectedSubjectRef('member')).toBe(
+    'sha256:72959ee6469da7bba8061983cef89d0aa6c049f5de5b2cefb143290cfa78fd80',
+  );
+  const first = affectedSubjectRef('member');
+  process.env.PILOT_TENANT_ID = '00000000-0000-0000-0000-000000000002';
+  expect(affectedSubjectRef('member')).not.toBe(first);
+});
+
+it('rolls back a populated deletion when its removal deliveries cannot be persisted', async () => {
+  const created = await request(app)
+    .post('/groups')
+    .send({ name: 'Keep me', memberIds: ['external'] });
+  const id = created.body.group._id;
+  await outbox().deleteMany({});
+  await mongoose.connection.db!.command({
+    collMod: 'governance_group_audit_outbox',
+    validator: { $expr: { $literal: false } },
+  });
+  try {
+    expect((await request(app).delete(`/groups/${id}`)).status).toBe(500);
+    const retained = await runAsSystem(() => methods.findGroupById(id));
+    expect(retained?.memberIds).toEqual(['external']);
+    expect(await outbox().countDocuments()).toBe(0);
+  } finally {
+    await mongoose.connection.db!.command({
+      collMod: 'governance_group_audit_outbox',
+      validator: {},
+    });
+  }
+});
+
+it('treats multiple stored aliases as one affected member', async () => {
+  const user = await runAsSystem(() =>
+    models.User.create({
+      email: 'alias@test.example',
+      provider: 'openid',
+      role: 'USER',
+      idOnTheSource: 'alias-external',
+    }),
+  );
+  const group = await runAsSystem(() =>
+    methods.createGroup({
+      name: 'Aliases',
+      source: 'local',
+      memberIds: [user._id.toString(), 'alias-external'],
+    }),
+  );
+  await request(app).delete(`/groups/${group._id}/members/alias-external`);
+  expect(await outbox().countDocuments()).toBe(0);
+  await request(app).delete(`/groups/${group._id}`);
+  const records = await outbox().find().toArray();
+  const removals = records.filter((record) => record.payload.action === 'membership.removed');
+  expect(removals).toHaveLength(1);
+  expect(removals[0].payload.resource.affected_subject_ref).toBe(
+    affectedSubjectRef(user._id.toString()),
+  );
 });
