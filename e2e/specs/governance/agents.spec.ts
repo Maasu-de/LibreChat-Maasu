@@ -30,6 +30,126 @@ async function openAgent(page: Page, instructions: string) {
   );
 }
 
+async function attach(page: Page, name: string, text: string, mimeType = 'text/plain') {
+  await page.getByRole('button', { name: 'Attach File Options' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Upload to Provider' })).toHaveCount(0);
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('menuitem', { name: 'Upload File', exact: true }).click(),
+  ]);
+  const uploaded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/files' && response.request().method() === 'POST',
+  );
+  await chooser.setFiles({ name, mimeType, buffer: Buffer.from(text, 'utf8') });
+  expect((await uploaded).status()).toBe(200);
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+}
+
+test('agents accept governed attachments while classic chat keeps text uploads', async ({
+  page,
+}) => {
+  await openAgent(page, 'Summarize clearly.');
+  await attach(page, 'agent-agenda.txt', 'Agenda: budget review and hiring plan.');
+  await sendMessage(page, 'Summarize the attached agenda');
+  await expect(
+    messagesView(page).getByText(/E2E gateway reply \[attachment=yes iban=none email=no/),
+  ).toBeVisible();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+
+  await newGovernedChat(page);
+  await page.getByRole('button', { name: 'Attach File Options' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Upload File', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Upload to Provider' })).toHaveCount(0);
+});
+
+test('agent attachments require warning approval before reaching the model', async ({ page }) => {
+  await openAgent(page, 'Summarize clearly.');
+  await attach(page, 'agent-contacts.csv', 'name,email\nMax,max@example.com\n', 'text/csv');
+  await sendMessage(page, 'Who is on this list?');
+
+  const dialog = page.getByRole('dialog', { name: 'Sensitive information detected' });
+  await expect(dialog.getByRole('heading', { name: 'agent-contacts.csv' })).toBeVisible();
+  await expect(messagesView(page).getByText(/E2E gateway reply/)).not.toBeVisible();
+  await dialog.getByRole('button', { name: 'Continue anyway' }).click();
+  await expect(
+    messagesView(page).getByText(/E2E gateway reply \[attachment=yes iban=none email=yes/),
+  ).toBeVisible();
+});
+
+test('agent attachments stay masked in the completion and later history', async ({ page }) => {
+  const iban = 'DE89370400440532013000';
+  await openAgent(page, 'Summarize clearly.');
+  await attach(page, 'agent-invoice.md', `# Invoice\n\nPay to ${iban}.\n`, 'text/markdown');
+  await sendMessage(page, 'Check this invoice');
+
+  const dialog = page.getByRole('dialog', { name: 'Sensitive information will be masked' });
+  await expect(dialog.getByRole('heading', { name: 'agent-invoice.md' })).toBeVisible();
+  await expect(messagesView(page).getByText(/E2E gateway reply/)).not.toBeVisible();
+  await dialog.getByRole('button', { name: 'Send masked' }).click();
+  await expect(
+    messagesView(page).getByText(/E2E gateway reply \[attachment=yes iban=masked email=no/),
+  ).toBeVisible();
+
+  await sendMessage(page, 'What is the total?');
+  await expect(
+    messagesView(page).getByText(/attachment=no iban=none email=no history-iban=masked/),
+  ).toBeVisible();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+});
+
+test('blocked agent attachments stop before a model response', async ({ page }) => {
+  await openAgent(page, 'Summarize clearly.');
+  await attach(page, 'agent-launch-plan.txt', 'PROJECT-NIGHTSHADE launches in May.');
+  await sendMessage(page, 'Summarize the launch plan');
+
+  const dialog = page.getByRole('dialog', { name: 'Sensitive prompt blocked' });
+  await expect(dialog.getByRole('heading', { name: 'agent-launch-plan.txt' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Continue anyway' })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Send masked' })).toHaveCount(0);
+  await expect(messagesView(page).getByText(/E2E gateway reply/)).not.toBeVisible();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'agent-launch-plan.txt', exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'Summarize the launch plan',
+  );
+});
+
+test('dropped agent attachments use governed text context', async ({ page }) => {
+  await openAgent(page, 'Summarize clearly.');
+  const dataTransfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File(['Agenda: budget review.'], 'agent-dropped-agenda.txt', { type: 'text/plain' }),
+    );
+    return transfer;
+  });
+  await page.locator('main').dispatchEvent('dragenter', { dataTransfer });
+  await page.locator('main').dispatchEvent('dragover', { dataTransfer });
+  await page.locator('main').dispatchEvent('drop', { dataTransfer });
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: 'Upload File', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Upload to Provider' })).toHaveCount(0);
+  const uploaded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/files' && response.request().method() === 'POST',
+  );
+  await dialog.getByRole('button', { name: 'Upload File', exact: true }).click();
+  expect((await uploaded).status()).toBe(200);
+  await expect(
+    page.getByRole('button', { name: 'agent-dropped-agenda.txt', exact: true }),
+  ).toBeVisible();
+
+  await sendMessage(page, 'Summarize the dropped agenda');
+  await expect(
+    messagesView(page).getByText(/E2E gateway reply \[attachment=yes iban=none email=no/),
+  ).toBeVisible();
+  await dataTransfer.dispose();
+});
+
 test('new agent instructions require warning approval before the model is called', async ({
   page,
 }) => {

@@ -203,6 +203,24 @@ describe('pilot HTTP boundary', () => {
     ).resolves.toMatchObject({ status: 403 });
   });
 
+  it.each([true, false])(
+    'accepts saved-agent message attachments only when enabled: %s',
+    async (enabled) => {
+      process.env.GOVERNANCE_ATTACHMENTS_ENABLED = String(enabled);
+      const response = await request(app())
+        .post('/api/agents/chat/agents')
+        .send({
+          endpoint: EModelEndpoint.agents,
+          endpointType: EModelEndpoint.agents,
+          agent_id: 'agent_test',
+          text: 'Summarize the document',
+          files: [{ file_id: 'uploaded' }],
+        })
+        .expect(enabled ? 204 : 403);
+      expect(response.status).toBe(enabled ? 204 : 403);
+    },
+  );
+
   it.each([undefined, [], [null], [{}], [{ file_id: '' }], [{ file_id: '   ' }]])(
     'rejects a blank turn without valid uploaded file references: %j',
     async (files) => {
@@ -489,6 +507,28 @@ describe('saved history boundary', () => {
 });
 
 describe('pilot configuration', () => {
+  it.each([true, false])(
+    'applies the same governed attachment settings to saved agents and classic chat: %s',
+    (enabled) => {
+      process.env.GOVERNANCE_ATTACHMENTS_ENABLED = String(enabled);
+      const config = restrictGovernanceConfig({});
+      const endpoints = config.fileConfig?.endpoints;
+
+      expect(endpoints?.agents).toEqual(endpoints?.[GOVERNANCE_ENDPOINT]);
+      expect(endpoints?.agents).toMatchObject({ disabled: !enabled });
+      expect(endpoints?.default?.disabled).toBe(true);
+      expect(config.endpoints?.agents?.capabilities).toEqual([]);
+      if (enabled) {
+        expect(endpoints?.agents).toMatchObject({
+          fileLimit: 10,
+          fileSizeLimit: 20,
+          totalSizeLimit: 50,
+          supportedMimeTypes: config.fileConfig?.text?.supportedMimeTypes,
+        });
+      }
+    },
+  );
+
   it('pins provider credentials and removes integrations before AppService defaults', async () => {
     const config = restrictGovernanceConfig({
       endpoints: {

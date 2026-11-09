@@ -152,6 +152,7 @@ export function restrictGovernanceConfig(config: Partial<TCustomConfig>): Partia
         [GOVERNANCE_ENDPOINT]: isGovernanceAttachmentsEnabled()
           ? attachmentFileConfig
           : { disabled: true },
+        agents: isGovernanceAttachmentsEnabled() ? attachmentFileConfig : { disabled: true },
       },
       ...(isGovernanceAttachmentsEnabled() ? attachmentTextConfig : {}),
     },

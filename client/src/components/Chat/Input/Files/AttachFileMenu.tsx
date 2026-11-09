@@ -193,6 +193,7 @@ const AttachFileMenu = ({
       } else {
         items.push({
           label: localize('com_ui_upload_image_input'),
+          show: !governancePilot,
           onClick: () => {
             setToolResource(undefined);
             onAction('image');

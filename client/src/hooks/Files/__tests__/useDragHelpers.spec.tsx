@@ -72,18 +72,21 @@ function renderDrop(endpoint: string, disabled = false) {
 
 beforeEach(() => jest.clearAllMocks());
 
-it('routes classic governed text drops through the text context option', () => {
-  const file = new File(['Agenda'], 'agenda.txt', { type: 'text/plain' });
-  const { result } = renderDrop(GOVERNANCE_ENDPOINT);
+it.each([GOVERNANCE_ENDPOINT, EModelEndpoint.agents])(
+  'routes governed text drops through the text context option in %s',
+  (endpoint) => {
+    const file = new File(['Agenda'], 'agenda.txt', { type: 'text/plain' });
+    const { result } = renderDrop(endpoint);
 
-  act(() => mockDrop?.({ files: [file] }, {} as DropTargetMonitor));
+    act(() => mockDrop?.({ files: [file] }, {} as DropTargetMonitor));
 
-  expect(result.current.showModal).toBe(true);
-  expect(mockHandleFiles).not.toHaveBeenCalled();
-  act(() => result.current.handleOptionSelect(EToolResources.context));
-  expect(mockHandleFiles).toHaveBeenCalledWith([file], EToolResources.context);
-  expect(result.current.showModal).toBe(false);
-});
+    expect(result.current.showModal).toBe(true);
+    expect(mockHandleFiles).not.toHaveBeenCalled();
+    act(() => result.current.handleOptionSelect(EToolResources.context));
+    expect(mockHandleFiles).toHaveBeenCalledWith([file], EToolResources.context);
+    expect(result.current.showModal).toBe(false);
+  },
+);
 
 it.each([GOVERNANCE_ENDPOINT, EModelEndpoint.agents])(
   'continues to block disabled uploads for %s',

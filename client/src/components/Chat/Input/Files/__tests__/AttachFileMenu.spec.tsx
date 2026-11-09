@@ -185,19 +185,32 @@ describe('AttachFileMenu', () => {
       expect(screen.queryByText('Upload to Code Environment')).not.toBeInTheDocument();
     });
 
-    it('keeps saved model-only agents restricted', () => {
-      renderMenu({
-        endpoint: EModelEndpoint.agents,
-        endpointType: EModelEndpoint.custom,
-        agentId: 'agent_saved',
-      });
-      openMenu();
+    it.each([
+      [EModelEndpoint.custom, false],
+      [EModelEndpoint.custom, true],
+      [EModelEndpoint.agents, false],
+      [EModelEndpoint.agents, true],
+    ])(
+      'offers governed text uploads for agents (%s, SharePoint: %s)',
+      (endpointType, sharePointEnabled) => {
+        mockUseGetStartupConfig.mockReturnValue({
+          data: { governancePilotEnabled: true, sharePointFilePickerEnabled: sharePointEnabled },
+        });
+        renderMenu({
+          endpoint: EModelEndpoint.agents,
+          endpointType,
+          agentId: 'agent_saved',
+        });
 
-      expect(screen.queryByText('Upload File')).not.toBeInTheDocument();
-      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
-      expect(screen.queryByText('Upload for File Search')).not.toBeInTheDocument();
-      expect(screen.queryByText('Upload to Code Environment')).not.toBeInTheDocument();
-    });
+        openMenu();
+
+        expect(screen.getByText('Upload File')).toBeInTheDocument();
+        expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
+        expect(screen.queryByText('Upload Image')).not.toBeInTheDocument();
+        expect(screen.queryByText('Upload for File Search')).not.toBeInTheDocument();
+        expect(screen.queryByText('Upload to Code Environment')).not.toBeInTheDocument();
+      },
+    );
   });
 
   describe('Upload to Provider vs Upload Image', () => {

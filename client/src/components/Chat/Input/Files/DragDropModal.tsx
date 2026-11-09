@@ -119,7 +119,8 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         label: localize('com_ui_upload_image_input'),
         value: undefined,
         icon: <ImageUpIcon className="icon-md" />,
-        condition: files.every((file) => getFileType(file)?.startsWith('image/')),
+        condition:
+          !governancePilot && files.every((file) => getFileType(file)?.startsWith('image/')),
       });
     }
     if (capabilities.fileSearchEnabled && fileSearchAllowedByAgent) {

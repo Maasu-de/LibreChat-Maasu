@@ -43,24 +43,17 @@ function renderOptions() {
   return onOptionSelect;
 }
 
-it('offers only text context for classic governed file drops', () => {
-  mockEndpoint = GOVERNANCE_ENDPOINT;
-  const onOptionSelect = renderOptions();
+it.each([GOVERNANCE_ENDPOINT, EModelEndpoint.agents])(
+  'offers only governed text context for file drops in %s',
+  (endpoint) => {
+    mockEndpoint = endpoint;
+    const onOptionSelect = renderOptions();
 
-  fireEvent.click(screen.getByRole('button', { name: 'com_ui_upload_ocr_text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_upload_ocr_text' }));
 
-  expect(onOptionSelect).toHaveBeenCalledWith(EToolResources.context);
-  expect(screen.queryByText('com_ui_upload_provider')).not.toBeInTheDocument();
-  expect(screen.queryByText('com_ui_upload_file_search')).not.toBeInTheDocument();
-  expect(screen.queryByText('com_ui_upload_code_environment')).not.toBeInTheDocument();
-});
-
-it('keeps saved governed agents without upload capabilities', () => {
-  mockEndpoint = EModelEndpoint.agents;
-  renderOptions();
-
-  expect(screen.queryByText('com_ui_upload_ocr_text')).not.toBeInTheDocument();
-  expect(screen.queryByText('com_ui_upload_provider')).not.toBeInTheDocument();
-  expect(screen.queryByText('com_ui_upload_file_search')).not.toBeInTheDocument();
-  expect(screen.queryByText('com_ui_upload_code_environment')).not.toBeInTheDocument();
-});
+    expect(onOptionSelect).toHaveBeenCalledWith(EToolResources.context);
+    expect(screen.queryByText('com_ui_upload_provider')).not.toBeInTheDocument();
+    expect(screen.queryByText('com_ui_upload_file_search')).not.toBeInTheDocument();
+    expect(screen.queryByText('com_ui_upload_code_environment')).not.toBeInTheDocument();
+  },
+);

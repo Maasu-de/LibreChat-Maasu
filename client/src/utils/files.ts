@@ -13,6 +13,7 @@ import {
   excelMimeTypes,
   EToolResources,
   AgentCapabilities,
+  EModelEndpoint,
   GOVERNANCE_ENDPOINT,
   defaultAgentCapabilities,
   fileConfig as defaultFileConfig,
@@ -32,7 +33,7 @@ export function getAttachmentCapabilities({
   governancePilot?: boolean;
   agentCapabilities?: AgentCapabilities[];
 }): AgentCapabilities[] {
-  if (governancePilot && endpoint === GOVERNANCE_ENDPOINT) {
+  if (governancePilot && (endpoint === GOVERNANCE_ENDPOINT || endpoint === EModelEndpoint.agents)) {
     return governedAttachmentCapabilities;
   }
   return agentCapabilities ?? defaultAgentCapabilities;
