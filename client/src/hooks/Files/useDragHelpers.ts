@@ -106,7 +106,10 @@ export default function useDragHelpers() {
         return;
       }
 
-      const agentsConfig = endpointsConfig?.[EModelEndpoint.agents];
+      const agentsConfig = endpointsConfig?.[EModelEndpoint.agents] as
+        | t.TAgentsEndpoint
+        | null
+        | undefined;
       const startupConfig = queryClient.getQueryData<t.TStartupConfig>(startupConfigKey(true));
       const capabilities = getAttachmentCapabilities({
         endpoint: currentEndpoint,
