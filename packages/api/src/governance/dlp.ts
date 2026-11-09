@@ -299,6 +299,21 @@ function parseChatCompletionRequest(
     max_tokens?: unknown;
     max_completion_tokens?: unknown;
   };
+  const messages =
+    agentParameters && Array.isArray(request.messages)
+      ? request.messages.map((message: unknown) => {
+          if (
+            message != null &&
+            typeof message === 'object' &&
+            !Array.isArray(message) &&
+            'role' in message &&
+            message.role === 'developer'
+          ) {
+            return { ...message, role: 'system' };
+          }
+          return message;
+        })
+      : request.messages;
   if (
     (isGovernancePilotEnabled() &&
       Object.entries(value).some(
@@ -308,8 +323,8 @@ function parseChatCompletionRequest(
           ) && field != null,
       )) ||
     typeof request.model !== 'string' ||
-    !Array.isArray(request.messages) ||
-    !request.messages.every(isTextMessage) ||
+    !Array.isArray(messages) ||
+    !messages.every(isTextMessage) ||
     (request.stream !== undefined && typeof request.stream !== 'boolean') ||
     (request.temperature !== undefined &&
       (typeof request.temperature !== 'number' || !Number.isFinite(request.temperature)))
@@ -319,7 +334,7 @@ function parseChatCompletionRequest(
 
   const normalizedRequest: GovernanceChatCompletionRequest = {
     model: request.model,
-    messages: request.messages,
+    messages,
     ...(typeof request.stream === 'boolean' ? { stream: request.stream } : {}),
     ...(typeof request.temperature === 'number' ? { temperature: request.temperature } : {}),
   };

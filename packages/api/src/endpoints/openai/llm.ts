@@ -9,6 +9,7 @@ import type { AzureOpenAIInput } from '@librechat/agents/langchain/openai';
 import type { SettingDefinition } from 'librechat-data-provider';
 import type { OpenAI } from 'openai';
 import type * as t from '~/types';
+import { GOVERNANCE_ENDPOINT, isGovernancePilotEnabled } from '~/governance/mode';
 import { sanitizeModelName, constructAzureURL } from '~/utils/azure';
 import { isEnabled } from '~/utils/common';
 
@@ -442,6 +443,7 @@ export function getOpenAILLMConfig({
 }): Pick<t.LLMConfigResult, 'llmConfig' | 'tools'> & {
   azure?: t.AzureOptions;
 } {
+  const governanceGateway = isGovernancePilotEnabled() && endpoint === GOVERNANCE_ENDPOINT;
   /** Clean empty strings from model options (e.g., temperature: "" should be removed) */
   const cleanedModelOptions = removeNullishValues(
     _modelOptions,
@@ -470,6 +472,10 @@ export function getOpenAILLMConfig({
     modelOptions,
   ) as OpenAILLMConfig;
 
+  if (governanceGateway && llmConfig.top_p != null) {
+    llmConfig.topP = llmConfig.top_p;
+    delete llmConfig.top_p;
+  }
   if (frequency_penalty != null) {
     llmConfig.frequencyPenalty = frequency_penalty;
   }
@@ -733,6 +739,7 @@ export function getOpenAILLMConfig({
     }) || hasModelKwargs;
 
   if (
+    !governanceGateway &&
     llmConfig.model &&
     /\bgpt-[5-9](?:\.\d+)?\b/i.test(llmConfig.model) &&
     llmConfig.maxTokens != null

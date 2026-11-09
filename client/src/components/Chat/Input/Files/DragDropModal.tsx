@@ -14,7 +14,6 @@ import {
   EToolResources,
   EModelEndpoint,
   isBedrockDocumentType,
-  defaultAgentCapabilities,
   isDocumentSupportedProvider,
 } from 'librechat-data-provider';
 import {
@@ -26,6 +25,7 @@ import {
 import { useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { useDragDropContext } from '~/Providers';
+import { getAttachmentCapabilities } from '~/utils';
 
 interface DragDropModalProps {
   onOptionSelect: (option: EToolResources | undefined) => void;
@@ -47,12 +47,14 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
   const { data: startupConfig } = useGetStartupConfig();
   /** Provider uploads would reach the model without passing the governance gateway. */
   const governancePilot = startupConfig?.governancePilotEnabled === true;
-  /** TODO: Ephemeral Agent Capabilities
-   * Allow defining agent capabilities on a per-endpoint basis
-   * Use definition for agents endpoint for ephemeral agents
-   * */
-  const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
   const { conversationId, agentId, endpoint, endpointType, useResponsesApi } = useDragDropContext();
+  const capabilities = useAgentCapabilities(
+    getAttachmentCapabilities({
+      endpoint,
+      governancePilot,
+      agentCapabilities: agentsConfig?.capabilities,
+    }),
+  );
   const ephemeralAgent = useRecoilValue(ephemeralAgentByConvoId(conversationId ?? ''));
   const { fileSearchAllowedByAgent, codeAllowedByAgent, provider } = useAgentToolPermissions(
     agentId,

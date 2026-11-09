@@ -91,7 +91,11 @@ async function sendModelRequest({
     GOVERNANCE_ENDPOINT,
   );
   const sent: Array<{ request: GovernanceChatCompletionRequest; headers: Headers }> = [];
-  const sdkRequests: Array<{ max_tokens?: number; max_completion_tokens?: number }> = [];
+  const sdkRequests: Array<{
+    top_p?: number;
+    max_tokens?: number;
+    max_completion_tokens?: number;
+  }> = [];
   const governedFetch = createRequestDlpFetch(
     req,
     async (_input, init) => {
@@ -182,24 +186,26 @@ it.each([true, false])(
   async (approval) => {
     const parameters = {
       temperature: 0.4,
+      top_p: 0.7,
       frequency_penalty: 0.2,
       presence_penalty: -0.1,
       max_tokens: 512,
     };
-    const { request, headers } = await sendModelRequest({
-      model: 'logical-model',
+    const { request, headers, sdkRequest } = await sendModelRequest({
+      model: 'gemini-2.5-flash',
       parameters,
       agent: true,
       streaming: true,
       approval,
     });
     expect(request).toEqual({
-      model: 'logical-model',
+      model: 'gemini-2.5-flash',
       messages: [{ role: 'user', content: 'Hello' }],
       stream: true,
       ...parameters,
       ...(approval ? { require_user_approval: true } : {}),
     });
+    expect(sdkRequest.top_p).toBe(parameters.top_p);
     expect(headers.get('X-LibreChat-Agent-ID')).toBe('agent_parameters');
     expect(headers.get('X-LibreChat-Run-ID')).toMatch(/^[\da-f-]{36}$/);
   },
@@ -290,13 +296,17 @@ it('keeps the normalized agent token limit and correlation when a DLP review is 
 });
 
 it.each([
-  ['internal-gpt-5-alias', true, true],
-  ['internal-gpt-5-alias', false, false],
-  ['o1', true, false],
-  ['o1', false, true],
+  ['internal-gpt-5-alias', true, true, 'max_tokens'],
+  ['internal-gpt-5-alias', false, false, 'max_tokens'],
+  ['o1', true, false, 'max_completion_tokens'],
+  ['o1', false, true, 'max_completion_tokens'],
+  ['gpt-5', true, true, 'max_completion_tokens'],
+  ['gpt-5', false, false, 'max_completion_tokens'],
+  ['gpt-5', true, false, 'max_completion_tokens'],
+  ['gpt-5', false, true, 'max_completion_tokens'],
 ] as const)(
   'normalizes the SDK token limit for agent model %s with approval %s and streaming %s',
-  async (model, approval, streaming) => {
+  async (model, approval, streaming, tokenParameter) => {
     const { request, sdkRequest, headers } = await sendModelRequest({
       model,
       parameters: { max_tokens: 256 },
@@ -304,7 +314,7 @@ it.each([
       approval,
       streaming,
     });
-    expect(sdkRequest.max_completion_tokens).toBe(256);
+    expect(sdkRequest[tokenParameter]).toBe(256);
     expect(request.max_tokens).toBe(256);
     expect(request).not.toHaveProperty('max_completion_tokens');
     expect(headers.get('X-LibreChat-Agent-ID')).toBe('agent_parameters');
