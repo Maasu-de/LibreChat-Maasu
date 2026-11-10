@@ -22,8 +22,9 @@ import type { MCPOAuthTokens } from './oauth/types';
 import type * as t from './types';
 import { createSSRFSafeUndiciConnect, isSSRFTarget, resolveHostnameSSRF } from '~/auth';
 import { runOutsideTracing } from '~/utils/tracing';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { isAddressAllowed } from '~/auth/domain';
-import { sanitizeUrlForLogging } from './utils';
+import { sanitizeUrlForLogging, sanitizeMCPErrorForLogging } from './utils';
 import { withTimeout } from '~/utils/promise';
 import { mcpConfig } from './mcpConfig';
 
@@ -1522,7 +1523,9 @@ export class MCPConnection extends EventEmitter {
   }
 
   private emitError(error: unknown, errorContext: string): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = sanitizeMCPErrorForLogging(
+      error instanceof Error ? error.message : String(error),
+    );
     logger.error(`${this.getLogPrefix()} ${errorContext}: ${errorMessage}`);
   }
 
@@ -1765,7 +1768,10 @@ export class MCPConnection extends EventEmitter {
          */
       } else if (state === 'error' && !this.isReconnecting && !this.isInitializing) {
         this.handleReconnection().catch((error) => {
-          logger.error(`${this.getLogPrefix()} Reconnection handler failed:`, error);
+          logger.error(
+            `${this.getLogPrefix()} Reconnection handler failed:`,
+            sanitizeMCPErrorForLogging(error),
+          );
         });
       }
     });
@@ -1812,7 +1818,10 @@ export class MCPConnection extends EventEmitter {
           this.reconnectAttempts = 0;
           return;
         } catch (error) {
-          logger.error(`${this.getLogPrefix()} Reconnection attempt failed:`, error);
+          logger.error(
+            `${this.getLogPrefix()} Reconnection attempt failed:`,
+            sanitizeMCPErrorForLogging(error),
+          );
 
           // Stop immediately if rate limited - retrying will only make it worse
           if (this.isRateLimitError(error)) {
@@ -1879,7 +1888,10 @@ export class MCPConnection extends EventEmitter {
           try {
             await this.client.close();
           } catch (error) {
-            logger.warn(`${this.getLogPrefix()} Error closing connection:`, error);
+            logger.warn(
+              `${this.getLogPrefix()} Error closing connection:`,
+              sanitizeMCPErrorForLogging(error),
+            );
           }
           this.transport = null;
           await this.closeAgents();
@@ -2001,7 +2013,10 @@ export class MCPConnection extends EventEmitter {
           } catch (oauthError) {
             // OAuth failed or timed out
             this.oauthRequired = false;
-            logger.error(`${this.getLogPrefix()} OAuth handling failed:`, oauthError);
+            logger.error(
+              `${this.getLogPrefix()} OAuth handling failed:`,
+              sanitizeMCPErrorForLogging(oauthError),
+            );
             // Re-throw the original authentication error
             throw error;
           }
@@ -2071,7 +2086,7 @@ export class MCPConnection extends EventEmitter {
         throw new Error('Connection not established');
       }
     } catch (error) {
-      logger.error(`${this.getLogPrefix()} Connection failed:`, error);
+      logger.error(`${this.getLogPrefix()} Connection failed:`, sanitizeMCPErrorForLogging(error));
       throw error;
     }
   }
@@ -2094,7 +2109,9 @@ export class MCPConnection extends EventEmitter {
         rawMessage.startsWith(SDK_SSE_STREAM_DISCONNECTED) ||
         rawMessage.startsWith(SDK_SSE_RECONNECT_FAILED)
       ) {
-        logger.debug(`${this.getLogPrefix()} SDK SSE stream recovery in progress: ${rawMessage}`);
+        logger.debug(
+          `${this.getLogPrefix()} SDK SSE stream recovery in progress: ${sanitizeMCPErrorForLogging(rawMessage)}`,
+        );
         return;
       }
 
@@ -2174,7 +2191,10 @@ export class MCPConnection extends EventEmitter {
         ? 'Transport error (transient, will reconnect)'
         : 'Transport error (may require manual intervention)';
 
-      logger.error(`${this.getLogPrefix()} ${errorLabel}: ${errorMessage}`, errorContext);
+      logger.error(
+        `${this.getLogPrefix()} ${errorLabel}: ${sanitizeMCPErrorForLogging(errorMessage)}`,
+        isGovernancePilotEnabled() ? { code: errorCode, isTransient } : errorContext,
+      );
 
       this.emit('connectionChange', 'error');
     };
@@ -2184,7 +2204,10 @@ export class MCPConnection extends EventEmitter {
     const logPrefix = this.getLogPrefix();
     const closing = this.agents.map((agent) =>
       agent.close().catch((err: unknown) => {
-        logger.debug(`${logPrefix} Agent close error (non-fatal):`, err);
+        logger.debug(
+          `${logPrefix} Agent close error (non-fatal):`,
+          sanitizeMCPErrorForLogging(err),
+        );
       }),
     );
     this.agents = [];
@@ -2229,9 +2252,9 @@ export class MCPConnection extends EventEmitter {
    * Pagination is bounded by {@link mcpConfig.TOOLS_LIST_MAX_PAGES}, aggregate
    * tool count, approximate serialized size, elapsed time, and a repeated-cursor
    * guard. On error, the tools already fetched are returned rather than discarded,
-   * and the method never throws.
+   * and the method never throws unless strict discovery is requested.
    */
-  async fetchTools(): Promise<MCPListToolsResult['tools']> {
+  async fetchTools(strict = false): Promise<MCPListToolsResult['tools']> {
     const maxPages = mcpConfig.TOOLS_LIST_MAX_PAGES;
     const maxTools = mcpConfig.TOOLS_LIST_MAX_TOOLS;
     const maxBytes = mcpConfig.TOOLS_LIST_MAX_BYTES;
@@ -2261,6 +2284,7 @@ export class MCPConnection extends EventEmitter {
 
       const result = await this.listToolsPage(cursor, remainingMs);
       if (result == null) {
+        if (strict) throw new Error('MCP tool discovery failed');
         /** Request failed mid-pagination: return the pages already fetched instead of discarding them. */
         return allTools;
       }
@@ -2374,7 +2398,7 @@ export class MCPConnection extends EventEmitter {
           (error as Error)?.message.includes('method not found'));
 
       if (!pingUnsupported) {
-        logger.error(`${this.getLogPrefix()} Ping failed:`, error);
+        logger.error(`${this.getLogPrefix()} Ping failed:`, sanitizeMCPErrorForLogging(error));
         return false;
       }
 
@@ -2406,7 +2430,10 @@ export class MCPConnection extends EventEmitter {
         }
       } catch (capabilityError) {
         // If capability check fails, the connection is likely broken
-        logger.error(`${this.getLogPrefix()} Connection verification failed:`, capabilityError);
+        logger.error(
+          `${this.getLogPrefix()} Connection verification failed:`,
+          sanitizeMCPErrorForLogging(capabilityError),
+        );
         return false;
       }
     }

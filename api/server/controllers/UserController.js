@@ -5,6 +5,8 @@ const {
   needsRefresh,
   MCPOAuthHandler,
   MCPTokenStorage,
+  sanitizeMCPErrorForLogging,
+  isGovernancePilotEnabled,
   normalizeHttpError,
   extractWebSearchEnvVars,
   deleteAllSharedLinksWithCleanup,
@@ -423,6 +425,7 @@ const clearStoredMCPOAuthState = async (userId, serverName) => {
       },
     });
   } catch (error) {
+    if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
     logger.warn(
       `[clearStoredMCPOAuthState] Failed to delete MCP OAuth tokens for ${serverName}:`,
       error,
@@ -452,16 +455,18 @@ const clearStoredMCPOAuthState = async (userId, serverName) => {
     );
     for (const result of results) {
       if (result.status === 'rejected') {
+        if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
         logger.warn(
           `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
-          result.reason,
+          sanitizeMCPErrorForLogging(result.reason),
         );
       }
     }
   } catch (error) {
+    if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
     logger.warn(
       `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
-      error,
+      sanitizeMCPErrorForLogging(error),
     );
   }
 };
@@ -494,7 +499,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
   } catch (error) {
     logger.warn(
       `[maybeUninstallOAuthMCP] Unable to load OAuth client metadata for ${serverName}; clearing local MCP OAuth state only.`,
-      error,
+      sanitizeMCPErrorForLogging(error),
     );
     await clearStoredMCPOAuthState(userId, serverName);
     return;
@@ -519,7 +524,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
   } catch (error) {
     logger.warn(
       `[maybeUninstallOAuthMCP] Unable to load OAuth tokens for ${serverName}; clearing local token state.`,
-      error,
+      sanitizeMCPErrorForLogging(error),
     );
   }
 
@@ -555,7 +560,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
     } catch (error) {
       logger.error(
         `[maybeUninstallOAuthMCP] Error revoking OAuth access token for ${serverName}:`,
-        error,
+        sanitizeMCPErrorForLogging(error),
       );
     }
   }
@@ -580,7 +585,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
     } catch (error) {
       logger.error(
         `[maybeUninstallOAuthMCP] Error revoking OAuth refresh token for ${serverName}:`,
-        error,
+        sanitizeMCPErrorForLogging(error),
       );
     }
   }

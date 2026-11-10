@@ -137,7 +137,10 @@ export function generateCapabilityCheck(deps: CapabilityDeps): {
     capability: SystemCapability,
   ): Promise<boolean> {
     if (isGovernanceAdministrator(user.role)) {
-      return governanceGroupCapabilities().includes(capability);
+      return (
+        capability === SystemCapabilities.MANAGE_MCP_SERVERS ||
+        governanceGroupCapabilities().includes(capability)
+      );
     }
     if (!isMainThread && !workerWarned) {
       workerWarned = true;
