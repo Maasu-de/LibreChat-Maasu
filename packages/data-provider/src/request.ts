@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import axios, { AxiosRequestConfig } from 'axios';
 import type * as t from './types';
+import { redirectMCPFrameToLogin } from './frame';
 import { setTokenHeader } from './headers-helpers';
 import * as endpoints from './api-endpoints';
 
@@ -246,11 +247,18 @@ const reloadForGatewaySignInOnce = () => {
     return;
   }
   state.gatewayReloadStarted = true;
+  if (redirectMCPFrameToLogin()) {
+    return;
+  }
   window.location.reload();
 };
 
 const redirectToLoginOnce = () => {
   if (isAuthRedirectInProgress()) {
+    return;
+  }
+
+  if (redirectMCPFrameToLogin()) {
     return;
   }
 

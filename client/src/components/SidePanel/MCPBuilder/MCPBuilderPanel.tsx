@@ -5,13 +5,20 @@ import { Button, Spinner, FilterInput, OGDialogTrigger, TooltipAnchor } from '@l
 import { useLocalize, useMCPServerManager, useHasAccess } from '~/hooks';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
 import MCPAdminSettings from './MCPAdminSettings';
+import { useMCPAdministration } from './administration';
 import MCPServerDialog from './MCPServerDialog';
 import MCPServerList from './MCPServerList';
 
 export default function MCPBuilderPanel() {
   const localize = useLocalize();
-  const { availableMCPServers, isLoading, getServerStatusIconProps, getConfigDialogProps } =
-    useMCPServerManager();
+  const administration = useMCPAdministration();
+  const {
+    availableMCPServers,
+    isLoading,
+    isError,
+    getServerStatusIconProps,
+    getConfigDialogProps,
+  } = useMCPServerManager();
 
   const hasCreateAccess = useHasAccess({
     permissionType: PermissionTypes.MCP_SERVERS,
@@ -76,23 +83,25 @@ export default function MCPBuilderPanel() {
         </div>
 
         {/* Server Cards List */}
-        {isLoading ? (
-          <div className="flex items-center justify-center p-8">
-            <Spinner className="size-6" aria-label={localize('com_ui_loading')} />
-          </div>
-        ) : (
-          <MCPServerList
-            servers={filteredServers}
-            getServerStatusIconProps={getServerStatusIconProps}
-            isFiltered={searchQuery.trim().length > 0}
-          />
-        )}
+        {administration && isError && <p role="alert">{localize('com_ui_error')}</p>}
+        {!(administration && isError) &&
+          (isLoading ? (
+            <div className="flex items-center justify-center p-8">
+              <Spinner className="size-6" aria-label={localize('com_ui_loading')} />
+            </div>
+          ) : (
+            <MCPServerList
+              servers={filteredServers}
+              getServerStatusIconProps={getServerStatusIconProps}
+              isFiltered={searchQuery.trim().length > 0}
+            />
+          ))}
 
         {/* Config Dialog for custom user vars */}
-        {configDialogProps && <MCPConfigDialog {...configDialogProps} />}
+        {!administration && configDialogProps && <MCPConfigDialog {...configDialogProps} />}
 
         {/* Admin Settings Section */}
-        <MCPAdminSettings />
+        {!administration && <MCPAdminSettings />}
       </div>
     </div>
   );

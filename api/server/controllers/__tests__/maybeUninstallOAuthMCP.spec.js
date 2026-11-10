@@ -39,6 +39,9 @@ jest.mock('@librechat/api', () => {
       getClientInfoAndMetadata: (...args) => mockGetClientInfoAndMetadata(...args),
       deleteUserTokens: (...args) => mockDeleteUserTokens(...args),
     },
+    isGovernancePilotEnabled: () => process.env.GOVERNANCE_PILOT_ENABLED === 'true',
+    sanitizeMCPErrorForLogging: (error) =>
+      process.env.GOVERNANCE_PILOT_ENABLED === 'true' ? 'MCP operation failed' : error,
     normalizeHttpError: jest.fn(),
     extractWebSearchEnvVars: jest.fn(),
     needsRefresh: jest.fn(),
@@ -162,6 +165,32 @@ describe('maybeUninstallOAuthMCP', () => {
     jest.clearAllMocks();
     mockGetTenantId.mockReturnValue(undefined);
   });
+
+  test.each(['tokens', 'flow'])(
+    'does not report governed revocation success when %s cleanup fails',
+    async (failure) => {
+      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      setupOAuthServerFound();
+      mockGetTokens.mockResolvedValue(null);
+      mockDeleteUserTokens.mockResolvedValue(undefined);
+      mockDeleteFlow.mockResolvedValue(undefined);
+      if (failure === 'tokens')
+        mockDeleteUserTokens.mockRejectedValueOnce(new Error('token failure containing secret'));
+      else mockDeleteFlow.mockRejectedValueOnce(new Error('flow failure containing secret'));
+      try {
+        await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).rejects.toThrow(
+          'Failed to clear MCP OAuth authorization',
+        );
+        expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain('containing secret');
+      } finally {
+        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        mockDeleteUserTokens.mockResolvedValue(undefined);
+        mockDeleteFlow.mockResolvedValue(undefined);
+      }
+    },
+  );
 
   test('is a no-op when pluginKey is not an MCP key', async () => {
     await maybeUninstallOAuthMCP(userId, 'plugin_google_calendar', appConfig);

@@ -47,6 +47,31 @@ describe('reinitMCPServer — customUserVars gating (issue #10969)', () => {
     mockUpdateMCPServerTools.mockResolvedValue({});
   });
 
+  it.each([true, false])(
+    'reports governed discovery failure distinctly from an empty tool list: %s',
+    async (fails) => {
+      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const fetchTools = fails
+        ? jest.fn().mockRejectedValue(new Error('MCP tool discovery failed'))
+        : jest.fn().mockResolvedValue([]);
+      mockGetConnection.mockResolvedValue({ fetchTools });
+      try {
+        const result = await reinitMCPServer({
+          user,
+          serverName,
+          serverConfig: { type: 'streamable-http', url: 'https://thingy.example.com/mcp' },
+        });
+        expect(fetchTools).toHaveBeenCalledWith(true);
+        if (fails) expect(result).toBeUndefined();
+        else expect(result).toMatchObject({ success: true, tools: [] });
+      } finally {
+        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      }
+    },
+  );
+
   it('does not connect and exposes no tools when a required customUserVar is unset', async () => {
     const result = await reinitMCPServer({
       user,

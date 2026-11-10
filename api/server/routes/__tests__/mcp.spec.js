@@ -36,6 +36,7 @@ jest.mock('@librechat/api', () => {
   const actual = jest.requireActual('@librechat/api');
   return {
     ...actual,
+    queueGovernanceMCPAudit: jest.fn().mockResolvedValue(undefined),
     MCPOAuthHandler: {
       initiateOAuthFlow: jest.fn(),
       getFlowState: jest.fn(),
@@ -111,6 +112,7 @@ jest.mock('@librechat/data-schemas', () => ({
 }));
 
 jest.mock('~/models', () => ({
+  findUser: jest.fn(),
   findToken: jest.fn(),
   updateToken: jest.fn(),
   createToken: jest.fn(),
@@ -257,6 +259,95 @@ describe('MCP Routes', () => {
     mockRegistryInstance.addServer.mockReset();
     mockRegistryInstance.updateServer.mockReset();
     mockRegistryInstance.removeServer.mockReset();
+  });
+
+  describe('governed OAuth administration', () => {
+    let environment;
+    const actor = {
+      id: 'test-user-id',
+      provider: 'openid',
+      role: 'GOVERNANCE_ADMIN',
+      openidIssuer: 'https://issuer.example',
+      openidId: 'administrator',
+    };
+    beforeEach(() => {
+      environment = { ...process.env };
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      process.env.GOVERNANCE_API_BASE_URL = 'http://governance.test/v1';
+      process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service';
+      currentUser = actor;
+    });
+    afterEach(() => {
+      process.env = environment;
+    });
+
+    it.each(['USER', 'ADMIN'])('denies %s management APIs before registry access', async (role) => {
+      currentUser = { ...actor, role };
+      const response = await request(app).get('/api/mcp/servers');
+      expect(response.status).toBe(403);
+      expect(mockRegistryInstance.getAllServerConfigs).not.toHaveBeenCalled();
+    });
+
+    it.each(['GOVERNANCE_ADMIN', 'USER', 'ADMIN', 'system'])(
+      'completes authorization only for an OIDC governance actor: %s',
+      async (role) => {
+        const {
+          MCPOAuthHandler,
+          MCPTokenStorage,
+          queueGovernanceMCPAudit,
+        } = require('@librechat/api');
+        const userId = role === 'system' ? 'system' : actor.id;
+        const flowId = `${userId}:test-server`;
+        const flowManager = {
+          getFlowState: jest.fn().mockResolvedValue({ status: 'PENDING', createdAt: Date.now() }),
+          deleteFlow: jest.fn().mockResolvedValue(true),
+        };
+        require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+        require('~/models').findUser.mockResolvedValue({ ...actor, role });
+        mockRegistryInstance.getServerConfig.mockResolvedValue({
+          type: 'sse',
+          url: 'https://mcp.test/server',
+          dbId: '507f1f77bcf86cd799439011',
+          requiresOAuth: true,
+        });
+        MCPOAuthHandler.getFlowState.mockResolvedValue({
+          userId,
+          serverName: 'test-server',
+          metadata: {},
+          clientInfo: {},
+        });
+        MCPOAuthHandler.completeOAuthFlow.mockResolvedValue({
+          access_token: 'administrator-secret',
+          refresh_token: 'administrator-refresh-secret',
+        });
+        require('~/config').getMCPManager.mockReturnValue({
+          getUserConnection: jest
+            .fn()
+            .mockResolvedValue({ fetchTools: jest.fn().mockResolvedValue([]) }),
+        });
+        const response = await request(app)
+          .get('/api/mcp/test-server/oauth/callback')
+          .set('Cookie', [`oauth_csrf=${generateTestCsrfToken(flowId)}`])
+          .query({ code: 'authorization-code', state: flowId });
+        expect(response.status).toBe(302);
+        if (role !== 'GOVERNANCE_ADMIN') {
+          expect(response.headers.location).toContain('/oauth/error?error=callback_failed');
+          expect(MCPOAuthHandler.completeOAuthFlow).not.toHaveBeenCalled();
+          expect(MCPTokenStorage.storeTokens).not.toHaveBeenCalled();
+          return;
+        }
+        expect(response.headers.location).toContain('/oauth/success');
+        expect(MCPTokenStorage.storeTokens).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: actor.id, serverName: 'test-server' }),
+        );
+        expect(queueGovernanceMCPAudit).toHaveBeenCalledWith(
+          { user: actor },
+          'mcp.oauth.authorized',
+          '507f1f77bcf86cd799439011',
+        );
+        expect(response.text).not.toContain('administrator-secret');
+      },
+    );
   });
 
   describe('GET /:serverName/oauth/initiate', () => {

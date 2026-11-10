@@ -1401,3 +1401,8 @@ export interface ActiveJobsResponse {
 export const getActiveJobs = (): Promise<ActiveJobsResponse> => {
   return request.get(endpoints.activeJobs());
 };
+
+export const inspectMCPServer = (serverName: string): Promise<mcp.MCPInspectionResponse> =>
+  request.get(endpoints.mcpInspect(serverName));
+export const revokeMCPOAuth = (serverName: string): Promise<{ success: boolean }> =>
+  request.post(endpoints.mcpOAuthRevoke(serverName));

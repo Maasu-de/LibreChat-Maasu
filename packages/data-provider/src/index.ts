@@ -45,6 +45,7 @@ export {
   buildLoginRedirectUrl,
 } from './api-endpoints';
 export { default as request } from './request';
+export { getMCPAdministrationHost, redirectMCPFrameToLogin } from './frame';
 export { dataService };
 import * as dataService from './data-service';
 /* general helpers */

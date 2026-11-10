@@ -142,3 +142,29 @@ export const useDeleteMCPServerMutation = (options?: {
     },
   });
 };
+
+export const useInspectMCPServerMutation = (): UseMutationResult<
+  t.MCPInspectionResponse,
+  Error,
+  string
+> => {
+  const queryClient = useQueryClient();
+  return useMutation((serverName: string) => dataService.inspectMCPServer(serverName), {
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.mcpConnectionStatus]);
+    },
+  });
+};
+
+export const useRevokeMCPAuthorizationMutation = (): UseMutationResult<
+  { success: boolean },
+  Error,
+  string
+> => {
+  const queryClient = useQueryClient();
+  return useMutation((serverName: string) => dataService.revokeMCPOAuth(serverName), {
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.mcpConnectionStatus]);
+    },
+  });
+};

@@ -60,6 +60,8 @@ export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
 export { getGovernanceAgentRestoreError } from './governance/agents';
+export * from './governance/mcp';
+export { isGovernanceMCPAuditConfigured, queueGovernanceMCPAudit } from './governance/audit';
 export * from './governance/groups';
 export { getGovernanceGroupCapabilities } from './governance/authorization';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';
