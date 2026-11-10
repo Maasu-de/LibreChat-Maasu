@@ -14,49 +14,6 @@ describe('updateInterfacePermissions - permissions', () => {
     mockGetRoleByName.mockResolvedValue(null);
   });
 
-  it('migrates MCP management permissions only to the governed administrator', async () => {
-    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
-    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
-    const config = {
-      interface: { mcpServers: { use: false, create: false, share: true, public: true } },
-    };
-    const interfaceConfig = await loadDefaultInterface({
-      config,
-      configDefaults: { interface: {} } as TConfigDefaults,
-    });
-    mockGetRoleByName.mockImplementation(async (name) => ({
-      name,
-      permissions: {
-        [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true, [Permissions.CREATE]: true },
-      },
-    }));
-    try {
-      await updateInterfacePermissions({
-        appConfig: { config, interfaceConfig } as AppConfig,
-        getRoleByName: mockGetRoleByName,
-        updateAccessPermissions: mockUpdateAccessPermissions,
-      });
-      for (const role of [SystemRoles.USER, SystemRoles.ADMIN, SystemRoles.GOVERNANCE_ADMIN]) {
-        expect(mockUpdateAccessPermissions).toHaveBeenCalledWith(
-          role,
-          expect.objectContaining({
-            [PermissionTypes.MCP_SERVERS]: {
-              [Permissions.USE]: role === SystemRoles.GOVERNANCE_ADMIN,
-              [Permissions.CREATE]: role === SystemRoles.GOVERNANCE_ADMIN,
-              [Permissions.SHARE]: false,
-              [Permissions.SHARE_PUBLIC]: false,
-              [Permissions.CONFIGURE_OBO]: false,
-            },
-          }),
-          expect.anything(),
-        );
-      }
-    } finally {
-      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
-      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
-    }
-  });
-
   it('should call updateAccessPermissions with the correct parameters when permission types are true', async () => {
     const config = {
       interface: {

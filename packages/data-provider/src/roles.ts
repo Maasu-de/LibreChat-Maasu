@@ -287,15 +287,6 @@ export const roleDefaults = {
   ...defaultRoles,
   [SystemRoles.GOVERNANCE_ADMIN]: {
     name: SystemRoles.GOVERNANCE_ADMIN,
-    permissions: {
-      ...defaultRoles[SystemRoles.USER].permissions,
-      [PermissionTypes.MCP_SERVERS]: {
-        [Permissions.USE]: true,
-        [Permissions.CREATE]: true,
-        [Permissions.SHARE]: false,
-        [Permissions.SHARE_PUBLIC]: false,
-        [Permissions.CONFIGURE_OBO]: false,
-      },
-    },
+    permissions: defaultRoles[SystemRoles.USER].permissions,
   },
 };

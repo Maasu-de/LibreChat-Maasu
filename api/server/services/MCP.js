@@ -3,7 +3,6 @@ const { logger, getTenantId } = require('@librechat/data-schemas');
 const { Providers, Constants: AgentConstants } = require('@librechat/agents');
 const {
   sendEvent,
-  isGovernancePilotEnabled,
   PENDING_STALE_MS,
   MCPOAuthHandler,
   isMCPDomainAllowed,
@@ -54,7 +53,6 @@ const missingToolCache = new Map();
 const MISSING_TOOL_TTL_MS = 10_000;
 
 async function userCanUseMCPServers(user, req) {
-  if (isGovernancePilotEnabled()) return false;
   if (!user?.id || !user?.role) {
     return false;
   }

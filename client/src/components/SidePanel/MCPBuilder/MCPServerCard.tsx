@@ -8,8 +8,6 @@ import { getStatusDotColor } from './MCPStatusBadge';
 import MCPCardActions from './MCPCardActions';
 import { useMCPServerManager, useLocalize } from '~/hooks';
 import { cn } from '~/utils';
-import MCPInspection from './MCPInspection';
-import { useMCPAdministration } from './administration';
 
 interface MCPServerCardProps {
   server: MCPServerDefinition;
@@ -31,7 +29,6 @@ export default function MCPServerCard({
   canCreateEditMCPs,
 }: MCPServerCardProps) {
   const localize = useLocalize();
-  const administration = useMCPAdministration();
   const triggerRef = useRef<HTMLDivElement>(null);
   const { initializeServer, revokeOAuthForServer } = useMCPServerManager();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -137,7 +134,7 @@ export default function MCPServerCard({
             serverStatus={serverStatus}
             isInitializing={isInitializing}
             canCancel={canCancel}
-            hasCustomUserVars={!administration && hasCustomUserVars}
+            hasCustomUserVars={hasCustomUserVars}
             canEdit={canEdit}
             editButtonRef={triggerRef}
             onEditClick={handleEditClick}
@@ -148,8 +145,6 @@ export default function MCPServerCard({
           />
         </div>
       </div>
-
-      {administration && <MCPInspection serverName={server.serverName} />}
 
       {/* Edit Dialog - separate from card */}
       {canEdit && (

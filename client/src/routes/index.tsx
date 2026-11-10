@@ -19,7 +19,6 @@ import LoginLayout from './Layouts/Login';
 import dashboardRoutes from './Dashboard';
 import ShareRoute from './ShareRoute';
 import ChatRoute from './ChatRoute';
-import MCPConnections from './MCPConnections';
 import Search from './Search';
 import Root from './Root';
 
@@ -119,14 +118,6 @@ export const router = createBrowserRouter(
           ],
         },
         dashboardRoutes,
-        {
-          path: 'governance/mcp',
-          element: <MCPConnections />,
-        },
-        {
-          path: 'governance/mcp/content',
-          element: <MCPConnections embedded />,
-        },
         {
           path: '/',
           element: <Root />,

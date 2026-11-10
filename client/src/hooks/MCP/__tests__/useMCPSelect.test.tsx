@@ -55,25 +55,6 @@ describe('useMCPSelect', () => {
     mockStartupConfig = undefined;
   });
 
-  it('keeps administrative inspection separate from chat and agent selections', () => {
-    const { Wrapper, servers } = createWrapper(['remote']);
-    const { result } = renderHook(
-      () => {
-        const selection = useMCPSelect({ servers, enabled: false, storageContextKey: 'admin' });
-        const agent = useRecoilValue(ephemeralAgentByConvoId(Constants.NEW_CONVO));
-        return { selection, agent };
-      },
-      { wrapper: Wrapper },
-    );
-
-    act(() => result.current.selection.setMCPValues(['remote']));
-
-    expect(result.current.selection.mcpValues).toEqual([]);
-    expect(result.current.agent?.mcp).toBeUndefined();
-    expect(localStorage.getItem(`${LocalStorageKeys.LAST_MCP_}admin`)).toBeNull();
-    expect(setTimestamp).not.toHaveBeenCalled();
-  });
-
   describe('Basic Functionality', () => {
     it('should initialize with default values', () => {
       const { Wrapper, servers } = createWrapper();

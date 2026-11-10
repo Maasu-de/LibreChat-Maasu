@@ -3,7 +3,7 @@ import { logger, encryptV2, decryptV2 } from '@librechat/data-schemas';
 import type { OAuthTokens, OAuthClientInformation } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { TokenMethods, IToken } from '@librechat/data-schemas';
 import type { MCPOAuthTokens, ExtendedOAuthTokens, OAuthStoredClientMetadata } from './types';
-import { isInvalidClientMessage, sanitizeMCPErrorForLogging } from '~/mcp/utils';
+import { isInvalidClientMessage } from '~/mcp/utils';
 import { isSystemUserId } from '~/mcp/enum';
 
 export class ReauthenticationRequiredError extends Error {
@@ -290,7 +290,7 @@ export class MCPTokenStorage {
       });
     } catch (error) {
       const logPrefix = this.getLogPrefix(userId, serverName);
-      logger.error(`${logPrefix} Failed to store tokens`, sanitizeMCPErrorForLogging(error));
+      logger.error(`${logPrefix} Failed to store tokens`, error);
       throw error;
     }
   }
@@ -436,10 +436,7 @@ export class MCPTokenStorage {
       logger.info(`${logPrefix} Successfully refreshed and stored OAuth tokens`);
       return newTokens;
     } catch (refreshError) {
-      logger.error(
-        `${logPrefix} Failed to refresh tokens`,
-        sanitizeMCPErrorForLogging(refreshError),
-      );
+      logger.error(`${logPrefix} Failed to refresh tokens`, refreshError);
       // Check if it's an unauthorized_client error (refresh not supported)
       const errorMessage =
         refreshError instanceof Error ? refreshError.message : String(refreshError);
@@ -462,10 +459,7 @@ export class MCPTokenStorage {
           ]);
           for (const r of results) {
             if (r.status === 'rejected') {
-              logger.warn(
-                `${logPrefix} Failed to clear stale token data`,
-                sanitizeMCPErrorForLogging(r.reason),
-              );
+              logger.warn(`${logPrefix} Failed to clear stale token data`, r.reason);
             }
           }
           throw new ReauthenticationRequiredError(serverName, 'invalid_client');
@@ -569,7 +563,7 @@ export class MCPTokenStorage {
       if (error instanceof ReauthenticationRequiredError) {
         throw error;
       }
-      logger.error(`${logPrefix} Failed to retrieve tokens`, sanitizeMCPErrorForLogging(error));
+      logger.error(`${logPrefix} Failed to retrieve tokens`, error);
       return null;
     }
   }

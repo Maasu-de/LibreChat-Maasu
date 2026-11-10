@@ -1,5 +1,4 @@
 import pick from 'lodash/pick';
-import { isGovernancePilotEnabled } from '~/governance/mode';
 import { logger } from '@librechat/data-schemas';
 import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -378,8 +377,6 @@ Please follow these instructions when using tools from the respective MCP server
     oboTokenResolver?: OboTokenResolver;
     oboTrustChecker?: OboTrustChecker;
   }): Promise<t.FormattedToolResponse> {
-    if (isGovernancePilotEnabled())
-      throw new Error('MCP tool execution requires an active governance policy');
     /** User-specific connection */
     let connection: MCPConnection | undefined;
     let cleanupRequestOAuthHandler: (() => void) | undefined;

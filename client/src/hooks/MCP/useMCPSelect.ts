@@ -15,12 +15,10 @@ export function useMCPSelect({
   conversationId,
   storageContextKey,
   servers,
-  enabled = true,
 }: {
   conversationId?: string | null;
   storageContextKey?: string;
   servers: MCPServerDefinition[];
-  enabled?: boolean;
 }) {
   const key = conversationId ?? Constants.NEW_CONVO;
   const configuredServers = useMemo(() => {
@@ -48,7 +46,7 @@ export function useMCPSelect({
    * is absent entirely, the legacy default (pinned) is kept.
    */
   useEffect(() => {
-    if (!enabled || hasAppliedDefaultPin.current || !startupConfig) {
+    if (hasAppliedDefaultPin.current || !startupConfig) {
       return;
     }
     const defaultPinnedTools = startupConfig.interface?.defaultPinnedTools;
@@ -71,13 +69,10 @@ export function useMCPSelect({
     if (shouldPin !== isPinned) {
       setIsPinned(shouldPin);
     }
-  }, [enabled, startupConfig, servers, isPinned, setIsPinned]);
+  }, [startupConfig, servers, isPinned, setIsPinned]);
 
   // Sync ephemeral agent MCP → Jotai atom (strip unconfigured servers)
   useEffect(() => {
-    if (!enabled) {
-      return;
-    }
     const mcps = ephemeralAgent?.mcp;
     if (Array.isArray(mcps) && mcps.length > 0 && configuredServers.size > 0) {
       const activeMcps = mcps.filter((mcp) => configuredServers.has(mcp));
@@ -88,20 +83,20 @@ export function useMCPSelect({
       // Ephemeral agent explicitly has empty MCP (e.g., spec with no MCP servers) — clear atom
       setMCPValuesRaw([]);
     }
-  }, [enabled, ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpValues]);
+  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpValues]);
 
   // Write timestamp when MCP values change
   useEffect(() => {
     const mcpStorageKey = `${LocalStorageKeys.LAST_MCP_}${mcpAtomKey}`;
-    if (enabled && mcpValues.length > 0) {
+    if (mcpValues.length > 0) {
       setTimestamp(mcpStorageKey);
     }
-  }, [enabled, mcpValues, mcpAtomKey]);
+  }, [mcpValues, mcpAtomKey]);
 
   /** Stable memoized setter with dual-write to environment key */
   const setMCPValues = useCallback(
     (value: string[]) => {
-      if (!enabled || !Array.isArray(value)) {
+      if (!Array.isArray(value)) {
         return;
       }
       setMCPValuesRaw(value);
@@ -118,7 +113,7 @@ export function useMCPSelect({
         setTimestamp(envKey);
       }
     },
-    [enabled, setMCPValuesRaw, setEphemeralAgent, storageContextKey],
+    [setMCPValuesRaw, setEphemeralAgent, storageContextKey],
   );
 
   return {

@@ -16,7 +16,6 @@ import {
 } from '@librechat/client';
 import {
   SystemRoles,
-  apiBaseUrl,
   Permissions,
   ResourceType,
   PermissionBits,
@@ -27,7 +26,6 @@ import { GenericGrantAccessDialog } from '~/components/Sharing';
 import { useMCPServerForm } from './hooks/useMCPServerForm';
 import { useLocalize, useCopyToClipboard } from '~/hooks';
 import MCPServerForm from './MCPServerForm';
-import { useMCPAdministration } from '../administration';
 
 interface MCPServerDialogProps {
   open: boolean;
@@ -45,7 +43,6 @@ export default function MCPServerDialog({
   server,
 }: MCPServerDialogProps) {
   const localize = useLocalize();
-  const administration = useMCPAdministration();
   const { user } = useAuthContext();
   const { showToast } = useToastContext();
 
@@ -94,20 +91,19 @@ export default function MCPServerDialog({
 
   const { hasPermission, isLoading: permissionsLoading } = useResourcePermissions(
     ResourceType.MCPSERVER,
-    administration ? '' : server?.dbId || '',
+    server?.dbId || '',
   );
 
   const canShareThisServer = hasPermission(PermissionBits.SHARE);
 
   const shouldShowShareButton =
-    !administration &&
     server &&
     (user?.role === SystemRoles.ADMIN || canShareThisServer) &&
     hasAccessToShareMcpServers &&
     !permissionsLoading;
 
   const redirectUri = createdServerId
-    ? `${window.location.origin}${administration ? apiBaseUrl() : ''}/api/mcp/${encodeURIComponent(createdServerId)}/oauth/callback`
+    ? `${window.location.origin}/api/mcp/${createdServerId}/oauth/callback`
     : '';
 
   const copyLink = useCopyToClipboard({ text: redirectUri });

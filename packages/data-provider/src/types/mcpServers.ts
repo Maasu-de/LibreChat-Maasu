@@ -1,4 +1,3 @@
-import type { JSONSchema7 } from 'json-schema';
 import type { MCPOptions, MCPServerUserInput } from '../mcp';
 
 /**
@@ -48,8 +47,3 @@ export type MCPServerDBObjectResponse = {
 } & MCPOptions;
 
 export type MCPServersListResponse = Record<string, MCPServerDBObjectResponse>;
-
-export interface MCPInspectionResponse {
-  success: boolean;
-  tools: { name: string; description?: string; inputSchema: JSONSchema7 }[];
-}

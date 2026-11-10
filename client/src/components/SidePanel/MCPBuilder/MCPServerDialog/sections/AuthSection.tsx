@@ -1,13 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Copy, CopyCheck } from 'lucide-react';
 import { useFormContext, useWatch } from 'react-hook-form';
-import { apiBaseUrl, Permissions, PermissionTypes } from 'librechat-data-provider';
+import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { Label, Input, Checkbox, SecretInput, Radio, useToastContext } from '@librechat/client';
 import { AuthTypeEnum, AuthorizationTypeEnum } from '../hooks/useMCPServerForm';
 import type { MCPServerFormData } from '../hooks/useMCPServerForm';
 import { useLocalize, useCopyToClipboard, useHasAccess } from '~/hooks';
 import { cn } from '~/utils';
-import { useMCPAdministration } from '../../administration';
 
 interface AuthSectionProps {
   isEditMode: boolean;
@@ -16,7 +15,6 @@ interface AuthSectionProps {
 
 export default function AuthSection({ isEditMode, serverName }: AuthSectionProps) {
   const localize = useLocalize();
-  const administration = useMCPAdministration();
   const { showToast } = useToastContext();
   const {
     register,
@@ -44,7 +42,7 @@ export default function AuthSection({ isEditMode, serverName }: AuthSectionProps
   }) as AuthorizationTypeEnum;
 
   const redirectUri = serverName
-    ? `${window.location.origin}${administration ? apiBaseUrl() : ''}/api/mcp/${encodeURIComponent(serverName)}/oauth/callback`
+    ? `${window.location.origin}/api/mcp/${serverName}/oauth/callback`
     : '';
 
   const copyLink = useCopyToClipboard({ text: redirectUri });
@@ -57,7 +55,7 @@ export default function AuthSection({ isEditMode, serverName }: AuthSectionProps
    * disable the radio itself, so the user can't switch away) since the backend
    * also rejects modifying OBO without the permission.
    */
-  const showOboOption = !administration && (canConfigureObo || authType === AuthTypeEnum.OBO);
+  const showOboOption = canConfigureObo || authType === AuthTypeEnum.OBO;
   const isOboLockedReadOnly = !canConfigureObo && authType === AuthTypeEnum.OBO;
 
   const authTypeOptions = useMemo(() => {
@@ -107,28 +105,26 @@ export default function AuthSection({ isEditMode, serverName }: AuthSectionProps
       {authType === AuthTypeEnum.ServiceHttp && (
         <div className="space-y-3 rounded-lg border border-border-light p-3">
           {/* User provides own key checkbox */}
-          {!administration && (
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="user_provides_key"
-                checked={apiKeySource === 'user'}
-                onCheckedChange={(checked) =>
-                  setValue('auth.api_key_source', checked ? 'user' : 'admin')
-                }
-                aria-labelledby="user_provides_key_label"
-              />
-              <label
-                id="user_provides_key_label"
-                htmlFor="user_provides_key"
-                className="cursor-pointer text-sm"
-              >
-                {localize('com_ui_user_provides_key')}
-              </label>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="user_provides_key"
+              checked={apiKeySource === 'user'}
+              onCheckedChange={(checked) =>
+                setValue('auth.api_key_source', checked ? 'user' : 'admin')
+              }
+              aria-labelledby="user_provides_key_label"
+            />
+            <label
+              id="user_provides_key_label"
+              htmlFor="user_provides_key"
+              className="cursor-pointer text-sm"
+            >
+              {localize('com_ui_user_provides_key')}
+            </label>
+          </div>
 
           {/* API Key input - only when admin provides */}
-          {(administration || apiKeySource !== 'user') && (
+          {apiKeySource !== 'user' && (
             <div className="space-y-1.5">
               <Label htmlFor="api_key" className="text-sm font-medium">
                 {localize('com_ui_api_key')}
@@ -184,7 +180,7 @@ export default function AuthSection({ isEditMode, serverName }: AuthSectionProps
             <div className="space-y-1.5">
               <Label htmlFor="oauth_client_id" className="text-sm font-medium">
                 {localize('com_ui_client_id')}{' '}
-                {!isEditMode && !administration && (
+                {!isEditMode && (
                   <>
                     <span aria-hidden="true" className="text-text-secondary">
                       *
@@ -204,7 +200,7 @@ export default function AuthSection({ isEditMode, serverName }: AuthSectionProps
                 aria-describedby={
                   errors.auth?.oauth_client_id ? 'oauth-client-id-error' : undefined
                 }
-                {...register('auth.oauth_client_id', { required: !isEditMode && !administration })}
+                {...register('auth.oauth_client_id', { required: !isEditMode })}
                 className={cn(errors.auth?.oauth_client_id && 'border-border-destructive')}
               />
               {errors.auth?.oauth_client_id && (

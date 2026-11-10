@@ -9,7 +9,6 @@ import {
   CONFIG_CACHE_NAMESPACE,
 } from './cache/ServerConfigsCacheFactory';
 import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/errors';
-import { sanitizeMCPErrorForLogging } from '~/mcp/utils';
 import { MCPServerInspector } from './MCPServerInspector';
 import { ServerConfigsDB } from './db/ServerConfigsDB';
 import { cacheConfig } from '~/cache/cacheConfig';
@@ -421,10 +420,7 @@ export class MCPServersRegistry {
         allowedAddresses,
       );
     } catch (error) {
-      logger.error(
-        `[MCPServersRegistry] Failed to inspect server "${serverName}":`,
-        sanitizeMCPErrorForLogging(error),
-      );
+      logger.error(`[MCPServersRegistry] Failed to inspect server "${serverName}":`, error);
       if (isMCPDomainNotAllowedError(error)) {
         throw error;
       }
@@ -482,10 +478,7 @@ export class MCPServersRegistry {
         allowedAddresses,
       );
     } catch (error) {
-      logger.error(
-        `[MCPServersRegistry] Reinspection failed for server "${serverName}":`,
-        sanitizeMCPErrorForLogging(error),
-      );
+      logger.error(`[MCPServersRegistry] Reinspection failed for server "${serverName}":`, error);
       if (isMCPDomainNotAllowedError(error)) {
         throw error;
       }
@@ -533,10 +526,7 @@ export class MCPServersRegistry {
         allowedAddresses,
       );
     } catch (error) {
-      logger.error(
-        `[MCPServersRegistry] Failed to inspect server "${serverName}":`,
-        sanitizeMCPErrorForLogging(error),
-      );
+      logger.error(`[MCPServersRegistry] Failed to inspect server "${serverName}":`, error);
       if (isMCPDomainNotAllowedError(error)) {
         throw error;
       }

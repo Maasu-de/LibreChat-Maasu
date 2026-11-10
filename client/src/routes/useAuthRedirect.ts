@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { buildLoginRedirectUrl, redirectMCPFrameToLogin } from 'librechat-data-provider';
+import { buildLoginRedirectUrl } from 'librechat-data-provider';
 import { useAuthContext } from '~/hooks';
 
 export default function useAuthRedirect() {
@@ -11,10 +11,6 @@ export default function useAuthRedirect() {
   useEffect(() => {
     const timeout = setTimeout(() => {
       if (isAuthenticated) {
-        return;
-      }
-
-      if (redirectMCPFrameToLogin()) {
         return;
       }
 

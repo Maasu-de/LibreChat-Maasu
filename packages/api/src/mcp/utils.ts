@@ -1,11 +1,6 @@
 import { Constants } from 'librechat-data-provider';
 import type { ParsedServerConfig } from '~/mcp/types';
 import type { RequestBody } from '~/types';
-import { isGovernancePilotEnabled } from '~/governance/mode';
-
-export function sanitizeMCPErrorForLogging<T>(error: T): T | string {
-  return isGovernancePilotEnabled() ? 'MCP connection operation failed' : error;
-}
 
 export const mcpToolPattern: RegExp = new RegExp(`^.+${Constants.mcp_delimiter}.+$`);
 

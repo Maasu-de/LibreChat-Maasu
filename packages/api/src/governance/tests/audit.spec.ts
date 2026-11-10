@@ -10,8 +10,6 @@ import {
   flushGovernanceGroupAudit,
   startGovernanceGroupAuditDelivery,
   replayGovernanceGroupAudit,
-  queueGovernanceMCPAudit,
-  isGovernanceMCPAuditConfigured,
 } from '../audit';
 
 const environment = process.env;
@@ -336,78 +334,5 @@ it('recovers abandoned delivery leases and excludes active leases across workers
   expect(await outbox().countDocuments()).toBe(1);
   await outbox().updateMany({}, { $set: { leaseUntil: new Date(0) } });
   await flushGovernanceGroupAudit();
-  expect(await outbox().countDocuments()).toBe(0);
-});
-
-it.each([
-  'mcp.created',
-  'mcp.updated',
-  'mcp.deleted',
-  'mcp.inspected',
-  'mcp.oauth.authorized',
-  'mcp.oauth.revoked',
-] as const)('delivers metadata-only %s events to the MCP audit endpoint', async (action) => {
-  process.env.GOVERNANCE_MCP_AUDIT_URL = 'https://gateway.example/internal/mcp-audit';
-  const sink = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
-  const connectionId = new mongoose.Types.ObjectId().toString();
-  await queueGovernanceMCPAudit({ user: actor } as ServerRequest, action, connectionId);
-  await flushGovernanceGroupAudit();
-  expect(sink).toHaveBeenCalledWith(
-    process.env.GOVERNANCE_MCP_AUDIT_URL,
-    expect.objectContaining({ method: 'POST' }),
-  );
-  const payload = JSON.parse(sink.mock.calls[0][1]?.body as string);
-  expect(payload).toEqual({
-    mutation_id: expect.any(String),
-    occurred_at: expect.any(String),
-    action,
-    outcome: 'success',
-    actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
-    resource: { type: 'mcp_connection', id: connectionId },
-  });
-  expect(await outbox().countDocuments()).toBe(0);
-});
-
-it('retains failed MCP outcomes through delivery outages with their original ID', async () => {
-  process.env.GOVERNANCE_API_BASE_URL = 'https://gateway.example/v1';
-  delete process.env.GOVERNANCE_MCP_AUDIT_URL;
-  const sink = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 503 }));
-  await queueGovernanceMCPAudit(
-    { user: actor } as ServerRequest,
-    'mcp.inspected',
-    new mongoose.Types.ObjectId().toString(),
-    'failure',
-  );
-  await flushGovernanceGroupAudit();
-  expect(sink).toHaveBeenCalledWith(
-    'https://gateway.example/api/v1/internal/mcp-audit',
-    expect.any(Object),
-  );
-  const original = await outbox().findOne();
-  expect(original?.payload.outcome).toBe('failure');
-  await outbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
-  sink.mockResolvedValue(new Response(null, { status: 204 }));
-  await flushGovernanceGroupAudit();
-  expect(JSON.parse(sink.mock.calls[0][1]?.body as string)).toEqual(
-    JSON.parse(sink.mock.calls[1][1]?.body as string),
-  );
-  expect(await outbox().countDocuments()).toBe(0);
-});
-
-it('requires MCP audit configuration, OIDC identity and a database connection ID', async () => {
-  const req = { user: actor } as ServerRequest;
-  delete process.env.GOVERNANCE_MCP_AUDIT_URL;
-  expect(isGovernanceMCPAuditConfigured(req)).toBe(false);
-  await expect(queueGovernanceMCPAudit(req, 'mcp.created', 'a'.repeat(24))).rejects.toThrow(
-    'not configured',
-  );
-  process.env.GOVERNANCE_MCP_AUDIT_URL = 'https://gateway.example/internal/mcp-audit';
-  expect(isGovernanceMCPAuditConfigured(req)).toBe(true);
-  expect(
-    isGovernanceMCPAuditConfigured({ user: { ...actor, openidId: '' } } as ServerRequest),
-  ).toBe(false);
-  await expect(
-    queueGovernanceMCPAudit(req, 'mcp.created', 'https://secret.example'),
-  ).rejects.toThrow('Invalid MCP connection identifier');
   expect(await outbox().countDocuments()).toBe(0);
 });

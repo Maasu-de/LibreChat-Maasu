@@ -2,7 +2,6 @@ import { Types } from 'mongoose';
 import { logger, encryptV2, decryptV2, createMethods } from '@librechat/data-schemas';
 import {
   ResourceType,
-  SystemRoles,
   AccessRoleIds,
   PrincipalType,
   PermissionBits,
@@ -11,8 +10,6 @@ import type { AllMethods, MCPServerDocument } from '@librechat/data-schemas';
 
 import type { IServerConfigsRepositoryInterface } from '~/mcp/registry/ServerConfigsRepositoryInterface';
 import type { ParsedServerConfig, AddServerResult } from '~/mcp/types';
-import { isGovernanceRemoteMCP } from '~/governance/mcp';
-import { isGovernancePilotEnabled } from '~/governance/mode';
 import { AccessControlService } from '~/acl/accessControlService';
 
 /**
@@ -104,7 +101,7 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
   private _dbMethods: AllMethods;
   private _aclService: AccessControlService;
 
-  constructor(private readonly mongoose: typeof import('mongoose')) {
+  constructor(mongoose: typeof import('mongoose')) {
     if (!mongoose) {
       throw new Error('ServerConfigsDB requires mongoose instance');
     }
@@ -309,17 +306,6 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
     const server = await this._dbMethods.findMCPServerByServerName(serverName);
     if (!server) return undefined;
 
-    if (isGovernancePilotEnabled()) {
-      const user = userId ? await this._dbMethods.findUser({ _id: userId }) : null;
-      if (
-        user?.provider !== 'openid' ||
-        user.role !== SystemRoles.GOVERNANCE_ADMIN ||
-        !isGovernanceRemoteMCP(server.config)
-      )
-        return undefined;
-      return this.mapDBServerToParsedConfig(server);
-    }
-
     if (!userId) {
       const directlyAccessibleMCPIds = (
         await this._aclService.findPubliclyAccessibleResources({
@@ -380,18 +366,6 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
    * @returns record of parsed configs
    */
   public async getAll(userId?: string, role?: string): Promise<Record<string, ParsedServerConfig>> {
-    if (isGovernancePilotEnabled()) {
-      const user = userId ? await this._dbMethods.findUser({ _id: userId }) : null;
-      if (user?.provider !== 'openid' || user.role !== SystemRoles.GOVERNANCE_ADMIN) return {};
-      const servers = await this.mongoose.models.MCPServer.find({}).lean<MCPServerDocument[]>();
-      const remoteServers = servers.filter((server) => isGovernanceRemoteMCP(server.config));
-      const configs = await Promise.all(
-        remoteServers.map((server) => this.mapDBServerToParsedConfig(server)),
-      );
-      return Object.fromEntries(
-        remoteServers.map((server, index) => [server.serverName, configs[index]]),
-      );
-    }
     let directlyAccessibleMCPIds: Types.ObjectId[] = [];
     let accessibleAgentIds: Types.ObjectId[] = [];
 

@@ -33,8 +33,7 @@ import {
 import { isSSRFTarget, resolveHostnameSSRF, isOAuthUrlAllowed } from '~/auth';
 import { probeResourceMetadataHint } from './resourceHint';
 import { createHardenedOAuthFetch } from './hardenedFetch';
-import { sanitizeUrlForLogging, sanitizeMCPErrorForLogging } from '~/mcp/utils';
-import { isGovernancePilotEnabled } from '~/governance/mode';
+import { sanitizeUrlForLogging } from '~/mcp/utils';
 import { MCPTokenStorage } from './tokens';
 import { getOAuthUrlPort } from './url';
 
@@ -196,7 +195,7 @@ export class MCPOAuthHandler {
       } catch (error) {
         logger.warn(
           `[MCPOAuth] Rejecting untrusted resource_metadata hint from ${sanitizeUrlForLogging(serverUrl)}; falling back to path-aware discovery`,
-          { error: sanitizeMCPErrorForLogging(error) },
+          { error },
         );
       }
     }
@@ -212,7 +211,7 @@ export class MCPOAuthHandler {
       );
     } catch (error) {
       logger.debug('[MCPOAuth] Resource metadata discovery failed, continuing with server URL', {
-        error: sanitizeMCPErrorForLogging(error),
+        error,
       });
     }
 
@@ -340,7 +339,7 @@ export class MCPOAuthHandler {
       const baseUrl = new URL(serverUrl.origin);
       logger.debug(
         `[MCPOAuth] Discovery threw for path URL, trying base URL: ${sanitizeUrlForLogging(baseUrl)}`,
-        { error: sanitizeMCPErrorForLogging(err) },
+        { error: err },
       );
       return discoverAuthorizationServerMetadata(baseUrl, { fetchFn });
     }
@@ -701,7 +700,7 @@ export class MCPOAuthHandler {
         } catch (error) {
           logger.warn(
             `[MCPOAuth] Failed to look up existing client registration, falling back to new registration`,
-            { error: sanitizeMCPErrorForLogging(error), serverName, userId },
+            { error, serverName, userId },
           );
         }
       }
@@ -789,7 +788,7 @@ export class MCPOAuthHandler {
           logger.debug(`[MCPOAuth] Added audience parameter (discovered flow): ${config.audience}`);
         }
       } catch (error) {
-        logger.error(`[MCPOAuth] startAuthorization failed:`, sanitizeMCPErrorForLogging(error));
+        logger.error(`[MCPOAuth] startAuthorization failed:`, error);
         throw error;
       }
 
@@ -821,15 +820,11 @@ export class MCPOAuthHandler {
 
       logger.debug(
         `[MCPOAuth] Returning from initiateOAuthFlow with result ${flowId} for ${serverName}`,
-        isGovernancePilotEnabled() ? { flowId, serverName } : result,
+        result,
       );
       return result;
     } catch (error) {
-      logger.error('[MCPOAuth] Failed to initiate OAuth flow', {
-        error: sanitizeMCPErrorForLogging(error),
-        serverName,
-        userId,
-      });
+      logger.error('[MCPOAuth] Failed to initiate OAuth flow', { error, serverName, userId });
       throw error;
     }
   }
@@ -915,10 +910,7 @@ export class MCPOAuthHandler {
 
       return mcpTokens;
     } catch (error) {
-      logger.error('[MCPOAuth] Failed to complete OAuth flow', {
-        error: sanitizeMCPErrorForLogging(error),
-        flowId,
-      });
+      logger.error('[MCPOAuth] Failed to complete OAuth flow', { error, flowId });
       await flowManager.failFlow(flowId, this.FLOW_TYPE, error as Error);
       throw error;
     }
@@ -1573,10 +1565,7 @@ export class MCPOAuthHandler {
       const tokens = await response.json();
       return this.processRefreshResponse(tokens, metadata.serverName, 'auto-discovered OAuth');
     } catch (error) {
-      logger.error(
-        `[MCPOAuth] Failed to refresh tokens for ${metadata.serverName}`,
-        sanitizeMCPErrorForLogging(error),
-      );
+      logger.error(`[MCPOAuth] Failed to refresh tokens for ${metadata.serverName}`, error);
       throw error;
     }
   }

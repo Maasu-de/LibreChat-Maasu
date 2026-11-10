@@ -18,12 +18,7 @@ import {
   ReauthenticationRequiredError,
   resolveOboToken,
 } from '~/mcp/oauth';
-import {
-  sanitizeUrlForLogging,
-  sanitizeMCPErrorForLogging,
-  isClientRejectionMessage,
-  isOAuthServer,
-} from './utils';
+import { sanitizeUrlForLogging, isClientRejectionMessage, isOAuthServer } from './utils';
 import { PENDING_STALE_MS, normalizeExpiresAt } from '~/flow/manager';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { withTimeout } from '~/utils/promise';
@@ -233,10 +228,7 @@ export class MCPConnectionFactory {
       MCPConnection.decrementCycleCount(this.serverName);
     } catch (listError) {
       MCPConnection.decrementCycleCount(this.serverName);
-      logger.debug(
-        `${this.logPrefix} [Discovery] Unauthenticated tool listing failed:`,
-        sanitizeMCPErrorForLogging(listError),
-      );
+      logger.debug(`${this.logPrefix} [Discovery] Unauthenticated tool listing failed:`, listError);
     }
 
     connection.removeListener('oauthRequired', oauthHandler);
@@ -585,15 +577,10 @@ export class MCPConnectionFactory {
       return tokens;
     } catch (error) {
       if (error instanceof ReauthenticationRequiredError) {
-        logger.info(
-          `${this.logPrefix} ${sanitizeMCPErrorForLogging(error.message)}, will trigger OAuth flow`,
-        );
+        logger.info(`${this.logPrefix} ${error.message}, will trigger OAuth flow`);
         return null;
       }
-      logger.debug(
-        `${this.logPrefix} No existing tokens found or error loading tokens`,
-        sanitizeMCPErrorForLogging(error),
-      );
+      logger.debug(`${this.logPrefix} No existing tokens found or error loading tokens`, error);
       return null;
     }
   }
@@ -741,13 +728,11 @@ export class MCPConnectionFactory {
       return tokens;
     } catch (error) {
       if (error instanceof ReauthenticationRequiredError) {
-        logger.info(
-          `${this.logPrefix} ${sanitizeMCPErrorForLogging(error.message)}, falling back to interactive OAuth`,
-        );
+        logger.info(`${this.logPrefix} ${error.message}, falling back to interactive OAuth`);
       } else {
         logger.info(
           `${this.logPrefix} Silent token refresh failed, falling back to interactive OAuth`,
-          sanitizeMCPErrorForLogging(error),
+          error,
         );
       }
       return null;
@@ -778,10 +763,7 @@ export class MCPConnectionFactory {
       }
       await this.flowManager.deleteFlow(flowId, 'mcp_get_tokens');
     } catch (err) {
-      logger.debug(
-        `${this.logPrefix} Failed to invalidate mcp_get_tokens cache`,
-        sanitizeMCPErrorForLogging(err),
-      );
+      logger.debug(`${this.logPrefix} Failed to invalidate mcp_get_tokens cache`, err);
     }
   }
 
@@ -813,10 +795,7 @@ export class MCPConnectionFactory {
         await MCPOAuthHandler.deleteStateMapping(oldState, this.flowManager);
       }
     } catch (err) {
-      logger.debug(
-        `${this.logPrefix} Failed to invalidate completed mcp_oauth cache`,
-        sanitizeMCPErrorForLogging(err),
-      );
+      logger.debug(`${this.logPrefix} Failed to invalidate completed mcp_oauth cache`, err);
     }
   }
 
@@ -1018,10 +997,7 @@ export class MCPConnectionFactory {
           // written by initFlow above, so metadata arg is unused (pass {} to make that explicit)
           this.flowManager!.createFlow(newFlowId, 'mcp_oauth', {}, this.signal).catch(
             async (error) => {
-              logger.debug(
-                `${this.logPrefix} OAuth flow monitor ended`,
-                sanitizeMCPErrorForLogging(error),
-              );
+              logger.debug(`${this.logPrefix} OAuth flow monitor ended`, error);
               await this.clearStaleClientIfRejected(flowMetadata.reusedStoredClient, error);
             },
           );
@@ -1034,10 +1010,7 @@ export class MCPConnectionFactory {
           connection.emit('oauthFailed', new Error('OAuth flow initiated - return early'));
           return;
         } catch (error) {
-          logger.error(
-            `${this.logPrefix} Failed to initiate OAuth flow`,
-            sanitizeMCPErrorForLogging(error),
-          );
+          logger.error(`${this.logPrefix} Failed to initiate OAuth flow`, error);
           connection.emit('oauthFailed', new Error('OAuth initiation failed'));
           return;
         }
@@ -1072,10 +1045,7 @@ export class MCPConnectionFactory {
           await this.invalidateGetTokensFlow(tokens);
           logger.info(`${this.logPrefix} OAuth tokens saved to storage`);
         } catch (error) {
-          logger.error(
-            `${this.logPrefix} Failed to save OAuth tokens to storage`,
-            sanitizeMCPErrorForLogging(error),
-          );
+          logger.error(`${this.logPrefix} Failed to save OAuth tokens to storage`, error);
         }
       }
 
@@ -1138,10 +1108,7 @@ export class MCPConnectionFactory {
         }
 
         if (attempts === maxAttempts) {
-          logger.error(
-            `${this.logPrefix} Failed to connect after ${maxAttempts} attempts`,
-            sanitizeMCPErrorForLogging(error),
-          );
+          logger.error(`${this.logPrefix} Failed to connect after ${maxAttempts} attempts`, error);
           throw error;
         }
         await new Promise((resolve) => setTimeout(resolve, 2000 * attempts));
@@ -1167,10 +1134,7 @@ export class MCPConnectionFactory {
         deleteTokens: this.tokenMethods!.deleteTokens,
       }),
     ).catch((err) => {
-      logger.warn(
-        `${this.logPrefix} Failed to clear stale client registration`,
-        sanitizeMCPErrorForLogging(err),
-      );
+      logger.warn(`${this.logPrefix} Failed to clear stale client registration`, err);
     });
   }
 
@@ -1344,10 +1308,7 @@ export class MCPConnectionFactory {
             await MCPOAuthHandler.deleteStateMapping(oldState, this.flowManager);
           }
         } catch (error) {
-          logger.warn(
-            `${this.logPrefix} Failed to clean up existing OAuth flow`,
-            sanitizeMCPErrorForLogging(error),
-          );
+          logger.warn(`${this.logPrefix} Failed to clean up existing OAuth flow`, error);
         }
       }
 
@@ -1402,10 +1363,7 @@ export class MCPConnectionFactory {
         reusedStoredClient,
       };
     } catch (error) {
-      logger.error(
-        `${this.logPrefix} Failed to complete OAuth flow for ${this.serverName}`,
-        sanitizeMCPErrorForLogging(error),
-      );
+      logger.error(`${this.logPrefix} Failed to complete OAuth flow for ${this.serverName}`, error);
       return { tokens: null, reusedStoredClient, error };
     }
   }

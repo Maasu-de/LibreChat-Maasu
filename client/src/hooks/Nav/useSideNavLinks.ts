@@ -194,9 +194,8 @@ export default function useSideNavLinks({
     }
 
     if (
-      interfaceConfig.mcpServers?.use !== false &&
-      ((hasAccessToUseMCPSettings && availableMCPServers && availableMCPServers.length > 0) ||
-        hasAccessToCreateMCP)
+      (hasAccessToUseMCPSettings && availableMCPServers && availableMCPServers.length > 0) ||
+      hasAccessToCreateMCP
     ) {
       links.push({
         title: 'com_nav_setting_mcp',
@@ -230,7 +229,6 @@ export default function useSideNavLinks({
     hasAccessToMemories,
     hasAccessToReadMemories,
     interfaceConfig.parameters,
-    interfaceConfig.mcpServers?.use,
     endpointType,
     hasAccessToBookmarks,
     availableMCPServers,

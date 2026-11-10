@@ -8,7 +8,6 @@ import BasicInfoSection from './sections/BasicInfoSection';
 import TransportSection from './sections/TransportSection';
 import TrustSection from './sections/TrustSection';
 import AuthSection from './sections/AuthSection';
-import { useMCPAdministration } from '../administration';
 
 interface MCPServerFormProps {
   formHook: ReturnType<typeof useMCPServerForm>;
@@ -16,7 +15,6 @@ interface MCPServerFormProps {
 
 export default function MCPServerForm({ formHook }: MCPServerFormProps) {
   const { methods, isEditMode, server } = formHook;
-  const administration = useMCPAdministration();
 
   const canConfigureObo = useHasAccess({
     permissionType: PermissionTypes.MCP_SERVERS,
@@ -50,7 +48,7 @@ export default function MCPServerForm({ formHook }: MCPServerFormProps) {
 
           <AuthSection isEditMode={isEditMode} serverName={server?.serverName} />
 
-          {!administration && <TrustSection />}
+          <TrustSection />
         </fieldset>
       </div>
     </FormProvider>

@@ -21,13 +21,11 @@ jest.mock('react-router-dom', () => ({
 }));
 
 const mockApiBaseUrl = jest.fn(() => '');
-const mockFrameRedirect = jest.fn(() => false);
 
 jest.mock('librechat-data-provider', () => ({
   ...jest.requireActual('librechat-data-provider'),
   setTokenHeader: jest.fn(),
   apiBaseUrl: () => mockApiBaseUrl(),
-  redirectMCPFrameToLogin: () => mockFrameRedirect(),
 }));
 
 let mockCapturedLoginOptions: {
@@ -676,47 +674,5 @@ describe('AuthContextProvider — custom role detection and fetching', () => {
 
     mockUseGetRole.mockReturnValue({ data: null });
     jest.useRealTimers();
-  });
-});
-
-describe('AuthContextProvider — embedded MCP administration', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    sessionStorage.clear();
-    mockApiBaseUrl.mockReturnValue('/chat');
-    mockFrameRedirect.mockReturnValue(false);
-  });
-
-  afterEach(() => {
-    mockApiBaseUrl.mockReturnValue('');
-    mockFrameRedirect.mockReturnValue(false);
-    sessionStorage.clear();
-    jest.useRealTimers();
-  });
-
-  it('leaves the frame for sign-in when the initial refresh fails', () => {
-    mockFrameRedirect.mockReturnValue(true);
-    renderProviderLive();
-    const [, options] = mockRefreshMutate.mock.calls[0] as [
-      undefined,
-      { onError: (error: Error) => void },
-    ];
-    act(() => options.onError(new Error('expired')));
-    expect(mockFrameRedirect).toHaveBeenCalled();
-    expect(mockNavigate).not.toHaveBeenCalled();
-  });
-
-  it('loads the admin shell as a document after OAuth login', () => {
-    const replace = jest.spyOn(window.location, 'replace').mockImplementation(() => {});
-    sessionStorage.setItem(SESSION_KEY, '/governance/mcp');
-    renderProviderLive();
-    const [, options] = mockRefreshMutate.mock.calls[0] as [
-      undefined,
-      { onSuccess: (data: object) => void },
-    ];
-    act(() => options.onSuccess({ user: { id: '1', role: 'GOVERNANCE_ADMIN' }, token: 'token' }));
-    expect(replace).toHaveBeenCalledWith('/chat/governance/mcp');
-    expect(mockNavigate).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
   });
 });
