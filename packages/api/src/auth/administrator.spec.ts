@@ -112,7 +112,7 @@ it('identifies legacy OpenID ADMIN sessions without rewriting them', () => {
   expect(hasStaleGovernanceAdministratorRole({ ...user('ADMIN'), provider: 'local' })).toBe(false);
 });
 
-it.each([
+it.each<[object, boolean]>([
   [{ 'company.permissions': 'company-admin', company: { permissions: 'reader' } }, true],
   [{ 'company.permissions': 'reader', company: { permissions: 'company-admin' } }, false],
   ...[null, false, '', {}, []].map((value): [object, boolean] => [
