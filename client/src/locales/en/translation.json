@@ -5,6 +5,7 @@
   "com_ui_mcp_inspect": "Inspect connection and tools",
   "com_ui_mcp_inspection_success": "Connection inspected successfully. No tools were executed.",
   "com_ui_mcp_no_tools": "No tools discovered.",
+  "com_ui_mcp_authorized": "Authorized",
   "com_error_tenant_budget_exceeded": "Your organization has reached its monthly spending limit. Contact your administrator or try again next month.",
   "com_error_group_budget_exceeded": "One of your groups has reached its monthly spending limit. Contact your administrator or try again next month.",
   "com_ui_governance_models_unavailable": "Models are unavailable. Please try again later.",

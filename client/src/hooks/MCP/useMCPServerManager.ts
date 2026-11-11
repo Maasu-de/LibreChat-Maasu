@@ -281,7 +281,10 @@ export function useMCPServerManager({
 
           const serverStatus = freshConnectionStatus[serverName];
 
-          if (serverStatus?.connectionState === 'connected') {
+          if (
+            serverStatus?.connectionState === 'connected' ||
+            (administration && serverStatus?.authorizationComplete)
+          ) {
             if (timeoutId) {
               clearTimeout(timeoutId);
             }
@@ -357,7 +360,15 @@ export function useMCPServerManager({
       timeoutId = setTimeout(pollOnce, getPollInterval(0));
       pollIntervalsRef.current[serverName] = timeoutId;
     },
-    [queryClient, serverInitStates, showToast, localize, setMCPValues, cleanupServerState],
+    [
+      administration,
+      queryClient,
+      serverInitStates,
+      showToast,
+      localize,
+      setMCPValues,
+      cleanupServerState,
+    ],
   );
 
   const initializeServer = useCallback(

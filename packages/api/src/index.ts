@@ -60,6 +60,7 @@ export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
 export * from './governance/mcp';
+export * from './governance/oauth';
 export {
   isGovernanceMCPAuditConfigured,
   queueGovernanceMCPAudit,

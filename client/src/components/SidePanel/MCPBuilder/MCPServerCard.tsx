@@ -49,7 +49,14 @@ export default function MCPServerCard({
   const canEditThisServer = hasPermissions(server.effectivePermissions, PermissionBits.EDIT);
   const displayName = server.config?.title || server.serverName;
   const description = server.config?.description;
-  const statusDotColor = getStatusDotColor(serverStatus, isInitializing);
+  const authorized =
+    administration &&
+    serverStatus?.authorizationComplete === true &&
+    serverStatus.connectionState === 'disconnected';
+  const actionStatus = authorized
+    ? { ...serverStatus, connectionState: 'connected' as const }
+    : serverStatus;
+  const statusDotColor = getStatusDotColor(actionStatus, isInitializing);
   const canEdit = canCreateEditMCPs && canEditThisServer;
   const inspectionRevision =
     administration &&
@@ -85,6 +92,7 @@ export default function MCPServerCard({
   // Determine status text for accessibility
   const getStatusText = () => {
     if (isInitializing) return localize('com_nav_mcp_status_initializing');
+    if (authorized) return localize('com_ui_mcp_authorized');
     if (!serverStatus) return localize('com_nav_mcp_status_unknown');
     const { connectionState, requiresOAuth } = serverStatus;
     if (connectionState === 'connected') return localize('com_nav_mcp_status_connected');
@@ -137,13 +145,16 @@ export default function MCPServerCard({
         <div className="mcp-server-info min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-text-primary">{displayName}</div>
           {description && <p className="truncate text-xs text-text-secondary">{description}</p>}
+          {authorized && !isInitializing && (
+            <p className="text-xs text-text-secondary">{localize('com_ui_mcp_authorized')}</p>
+          )}
         </div>
 
         {/* Actions */}
         <div className="flex-shrink-0">
           <MCPCardActions
             serverName={server.serverName}
-            serverStatus={serverStatus}
+            serverStatus={actionStatus}
             isInitializing={isInitializing}
             canCancel={canCancel}
             hasCustomUserVars={!administration && hasCustomUserVars}

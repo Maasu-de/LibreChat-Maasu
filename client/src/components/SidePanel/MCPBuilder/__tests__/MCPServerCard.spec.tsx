@@ -8,6 +8,7 @@ import { useUpdateMCPServerMutation } from '~/data-provider/MCP/mutations';
 import { useMCPServersQuery } from '~/data-provider/MCP/queries';
 import { MCPAdministrationContext } from '../administration';
 import MCPServerList from '../MCPServerList';
+import MCPServerCard from '../MCPServerCard';
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
@@ -18,7 +19,6 @@ jest.mock('~/hooks', () => ({
   }),
 }));
 jest.mock('../MCPServerDialog', () => ({ __esModule: true, default: () => null }));
-jest.mock('../MCPCardActions', () => ({ __esModule: true, default: () => null }));
 jest.mock('librechat-data-provider', () => {
   const original = jest.requireActual('librechat-data-provider');
   return {
@@ -30,6 +30,55 @@ jest.mock('librechat-data-provider', () => {
       updateMCPServer: jest.fn(),
     },
   };
+});
+
+describe('administrator OAuth authorization status', () => {
+  it.each([true, false])(
+    'shows authorization without claiming a live connection in administration=%s',
+    (administration) => {
+      const client = new QueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <MCPAdministrationContext.Provider value={administration}>
+            <MCPServerCard
+              server={{ serverName: 'remote', config: initialConfig, effectivePermissions: 7 }}
+              canCreateEditMCPs
+              getServerStatusIconProps={(serverName) => ({
+                serverName,
+                serverStatus: {
+                  connectionState: 'disconnected',
+                  requiresOAuth: true,
+                  authorizationComplete: true,
+                },
+                isInitializing: false,
+                canCancel: false,
+                onConfigClick: jest.fn(),
+                onCancel: jest.fn(),
+              })}
+            />
+          </MCPAdministrationContext.Provider>
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByRole('button', { name: 'com_ui_revoke' })).toBeInTheDocument();
+      if (administration) {
+        expect(screen.getByText('com_ui_mcp_authorized')).toBeInTheDocument();
+        expect(screen.getByLabelText('remote - com_ui_mcp_authorized')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'com_nav_mcp_reconnect' })).toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', { name: 'com_nav_mcp_connect' }),
+        ).not.toBeInTheDocument();
+      } else {
+        expect(screen.queryByText('com_ui_mcp_authorized')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('remote - com_nav_mcp_status_needs_auth')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'com_nav_mcp_connect' })).toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', { name: 'com_nav_mcp_reconnect' }),
+        ).not.toBeInTheDocument();
+      }
+      client.clear();
+    },
+  );
 });
 
 const initialConfig: MCPServerDefinition['config'] = {

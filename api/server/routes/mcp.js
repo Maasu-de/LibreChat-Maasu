@@ -17,6 +17,9 @@ const {
   queueGovernanceMCPAudit,
   recordGovernanceMCPFailure,
   storeGovernanceMCPOAuth,
+  getGovernanceMCPOAuthGeneration,
+  withGovernanceMCPOAuthGeneration,
+  GovernanceMCPOAuthStaleError,
   createGovernanceMCPHandlers,
   createGovernanceMCPOAuthFailureHandler,
   createSafeUser,
@@ -438,6 +441,7 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
     };
 
     await runWithTenant(async () => {
+      let authorizationGeneration;
       if (isGovernancePilotEnabled()) {
         administrator = await db.findUser({ _id: flowState.userId });
         administrationConfig = await getMCPServersRegistry().getServerConfig(
@@ -456,6 +460,18 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
           !isGovernanceMCPAuditConfigured({ user: administrator })
         ) {
           throw new Error('OIDC administrator entitlement required');
+        }
+        authorizationGeneration = await getGovernanceMCPOAuthGeneration(
+          flowState.userId,
+          administrationConfig.dbId,
+        );
+        const pendingFlow = await flowManager.getFlowState(flowId, 'mcp_oauth');
+        if (
+          pendingFlow?.status !== 'PENDING' ||
+          pendingFlow.metadata?.state !== state ||
+          pendingFlow.metadata?.binding !== flowState.binding
+        ) {
+          throw new GovernanceMCPOAuthStaleError();
         }
       }
       const oauthHeaders =
@@ -492,17 +508,13 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
               { user: administrator },
               administrationConfig.dbId,
               tokenData,
+              authorizationGeneration,
             );
             authorizationCommitted = true;
-            try {
-              await flowManager.completeFlow(flowId, 'mcp_oauth', tokens);
-            } catch {
-              logger.warn('[MCP OAuth] Committed authorization flow could not be published');
-            }
           } else {
             await MCPTokenStorage.storeTokens(tokenData);
           }
-          logger.debug('[MCP OAuth] Stored OAuth tokens prior to reconnection', {
+          logger.debug('[MCP OAuth] Stored OAuth tokens', {
             serverName,
             userId: flowState.userId,
           });
@@ -513,7 +525,33 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
           );
           throw error;
         }
+      }
 
+      if (administrator) {
+        await withGovernanceMCPOAuthGeneration(
+          flowState.userId,
+          administrationConfig.dbId,
+          authorizationGeneration + 1,
+          async () => {
+            try {
+              await flowManager.completeFlow(flowId, 'mcp_oauth', null);
+            } catch {
+              logger.warn('[MCP OAuth] Committed authorization flow could not be published');
+            }
+            const tokenFlowId = MCPOAuthHandler.generateTokenFlowId(
+              flowState.userId,
+              serverName,
+              flowState.tenantId,
+              flowState.binding,
+            );
+            await flowManager.deleteFlow(tokenFlowId, 'mcp_get_tokens');
+            if (tokenFlowId !== flowId) await flowManager.deleteFlow(flowId, 'mcp_get_tokens');
+          },
+        );
+        return;
+      }
+
+      if (flowState?.userId && tokens) {
         /**
          * Clear any cached `mcp_get_tokens` flow result so subsequent lookups
          * re-fetch the freshly stored credentials instead of returning stale nulls.
@@ -631,7 +669,7 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
           administrationConfig?.dbId,
         );
         try {
-          if (callbackFlowId)
+          if (callbackFlowId && !(error instanceof GovernanceMCPOAuthStaleError))
             await callbackFlowManager?.failFlow(
               callbackFlowId,
               'mcp_oauth',
@@ -1002,6 +1040,9 @@ router.get('/connection/status/:serverName', requireJwtAuth, async (req, res) =>
       serverName,
       connectionStatus: serverStatus.connectionState,
       requiresOAuth: serverStatus.requiresOAuth,
+      ...(serverStatus.authorizationComplete != null
+        ? { authorizationComplete: serverStatus.authorizationComplete }
+        : {}),
     });
   } catch (error) {
     logger.error(

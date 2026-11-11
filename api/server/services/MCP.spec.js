@@ -29,6 +29,7 @@ jest.mock('@librechat/api', () => {
   return {
     ...actual,
     sendEvent: jest.fn(),
+    isGovernanceMCPOAuthAuthorized: jest.fn().mockResolvedValue(false),
     get isMCPDomainAllowed() {
       return mockIsMCPDomainAllowed;
     },
@@ -422,6 +423,77 @@ describe('tests for the new helper functions used by the MCP connection status e
     const mockUserId = 'user-123';
     const mockServerName = 'test-server';
     const mockConfig = { updatedAt: Date.now() };
+
+    it.each([true, false])(
+      'reports durable governed authorization without a live connection: %s',
+      async (authorized) => {
+        const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        const { isGovernanceMCPOAuthAuthorized } = require('@librechat/api');
+        const getFlowState = jest.fn().mockResolvedValue({
+          status: 'FAILED',
+          createdAt: Date.now() - 1200000,
+        });
+        mockGetFlowStateManager.mockReturnValue({ getFlowState });
+        mockGetOAuthReconnectionManager.mockReturnValue({ isReconnecting: () => false });
+        const config = {
+          ...mockConfig,
+          type: 'sse',
+          url: 'https://mcp.example/server',
+          dbId: '507f1f77bcf86cd799439011',
+        };
+        const binding = getGovernanceMCPOAuthBinding(config);
+        isGovernanceMCPOAuthAuthorized.mockImplementation(
+          async (_userId, _connectionId, currentBinding) =>
+            authorized && currentBinding === binding,
+        );
+        try {
+          const result = await getServerConnectionStatus(
+            mockUserId,
+            mockServerName,
+            config,
+            new Map(),
+            new Map(),
+            new Set([mockServerName]),
+          );
+          expect(result).toEqual({
+            requiresOAuth: true,
+            connectionState: authorized ? 'disconnected' : 'error',
+            authorizationComplete: authorized,
+          });
+          expect(getFlowState).toHaveBeenCalledTimes(authorized ? 0 : 1);
+          expect(isGovernanceMCPOAuthAuthorized).toHaveBeenCalledWith(
+            mockUserId,
+            config.dbId,
+            getGovernanceMCPOAuthBinding(config),
+          );
+          if (authorized) {
+            const failedConnection = await getServerConnectionStatus(
+              mockUserId,
+              mockServerName,
+              config,
+              new Map(),
+              new Map([[mockServerName, { connectionState: 'error', isStale: () => false }]]),
+              new Set([mockServerName]),
+            );
+            expect(failedConnection.connectionState).toBe('error');
+          }
+          const changed = await getServerConnectionStatus(
+            mockUserId,
+            mockServerName,
+            { ...config, url: 'https://replacement.example/server' },
+            new Map(),
+            new Map(),
+            new Set([mockServerName]),
+          );
+          expect(changed.authorizationComplete).toBe(false);
+        } finally {
+          isGovernanceMCPOAuthAuthorized.mockResolvedValue(false);
+          if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+          else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        }
+      },
+    );
 
     it.each(['PENDING', 'FAILED'])(
       "finds a governed connection's bound %s OAuth flow and ignores it after the target changes",

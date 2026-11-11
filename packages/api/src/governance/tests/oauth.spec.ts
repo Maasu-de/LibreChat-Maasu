@@ -10,6 +10,7 @@ let schemas: typeof import('@librechat/data-schemas');
 let models: ReturnType<typeof schemas.createModels>;
 let methods: ReturnType<typeof schemas.createMethods>;
 let administration: typeof import('../mcp');
+let authorization: typeof import('../oauth');
 let storage: typeof import('~/mcp/oauth').MCPTokenStorage;
 let actor: IUser;
 const environment = process.env;
@@ -41,6 +42,7 @@ beforeAll(async () => {
   models = schemas.createModels(mongoose);
   methods = schemas.createMethods(mongoose);
   administration = await import('../mcp');
+  authorization = await import('../oauth');
   storage = (await import('~/mcp/oauth')).MCPTokenStorage;
   replica = await MongoMemoryReplSet.create({
     binary: { version: '8.2.1' },
@@ -89,6 +91,7 @@ it('commits encrypted access, refresh, and client tokens with the authorization 
       { user: actor } as ServerRequest,
       connectionId,
       tokenData(),
+      await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId),
     );
     expect(await models.Token.countDocuments()).toBe(3);
     expect((await outbox().findOne())?.payload).toMatchObject({
@@ -125,6 +128,7 @@ it('rolls back token replacements when durable authorization audit insertion fai
         { user: actor } as ServerRequest,
         connectionId,
         replacement,
+        await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId),
       ),
     ).rejects.toThrow('audit unavailable');
     failure.mockRestore();
@@ -136,13 +140,18 @@ it('rolls back token replacements when durable authorization audit insertion fai
 it('rolls back earlier token writes when a later token write fails', async () => {
   await schemas.runAsSystem(async () => {
     await expect(
-      administration.storeGovernanceMCPOAuth({ user: actor } as ServerRequest, connectionId, {
-        ...tokenData(),
-        createToken: (token, session) => {
-          if (token.type === 'mcp_oauth_refresh') throw new Error('refresh persistence failed');
-          return methods.createToken(token, session);
+      administration.storeGovernanceMCPOAuth(
+        { user: actor } as ServerRequest,
+        connectionId,
+        {
+          ...tokenData(),
+          createToken: (token, session) => {
+            if (token.type === 'mcp_oauth_refresh') throw new Error('refresh persistence failed');
+            return methods.createToken(token, session);
+          },
         },
-      }),
+        await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId),
+      ),
     ).rejects.toThrow('refresh persistence failed');
     expect(await models.Token.countDocuments()).toBe(0);
     expect(await outbox().countDocuments()).toBe(0);

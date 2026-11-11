@@ -1,12 +1,16 @@
 import React from 'react';
-import { renderHook } from '@testing-library/react';
+import { Provider } from 'jotai';
+import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryKeys } from 'librechat-data-provider';
 import { useMCPSelect } from '~/hooks';
 import { useMCPServersQuery } from '~/data-provider';
 import { MCPAdministrationContext } from '~/components/SidePanel/MCPBuilder/administration';
 import { useMCPServerManager } from '../useMCPServerManager';
 
 let mockStartupConfig: { governancePilotEnabled: boolean } | undefined;
+const mockShowToast = jest.fn();
+const mockReinitialize = jest.fn();
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
@@ -23,22 +27,23 @@ jest.mock('~/data-provider', () => ({
   })),
 }));
 
-jest.mock('@librechat/client', () => ({ useToastContext: () => ({ showToast: jest.fn() }) }));
+jest.mock('@librechat/client', () => ({ useToastContext: () => ({ showToast: mockShowToast }) }));
 jest.mock('librechat-data-provider/react-query', () => ({
   useCancelMCPOAuthMutation: () => ({}),
   useUpdateUserPluginsMutation: () => ({}),
-  useReinitializeMCPServerMutation: () => ({}),
+  useReinitializeMCPServerMutation: () => ({ mutateAsync: mockReinitialize }),
   useGetAllEffectivePermissionsQuery: () => ({ data: {} }),
 }));
 
-function wrapper(administration: boolean) {
-  const queryClient = new QueryClient();
+function wrapper(administration: boolean, queryClient = new QueryClient()) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
-        <MCPAdministrationContext.Provider value={administration}>
-          {children}
-        </MCPAdministrationContext.Provider>
+        <Provider>
+          <MCPAdministrationContext.Provider value={administration}>
+            {children}
+          </MCPAdministrationContext.Provider>
+        </Provider>
       </QueryClientProvider>
     );
   };
@@ -73,4 +78,73 @@ describe('governed MCP management isolation', () => {
     ]);
     expect(useMCPSelect).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
   });
+});
+
+describe('OAuth authorization completion polling', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockStartupConfig = { governancePilotEnabled: false };
+    mockReinitialize.mockResolvedValue({
+      success: true,
+      oauthRequired: true,
+      oauthUrl: 'https://identity.example/authorize',
+    });
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it.each([true, false])(
+    'accepts an authorized disconnected connection only in administration=%s',
+    async (administration) => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData([QueryKeys.mcpConnectionStatus], {
+        connectionStatus: {
+          remote: {
+            connectionState: 'disconnected',
+            requiresOAuth: true,
+            authorizationComplete: true,
+          },
+        },
+      });
+      const refetch = jest.spyOn(queryClient, 'refetchQueries').mockResolvedValue(undefined);
+      const statusRefetches = () =>
+        refetch.mock.calls.filter(([key]) =>
+          Array.isArray(key) ? key[0] === QueryKeys.mcpConnectionStatus : false,
+        );
+      const { result, unmount } = renderHook(() => useMCPServerManager(), {
+        wrapper: wrapper(administration, queryClient),
+      });
+
+      await act(async () => {
+        await result.current.initializeServer('remote', false);
+      });
+      expect(result.current.isInitializing('remote')).toBe(true);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(6000);
+      });
+
+      expect(result.current.isInitializing('remote')).toBe(!administration);
+      if (administration) {
+        expect(mockShowToast).toHaveBeenCalledWith({
+          message: 'com_ui_mcp_authenticated_success',
+          status: 'success',
+        });
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(30000);
+        });
+        expect(statusRefetches()).toHaveLength(1);
+      } else {
+        expect(mockShowToast).not.toHaveBeenCalled();
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(5000);
+        });
+        expect(statusRefetches()).toHaveLength(2);
+      }
+      unmount();
+      queryClient.clear();
+    },
+  );
 });

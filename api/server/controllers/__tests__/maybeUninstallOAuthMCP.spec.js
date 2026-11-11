@@ -217,13 +217,14 @@ describe('maybeUninstallOAuthMCP', () => {
         expect(committed).toBe(true);
       });
       const commit = jest.fn(async (deleteStoredTokens) => {
-        expect(mockDeleteFlow).toHaveBeenCalled();
+        expect(mockDeleteFlow).not.toHaveBeenCalled();
         expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
         if (failCommit) throw new Error('audit unavailable');
         mockDeleteUserTokens.mockImplementationOnce(async ({ deleteToken }) => {
           await deleteToken({ userId, type: 'mcp_oauth', identifier: `mcp:${serverName}` });
         });
         await deleteStoredTokens(session);
+        expect(mockDeleteFlow).toHaveBeenCalled();
         committed = true;
       });
       const result = maybeUninstallOAuthMCP(userId, pluginKey, appConfig, commit);
@@ -290,7 +291,7 @@ describe('maybeUninstallOAuthMCP', () => {
       );
       expect(deletion).toHaveBeenCalled();
       expect(mockDeleteFlow).toHaveBeenCalledWith(flowId, 'mcp_get_tokens');
-      expect(commit).not.toHaveBeenCalled();
+      expect(commit).toHaveBeenCalledTimes(1);
       expect(mockDeleteUserTokens).not.toHaveBeenCalled();
       expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
       expect(await flowManager.getFlowState(flowId, 'mcp_get_tokens')).toMatchObject({

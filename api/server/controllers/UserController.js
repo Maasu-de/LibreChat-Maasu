@@ -437,56 +437,68 @@ const clearStoredMCPOAuthState = async (userId, serverName, commitTokenDeletion,
     );
   }
 
-  try {
-    const flowsCache = getLogStores(CacheKeys.FLOWS);
-    const flowManager = getFlowStateManager(flowsCache);
-    const baseFlowId = MCPOAuthHandler.generateFlowId(userId, serverName);
-    const tenantId = getTenantId();
-    const tokenFlowId = MCPOAuthHandler.generateTokenFlowId(
-      userId,
-      serverName,
-      tenantId,
-      ...(binding ? [binding] : []),
-    );
-    const oauthFlowId = MCPOAuthHandler.generateFlowId(
-      userId,
-      serverName,
-      tenantId,
-      ...(binding ? [binding] : []),
-    );
-    const flowDeletes = [
-      [tokenFlowId, 'mcp_get_tokens'],
-      [oauthFlowId, 'mcp_oauth'],
-      [baseFlowId, 'mcp_get_tokens'],
-      [baseFlowId, 'mcp_oauth'],
-    ].filter(
-      ([flowId, type], index, deletes) =>
-        deletes.findIndex(([candidateId, candidateType]) => {
-          return candidateId === flowId && candidateType === type;
-        }) === index,
-    );
-    const results = await Promise.allSettled(
-      flowDeletes.map(([flowId, type]) => flowManager.deleteFlow(flowId, type)),
-    );
-    for (const result of results) {
-      if (isGovernancePilotEnabled() && (result.status === 'rejected' || result.value === false)) {
-        throw new Error('Failed to clear MCP OAuth authorization');
+  const clearFlows = async () => {
+    try {
+      const flowsCache = getLogStores(CacheKeys.FLOWS);
+      const flowManager = getFlowStateManager(flowsCache);
+      const baseFlowId = MCPOAuthHandler.generateFlowId(userId, serverName);
+      const tenantId = getTenantId();
+      const tokenFlowId = MCPOAuthHandler.generateTokenFlowId(
+        userId,
+        serverName,
+        tenantId,
+        ...(binding ? [binding] : []),
+      );
+      const oauthFlowId = MCPOAuthHandler.generateFlowId(
+        userId,
+        serverName,
+        tenantId,
+        ...(binding ? [binding] : []),
+      );
+      const flowDeletes = [
+        [tokenFlowId, 'mcp_get_tokens'],
+        [oauthFlowId, 'mcp_oauth'],
+        [baseFlowId, 'mcp_get_tokens'],
+        [baseFlowId, 'mcp_oauth'],
+      ].filter(
+        ([flowId, type], index, deletes) =>
+          deletes.findIndex(([candidateId, candidateType]) => {
+            return candidateId === flowId && candidateType === type;
+          }) === index,
+      );
+      const results = await Promise.allSettled(
+        flowDeletes.map(([flowId, type]) => flowManager.deleteFlow(flowId, type)),
+      );
+      for (const result of results) {
+        if (
+          isGovernancePilotEnabled() &&
+          (result.status === 'rejected' || result.value === false)
+        ) {
+          throw new Error('Failed to clear MCP OAuth authorization');
+        }
+        if (result.status === 'rejected') {
+          logger.warn(
+            `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
+            sanitizeMCPErrorForLogging(result.reason),
+          );
+        }
       }
-      if (result.status === 'rejected') {
-        logger.warn(
-          `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
-          sanitizeMCPErrorForLogging(result.reason),
-        );
-      }
+    } catch (error) {
+      if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
+      logger.warn(
+        `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
+        sanitizeMCPErrorForLogging(error),
+      );
     }
-  } catch (error) {
-    if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
-    logger.warn(
-      `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
-      sanitizeMCPErrorForLogging(error),
-    );
+  };
+  if (commitTokenDeletion) {
+    await commitTokenDeletion(async (session) => {
+      await clearFlows();
+      await deleteStoredTokens(session);
+    });
+  } else {
+    await clearFlows();
   }
-  if (commitTokenDeletion) await commitTokenDeletion(deleteStoredTokens);
 };
 
 /** Revokes MCP OAuth tokens at the provider when possible, then clears local state. */

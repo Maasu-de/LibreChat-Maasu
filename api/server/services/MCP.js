@@ -5,6 +5,7 @@ const {
   sendEvent,
   isGovernancePilotEnabled,
   getGovernanceMCPOAuthBinding,
+  isGovernanceMCPOAuthAuthorized,
   PENDING_STALE_MS,
   MCPOAuthHandler,
   isMCPDomainAllowed,
@@ -1030,9 +1031,21 @@ async function getServerConnectionStatus(
     ? 'disconnected'
     : connection?.connectionState || 'disconnected';
   let finalConnectionState = baseConnectionState;
+  const authorizationComplete =
+    isGovernancePilotEnabled() && oauthServers.has(serverName) && config.dbId
+      ? await isGovernanceMCPOAuthAuthorized(
+          userId,
+          config.dbId,
+          getGovernanceMCPOAuthBinding(config),
+        )
+      : undefined;
 
   // connection state overrides specific to OAuth servers
-  if (baseConnectionState === 'disconnected' && oauthServers.has(serverName)) {
+  if (
+    baseConnectionState === 'disconnected' &&
+    oauthServers.has(serverName) &&
+    !authorizationComplete
+  ) {
     // check if server is actively being reconnected
     const oauthReconnectionManager = getOAuthReconnectionManager();
     if (oauthReconnectionManager.isReconnecting(userId, serverName)) {
@@ -1057,6 +1070,7 @@ async function getServerConnectionStatus(
   return {
     requiresOAuth: oauthServers.has(serverName),
     connectionState: finalConnectionState,
+    ...(authorizationComplete != null ? { authorizationComplete } : {}),
   };
 }
 

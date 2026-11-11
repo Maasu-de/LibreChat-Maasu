@@ -23,6 +23,11 @@ import { MCPOAuthHandler, MCPTokenStorage } from '~/mcp/oauth';
 import { validateOAuthCsrf, validateOAuthSession } from '~/oauth/csrf';
 import { PENDING_STALE_MS } from '~/flow/manager';
 import { getBasePath } from '~/utils/path';
+import {
+  getGovernanceMCPOAuthGeneration,
+  claimGovernanceMCPOAuthGeneration,
+  advanceGovernanceMCPOAuthGeneration,
+} from './oauth';
 
 const credentialQueryParameter =
   /^(authorization|proxyauthorization|auth|key|apikey|xapikey|accesskey|subscriptionkey|token|accesstoken|refreshtoken|idtoken|authtoken|secret|clientsecret|password|passwd|pwd|credential|credentials|signature|sig|jwt|session|sessionid|sessiontoken|assertion|code|xamzcredential|xamzsignature|xamzsecuritytoken|xgoogcredential|xgoogsignature)$/i;
@@ -134,11 +139,21 @@ export async function storeGovernanceMCPOAuth(
   req: ServerRequest,
   connectionId: string,
   params: Parameters<typeof MCPTokenStorage.storeTokens>[0],
+  generation: number,
 ): Promise<void> {
   await mutateGovernanceMCP(
     req,
     'mcp.oauth.authorized',
     async (session) => {
+      if (session) {
+        await claimGovernanceMCPOAuthGeneration(
+          params.userId,
+          connectionId,
+          generation,
+          session,
+          params.binding,
+        );
+      }
       await MCPTokenStorage.storeTokens({
         ...params,
         ...(session && {
@@ -229,13 +244,23 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
       const userId = request.user.id;
       const connectionId = config.dbId;
       if (isGovernancePilotEnabled()) {
+        await getGovernanceMCPOAuthGeneration(userId, connectionId);
         await deps.revoke(
           userId,
           `${Constants.mcp_prefix}${serverName}`,
           request.config,
           async (operation) => {
-            await deps.getManager().disconnectUserConnection(userId, serverName);
-            await mutateGovernanceMCP(request, 'mcp.oauth.revoked', operation, connectionId);
+            await mutateGovernanceMCP(
+              request,
+              'mcp.oauth.revoked',
+              async (session) => {
+                if (!session) throw new Error('MCP OAuth revocation requires a transaction');
+                await advanceGovernanceMCPOAuthGeneration(userId, connectionId, session);
+                await deps.getManager().disconnectUserConnection(userId, serverName);
+                await operation(session);
+              },
+              connectionId,
+            );
             revocationCommitted = true;
           },
         );
