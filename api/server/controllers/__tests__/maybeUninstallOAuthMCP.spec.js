@@ -16,17 +16,21 @@ const mockLoggerError = jest.fn();
 const mockGetTenantId = jest.fn();
 const mockGetGovernanceMCPOAuthBinding = jest.fn();
 
-jest.mock('@librechat/data-schemas', () => ({
-  ...jest.requireActual('@librechat/data-schemas'),
-  logger: {
-    debug: jest.fn(),
-    info: mockLoggerInfo,
-    warn: mockLoggerWarn,
-    error: mockLoggerError,
-  },
-  getTenantId: (...args) => mockGetTenantId(...args),
-  webSearchKeys: [],
-}));
+jest.mock('@librechat/data-schemas', () => {
+  process.env.CREDS_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  process.env.CREDS_IV = '0123456789abcdef0123456789abcdef';
+  return {
+    ...jest.requireActual('@librechat/data-schemas'),
+    logger: {
+      debug: jest.fn(),
+      info: mockLoggerInfo,
+      warn: mockLoggerWarn,
+      error: mockLoggerError,
+    },
+    getTenantId: (...args) => mockGetTenantId(...args),
+    webSearchKeys: [],
+  };
+});
 
 jest.mock('@librechat/api', () => {
   return {

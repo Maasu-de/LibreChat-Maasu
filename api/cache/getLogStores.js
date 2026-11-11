@@ -7,6 +7,7 @@ const {
   sessionCache,
   standardCache,
   violationCache,
+  getCacheDiagnostics,
   registerShutdownTask,
 } = require('@librechat/api');
 
@@ -140,15 +141,10 @@ const auditCache = () => {
       return;
     }
 
-    console.log(`[Cache] ${store.opts.namespace} entries:`, {
-      count: store.opts.store.size,
-      ttl: store.opts.ttl,
-      keys: Array.from(store.opts.store.keys()),
-      entriesWithTimestamps: Array.from(store.opts.store.entries()).map(([key, value]) => ({
-        key,
-        value,
-      })),
-    });
+    console.log(
+      `[Cache] ${store.opts.namespace} entries:`,
+      getCacheDiagnostics(store.opts.namespace, store.opts.ttl, store.opts.store),
+    );
   });
 };
 
