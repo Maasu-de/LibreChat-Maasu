@@ -367,7 +367,7 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
     const hasCsrf = validateOAuthCsrf(req, res, flowId, OAUTH_CSRF_COOKIE_PATH);
     const hasSession = !hasCsrf && validateOAuthSession(req, parsedFlowId.userId);
     let hasActiveFlow = false;
-    if (!hasCsrf && !hasSession) {
+    if (!hasCsrf && !hasSession && !isGovernancePilotEnabled()) {
       const pendingFlow = await flowManager.getFlowState(flowId, 'mcp_oauth');
       const pendingAge = pendingFlow?.createdAt ? Date.now() - pendingFlow.createdAt : Infinity;
       hasActiveFlow = pendingFlow?.status === 'PENDING' && pendingAge < PENDING_STALE_MS;

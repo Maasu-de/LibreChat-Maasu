@@ -690,6 +690,98 @@ describe('MCP Routes', () => {
       },
     );
 
+    describe('callback browser binding', () => {
+      let flowId;
+      let flowManager;
+
+      beforeEach(() => {
+        const { MCPOAuthHandler } = require('@librechat/api');
+        const connection = {
+          type: 'sse',
+          url: 'https://mcp.test/server',
+          dbId: '507f1f77bcf86cd799439011',
+          requiresOAuth: true,
+        };
+        const binding = getGovernanceMCPOAuthBinding(connection);
+        flowId = MCPOAuthHandler.generateFlowId(actor.id, 'test-server', undefined, binding);
+        flowManager = {
+          getFlowState: jest.fn().mockResolvedValue({
+            status: 'PENDING',
+            createdAt: Date.now(),
+            metadata: { state: flowId, binding },
+          }),
+          deleteFlow: jest.fn().mockResolvedValue(true),
+          completeFlow: jest.fn().mockResolvedValue(true),
+          failFlow: jest.fn().mockResolvedValue(true),
+        };
+        require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+        require('~/models').findUser.mockResolvedValue(actor);
+        mockRegistryInstance.getServerConfig.mockResolvedValue(connection);
+        MCPOAuthHandler.getFlowState.mockResolvedValue({
+          userId: actor.id,
+          serverName: 'test-server',
+          metadata: {},
+          clientInfo: {},
+          binding,
+        });
+        MCPOAuthHandler.completeOAuthFlow.mockResolvedValue({
+          access_token: 'administrator-secret',
+          refresh_token: 'administrator-refresh-secret',
+        });
+      });
+
+      it.each(['missing cookies', 'another flow CSRF cookie', 'another administrator session'])(
+        'rejects a fresh pending callback with %s',
+        async (browserBinding) => {
+          const {
+            MCPOAuthHandler,
+            MCPTokenStorage,
+            storeGovernanceMCPOAuth,
+            queueGovernanceMCPAudit,
+          } = require('@librechat/api');
+          let pending = request(app).get('/api/mcp/test-server/oauth/callback');
+          if (browserBinding === 'another flow CSRF cookie') {
+            pending = pending.set('Cookie', [
+              `oauth_csrf=${generateTestCsrfToken('another-flow')}`,
+            ]);
+          } else if (browserBinding === 'another administrator session') {
+            currentUser = { ...actor, id: 'another-administrator' };
+            pending = pending.set('Cookie', [
+              `oauth_session=${generateTestCsrfToken(currentUser.id)}`,
+            ]);
+          }
+          const response = await pending.query({ code: 'authorization-code', state: flowId });
+
+          expect(response.status).toBe(302);
+          expect(response.headers.location).toContain('/oauth/error?error=csrf_validation_failed');
+          expect(MCPOAuthHandler.completeOAuthFlow).not.toHaveBeenCalled();
+          expect(MCPTokenStorage.storeTokens).not.toHaveBeenCalled();
+          expect(storeGovernanceMCPOAuth).not.toHaveBeenCalled();
+          expect(queueGovernanceMCPAudit).not.toHaveBeenCalled();
+          expect(flowManager.completeFlow).not.toHaveBeenCalled();
+          expect(flowManager.failFlow).not.toHaveBeenCalled();
+          expect(flowManager.deleteFlow).not.toHaveBeenCalled();
+        },
+      );
+
+      it('accepts the initiating administrator session without a per-flow CSRF cookie', async () => {
+        const { storeGovernanceMCPOAuth } = require('@librechat/api');
+        const response = await request(app)
+          .get('/api/mcp/test-server/oauth/callback')
+          .set('Cookie', [`oauth_session=${generateTestCsrfToken(actor.id)}`])
+          .query({ code: 'authorization-code', state: flowId });
+
+        expect(response.status).toBe(302);
+        expect(response.headers.location).toContain('/oauth/success');
+        expect(storeGovernanceMCPOAuth).toHaveBeenCalledWith(
+          { user: actor },
+          '507f1f77bcf86cd799439011',
+          expect.objectContaining({ userId: actor.id, serverName: 'test-server' }),
+          0,
+        );
+      });
+    });
+
     it.each(['endpoint', 'connection', 'unbound'])(
       'rejects a pending callback after its %s binding becomes stale',
       async (change) => {
