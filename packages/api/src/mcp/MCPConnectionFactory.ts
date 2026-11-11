@@ -26,6 +26,12 @@ import {
 } from './utils';
 import { isGovernancePilotEnabled } from '~/governance/mode';
 import { getGovernanceMCPOAuthBinding } from '~/governance/authorization';
+import {
+  GovernanceMCPOAuthStaleError,
+  getGovernanceMCPOAuthAuthorizedGeneration,
+  isGovernanceMCPOAuthAuthorized,
+  withGovernanceMCPOAuthGeneration,
+} from '~/governance/oauth';
 import { PENDING_STALE_MS, normalizeExpiresAt } from '~/flow/manager';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { withTimeout } from '~/utils/promise';
@@ -69,6 +75,7 @@ export class MCPConnectionFactory {
   protected readonly flowManager?: FlowStateManager<MCPOAuthTokens | null>;
   protected readonly tokenMethods?: TokenMethods;
   protected readonly oauthBinding?: string;
+  protected readonly oauthConnectionId?: string;
   protected signal?: AbortSignal;
   protected oauthStart?: t.OAuthStartHandler;
   protected oauthEnd?: () => Promise<void>;
@@ -326,6 +333,7 @@ export class MCPConnectionFactory {
         });
     this.serverName = basic.serverName;
     this.oauthBinding = getGovernanceMCPOAuthBinding(basic.serverConfig);
+    this.oauthConnectionId = (basic.serverConfig as t.ParsedServerConfig).dbId;
     this.useSSRFProtection = basic.useSSRFProtection === true;
     this.allowedDomains = basic.allowedDomains;
     this.allowedAddresses = basic.allowedAddresses;
@@ -576,13 +584,52 @@ export class MCPConnectionFactory {
     );
   }
 
-  private getTokenFlowId(): string {
-    return MCPOAuthHandler.generateTokenFlowId(
+  private getTokenFlowId(generation?: number): string {
+    const flowId = MCPOAuthHandler.generateTokenFlowId(
       this.userId!,
       this.serverName,
       this.tenantId,
       ...(this.oauthBinding ? [this.oauthBinding] : []),
     );
+    return generation === undefined ? flowId : `${flowId}:generation:${generation}`;
+  }
+
+  private async getOAuthGeneration(): Promise<number | undefined> {
+    if (!this.oauthBinding || !this.oauthConnectionId) return;
+    return this.runWithCapturedTenant(() =>
+      getGovernanceMCPOAuthAuthorizedGeneration(
+        this.userId!,
+        this.oauthConnectionId!,
+        this.oauthBinding!,
+      ),
+    );
+  }
+
+  private async assertOAuthGeneration(generation?: number): Promise<void> {
+    if (generation === undefined) return;
+    const authorized = await this.runWithCapturedTenant(() =>
+      isGovernanceMCPOAuthAuthorized(
+        this.userId!,
+        this.oauthConnectionId!,
+        this.oauthBinding,
+        generation,
+      ),
+    );
+    if (!authorized) throw new GovernanceMCPOAuthStaleError();
+  }
+
+  private tokenCommit(generation?: number) {
+    if (generation === undefined) return;
+    return (operation: Parameters<typeof withGovernanceMCPOAuthGeneration>[3]) =>
+      this.runWithCapturedTenant(() =>
+        withGovernanceMCPOAuthGeneration(
+          this.userId!,
+          this.oauthConnectionId!,
+          generation,
+          operation,
+          this.oauthBinding,
+        ),
+      );
   }
 
   /** Retrieves existing OAuth tokens from storage or returns null */
@@ -590,7 +637,8 @@ export class MCPConnectionFactory {
     if (!this.tokenMethods?.findToken) return null;
 
     try {
-      const flowId = this.getTokenFlowId();
+      const generation = await this.getOAuthGeneration();
+      const flowId = this.getTokenFlowId(generation);
       const tokens = await this.flowManager!.createFlowWithHandler(
         flowId,
         'mcp_get_tokens',
@@ -605,12 +653,14 @@ export class MCPConnectionFactory {
               updateToken: this.tokenMethods!.updateToken,
               deleteTokens: this.tokenMethods!.deleteTokens,
               refreshTokens: this.createRefreshTokensFunction(),
+              commitTokens: this.tokenCommit(generation),
             }),
           );
         },
         this.signal,
       );
 
+      await this.assertOAuthGeneration(generation);
       if (tokens) logger.info(`${this.logPrefix} Loaded OAuth tokens`);
       return tokens;
     } catch (error) {
@@ -685,18 +735,30 @@ export class MCPConnectionFactory {
     // and `serverName` (common with username-based IDs in multi-tenant setups)
     // can never join each other's refresh and have those tokens applied to the
     // wrong connection.
-    const lockKey = this.getTokenFlowId();
+    let generation: number | undefined;
+    try {
+      generation = await this.getOAuthGeneration();
+    } catch {
+      return null;
+    }
+    const lockKey = this.getTokenFlowId(generation);
     const inflight = MCPConnectionFactory.inflightSilentRefreshes.get(lockKey);
     if (inflight) {
       logger.debug(`${this.logPrefix} Joining in-flight silent refresh attempt`);
-      return inflight;
+      try {
+        const tokens = await inflight;
+        await this.assertOAuthGeneration(generation);
+        return tokens;
+      } catch {
+        return null;
+      }
     }
 
     const timeoutMs = this.getSilentRefreshTimeoutMs();
     const abortController = new AbortController();
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let abortGraceTimeoutId: ReturnType<typeof setTimeout> | null = null;
-    const refreshPromise = this.runSilentRefresh(abortController.signal);
+    const refreshPromise = this.runSilentRefresh(abortController.signal, generation);
     const promise = new Promise<MCPOAuthTokens | null>((resolve) => {
       timeoutId = setTimeout(() => {
         abortController.abort();
@@ -733,7 +795,13 @@ export class MCPConnectionFactory {
     }
     MCPConnectionFactory.inflightSilentRefreshes.set(lockKey, promise);
     void refreshPromise.then(releaseLock, releaseLock);
-    return await promise;
+    try {
+      const tokens = await promise;
+      await this.assertOAuthGeneration(generation);
+      return tokens;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -741,7 +809,10 @@ export class MCPConnectionFactory {
    * persists the new tokens. Called by `attemptSilentTokenRefresh` under the
    * `inflightSilentRefreshes` coalescing lock.
    */
-  private async runSilentRefresh(signal: AbortSignal): Promise<MCPOAuthTokens | null> {
+  private async runSilentRefresh(
+    signal: AbortSignal,
+    generation?: number,
+  ): Promise<MCPOAuthTokens | null> {
     try {
       const tokens = await this.runWithCapturedTenant(async () =>
         MCPTokenStorage.forceRefreshTokens({
@@ -754,14 +825,16 @@ export class MCPConnectionFactory {
           deleteTokens: this.tokenMethods!.deleteTokens,
           refreshTokens: this.createRefreshTokensFunction(),
           signal,
+          commitTokens: this.tokenCommit(generation),
         }),
       );
 
+      await this.assertOAuthGeneration(generation);
       if (tokens) {
         // Drop any previously cached `mcp_get_tokens` result so the next call
         // to `getOAuthTokens` reads the freshly persisted tokens from the
         // token store rather than the now-stale flow-cached value.
-        await this.invalidateGetTokensFlow(tokens);
+        await this.invalidateGetTokensFlow(tokens, generation);
       }
 
       if (tokens) {
@@ -790,11 +863,14 @@ export class MCPConnectionFactory {
    * entries are deleted; PENDING entries are completed with fresh tokens so
    * concurrent waiters do not fail or later publish server-rejected tokens.
    */
-  protected async invalidateGetTokensFlow(freshTokens?: MCPOAuthTokens): Promise<void> {
+  protected async invalidateGetTokensFlow(
+    freshTokens?: MCPOAuthTokens,
+    generation?: number,
+  ): Promise<void> {
     if (!this.flowManager || !this.userId) {
       return;
     }
-    const flowId = this.getTokenFlowId();
+    const flowId = this.getTokenFlowId(generation);
     try {
       const state = await this.flowManager.getFlowState(flowId, 'mcp_get_tokens');
       if (!state) {

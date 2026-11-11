@@ -1,7 +1,7 @@
 import http from 'node:http';
 import mongoose from 'mongoose';
 import { Keyv } from 'keyv';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -12,11 +12,13 @@ import type { ParsedServerConfig } from '~/mcp/types';
 import type { MCPOAuthTokens } from '~/mcp/oauth';
 import { trackSockets } from '~/mcp/__tests__/helpers/oauthTestServer';
 
-let mongo: MongoMemoryServer;
+let mongo: MongoMemoryReplSet;
 let schemas: typeof import('@librechat/data-schemas');
 let models: ReturnType<typeof schemas.createModels>;
 let methods: ReturnType<typeof schemas.createMethods>;
 let bindingFor: typeof import('../authorization').getGovernanceMCPOAuthBinding;
+let storeAuthorization: typeof import('../mcp').storeGovernanceMCPOAuth;
+let getGeneration: typeof import('../oauth').getGovernanceMCPOAuthGeneration;
 let Storage: typeof import('~/mcp/oauth').MCPTokenStorage;
 let OAuth: typeof import('~/mcp/oauth').MCPOAuthHandler;
 let Factory: typeof import('~/mcp/MCPConnectionFactory').MCPConnectionFactory;
@@ -78,6 +80,8 @@ beforeAll(async () => {
   process.env = {
     ...environment,
     GOVERNANCE_PILOT_ENABLED: 'true',
+    GOVERNANCE_MCP_AUDIT_URL: 'https://governance.example/internal/mcp-audit',
+    LIBRECHAT_SERVICE_CREDENTIAL: 'service',
     CREDS_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     CREDS_IV: '0123456789abcdef0123456789abcdef',
   };
@@ -85,13 +89,20 @@ beforeAll(async () => {
   models = schemas.createModels(mongoose);
   methods = schemas.createMethods(mongoose);
   bindingFor = (await import('../authorization')).getGovernanceMCPOAuthBinding;
+  storeAuthorization = (await import('../mcp')).storeGovernanceMCPOAuth;
+  getGeneration = (await import('../oauth')).getGovernanceMCPOAuthGeneration;
   ({ MCPTokenStorage: Storage, MCPOAuthHandler: OAuth } = await import('~/mcp/oauth'));
   Factory = (await import('~/mcp/MCPConnectionFactory')).MCPConnectionFactory;
   FlowManager = (await import('~/flow/manager')).FlowStateManager;
   Database = (await import('~/mcp/registry/db/ServerConfigsDB')).ServerConfigsDB;
   Registry = (await import('~/mcp/registry/MCPServersRegistry')).MCPServersRegistry;
-  mongo = await MongoMemoryServer.create({ binary: { version: '8.2.1' } });
+  mongo = await MongoMemoryReplSet.create({
+    binary: { version: '8.2.1' },
+    replSet: { count: 1 },
+  });
   await mongoose.connect(mongo.getUri());
+  await models.Token.createCollection();
+  await mongoose.connection.db!.createCollection('governance_group_audit_outbox');
   await methods.seedDefaultRoles();
 }, 60000);
 
@@ -101,10 +112,31 @@ beforeEach(async () => {
   await models.MCPServer.deleteMany({});
   await models.User.deleteMany({});
   [author, editor] = await models.User.create([
-    { email: 'author@test.example', provider: 'openid', role: 'GOVERNANCE_ADMIN' },
+    {
+      email: 'author@test.example',
+      provider: 'openid',
+      role: 'GOVERNANCE_ADMIN',
+      openidId: 'author',
+      openidIssuer: 'https://identity.example',
+    },
     { email: 'editor@test.example', provider: 'openid', role: 'GOVERNANCE_ADMIN' },
   ]);
 });
+
+async function authorize(serverName: string, config: ParsedServerConfig) {
+  await storeAuthorization(
+    { user: author } as Parameters<typeof storeAuthorization>[0],
+    config.dbId!,
+    {
+      userId: author.id,
+      serverName,
+      binding: bindingFor(config),
+      tokens: { access_token: accessToken, token_type: 'Bearer' },
+      createToken: methods.createToken,
+    },
+    await getGeneration(author.id, config.dbId!),
+  );
+}
 
 afterAll(async () => {
   await mongoose.disconnect();
@@ -148,13 +180,7 @@ it.each(['endpoint update', 'delete and recreate'])(
       );
       const binding = bindingFor(created.config);
       expect(binding).toBeDefined();
-      await Storage.storeTokens({
-        userId: author.id,
-        serverName: created.serverName,
-        binding,
-        tokens: { access_token: accessToken, token_type: 'Bearer' },
-        createToken: methods.createToken,
-      });
+      await authorize(created.serverName, created.config);
 
       const initial = await inspect(created.serverName, created.config, manager);
       expect(initial.tools?.map((tool) => tool.name)).toEqual(['echo']);
@@ -162,12 +188,12 @@ it.each(['endpoint update', 'delete and recreate'])(
         path: '/original',
         authorization: `Bearer ${accessToken}`,
       });
-      const tokenFlowId = OAuth.generateTokenFlowId(
+      const tokenFlowId = `${OAuth.generateTokenFlowId(
         author.id,
         created.serverName,
         undefined,
         binding,
-      );
+      )}:generation:${await getGeneration(author.id, created.config.dbId!)}`;
       expect(await manager.getFlowState(tokenFlowId, 'mcp_get_tokens')).toMatchObject({
         status: 'COMPLETED',
         result: { access_token: accessToken },
@@ -245,13 +271,7 @@ it('preserves authorization for an unchanged target after a cosmetic edit', asyn
       },
       author.id,
     );
-    await Storage.storeTokens({
-      userId: author.id,
-      serverName: created.serverName,
-      binding: bindingFor(created.config),
-      tokens: { access_token: accessToken, token_type: 'Bearer' },
-      createToken: methods.createToken,
-    });
+    await authorize(created.serverName, created.config);
     expect((await inspect(created.serverName, created.config, manager)).tools).toHaveLength(1);
     const updated: MCPOptions = {
       type: 'streamable-http',

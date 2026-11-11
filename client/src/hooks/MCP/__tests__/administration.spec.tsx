@@ -2,13 +2,15 @@ import React from 'react';
 import { Provider } from 'jotai';
 import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { QueryKeys } from 'librechat-data-provider';
+import { PermissionBits, QueryKeys } from 'librechat-data-provider';
+import type { MCPServersListResponse } from 'librechat-data-provider';
 import { useMCPSelect } from '~/hooks';
 import { useMCPServersQuery } from '~/data-provider';
 import { MCPAdministrationContext } from '~/components/SidePanel/MCPBuilder/administration';
 import { useMCPServerManager } from '../useMCPServerManager';
 
 let mockStartupConfig: { governancePilotEnabled: boolean } | undefined;
+let mockServers: MCPServersListResponse;
 const mockShowToast = jest.fn();
 const mockReinitialize = jest.fn();
 
@@ -22,7 +24,7 @@ jest.mock('~/hooks', () => ({
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: () => ({ data: mockStartupConfig }),
   useMCPServersQuery: jest.fn(() => ({
-    data: { remote: { dbId: 'id', type: 'sse', url: 'https://remote.example/mcp' } },
+    data: mockServers,
     isLoading: false,
   })),
 }));
@@ -48,6 +50,17 @@ function wrapper(administration: boolean, queryClient = new QueryClient()) {
     );
   };
 }
+
+beforeEach(() => {
+  mockServers = {
+    remote: {
+      serverName: 'remote',
+      dbId: 'id',
+      type: 'sse',
+      url: 'https://remote.example/mcp',
+    },
+  };
+});
 
 describe('governed MCP management isolation', () => {
   beforeEach(() => {
@@ -78,6 +91,61 @@ describe('governed MCP management isolation', () => {
     ]);
     expect(useMCPSelect).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
   });
+
+  it.each([true, false])(
+    'filters unsupported administration cards without changing ordinary MCP views: administration=%s',
+    (administration) => {
+      mockStartupConfig = { governancePilotEnabled: false };
+      mockServers = {
+        ...mockServers,
+        streamable: {
+          serverName: 'streamable',
+          dbId: 'streamable-id',
+          type: 'streamable-http',
+          url: 'https://streamable.example/mcp',
+        },
+        http: {
+          serverName: 'http',
+          dbId: 'http-id',
+          type: 'http',
+          url: 'https://http.example/mcp',
+        },
+        configuredRemote: {
+          serverName: 'configuredRemote',
+          type: 'sse',
+          url: 'https://configured.example/mcp',
+        },
+        configuredLocal: {
+          serverName: 'configuredLocal',
+          type: 'stdio',
+          command: 'configured-command',
+          args: [],
+        },
+        persistedLocal: {
+          serverName: 'persistedLocal',
+          dbId: 'local-id',
+          type: 'stdio',
+          command: 'local-command',
+          args: [],
+        },
+      };
+
+      const { result } = renderHook(() => useMCPServerManager(), {
+        wrapper: wrapper(administration),
+      });
+
+      expect(result.current.availableMCPServers.map((server) => server.serverName)).toEqual(
+        administration ? ['remote', 'streamable', 'http'] : Object.keys(mockServers),
+      );
+      expect(
+        result.current.availableMCPServers.map((server) => server.effectivePermissions),
+      ).toEqual(
+        administration
+          ? Array(3).fill(PermissionBits.VIEW | PermissionBits.EDIT | PermissionBits.DELETE)
+          : Array(6).fill(PermissionBits.VIEW),
+      );
+    },
+  );
 });
 
 describe('OAuth authorization completion polling', () => {

@@ -82,6 +82,12 @@ export function useMCPServerManager({
     if (loadedServers && mcpEnabled) {
       for (const [serverName, metadata] of Object.entries(loadedServers)) {
         const { dbId, consumeOnly, ...config } = metadata;
+        if (
+          administration &&
+          (!dbId || !['http', 'streamable-http', 'sse'].includes(config.type ?? ''))
+        ) {
+          continue;
+        }
 
         // Get effective permissions from the permissions map using _id
         // Fall back to 1 (VIEW) for YAML-based servers without _id

@@ -50,11 +50,30 @@ export async function isGovernanceMCPOAuthAuthorized(
   userId: string,
   connectionId: string,
   binding?: string,
+  generation?: number,
 ): Promise<boolean> {
   const authorization = await authorizations().findOne({
     _id: authorizationId(userId, connectionId),
   });
-  return authorization?.authorized === true && authorization.binding === binding;
+  return (
+    authorization?.authorized === true &&
+    authorization.binding === binding &&
+    (generation === undefined || authorization.generation === generation)
+  );
+}
+
+export async function getGovernanceMCPOAuthAuthorizedGeneration(
+  userId: string,
+  connectionId: string,
+  binding: string,
+): Promise<number> {
+  const authorization = await authorizations().findOne({
+    _id: authorizationId(userId, connectionId),
+    authorized: true,
+    binding,
+  });
+  if (!authorization) throw new GovernanceMCPOAuthStaleError();
+  return authorization.generation;
 }
 
 /** Serialize authorization commits and revocation across backend processes. */
@@ -90,24 +109,29 @@ export async function advanceGovernanceMCPOAuthGeneration(
   if (result.modifiedCount !== 1) throw new Error('MCP OAuth authorization storage unavailable');
 }
 
-/** Serialize credential-free flow completion with revocation; never perform remote work here. */
+/** Serialize token writes and flow completion with revocation; never perform remote work here. */
 export async function withGovernanceMCPOAuthGeneration(
   userId: string,
   connectionId: string,
   generation: number,
-  operation: () => Promise<void>,
+  operation: (session: ClientSession) => Promise<void>,
+  binding?: string,
 ): Promise<void> {
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(
       async () => {
         const result = await authorizations().updateOne(
-          { _id: authorizationId(userId, connectionId), generation },
+          {
+            _id: authorizationId(userId, connectionId),
+            generation,
+            ...(binding && { authorized: true, binding }),
+          },
           { $inc: { publications: 1 } },
           { session },
         );
         if (result.modifiedCount !== 1) throw new GovernanceMCPOAuthStaleError();
-        await operation();
+        await operation(session);
       },
       { writeConcern: { w: 'majority' } },
     );
