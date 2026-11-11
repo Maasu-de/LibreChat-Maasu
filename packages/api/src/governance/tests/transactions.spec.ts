@@ -152,6 +152,94 @@ it('commits create, update, and delete with matching success events and encrypte
   ]);
   expect(JSON.stringify(events)).not.toContain('confidential-service-key');
 });
+
+describe.each(['API key', 'OAuth client secret'] as const)('%s preservation', (credential) => {
+  function connectionConfig(secret?: string) {
+    return {
+      type: 'sse' as const,
+      url: config.url,
+      title: config.title,
+      ...(credential === 'API key'
+        ? {
+            apiKey: {
+              source: 'admin' as const,
+              authorization_type: 'bearer' as const,
+              ...(secret ? { key: secret } : {}),
+            },
+          }
+        : {
+            oauth: {
+              client_id: 'managed-client',
+              authorization_url: 'https://identity.example/authorize',
+              token_url: 'https://identity.example/token',
+              ...(secret ? { client_secret: secret } : {}),
+            },
+          }),
+    };
+  }
+
+  it.each([false, true])(
+    'retains a second administrator rotation with a cached configuration; rotation during inspection: %s',
+    async (duringInspection) => {
+      const firstAdministrator = actor;
+      const originalSecret = 'original-connection-secret';
+      const rotatedSecret = 'rotated-connection-secret';
+      const created = await request(app)
+        .post('/servers')
+        .send({ config: connectionConfig(originalSecret) });
+      expect(created.status).toBe(201);
+      const serverName = created.body.serverName as string;
+      await schemas.runAsSystem(() =>
+        mockRegistry.getServerConfig(serverName, firstAdministrator.id),
+      );
+      const secondAdministrator = await schemas.runAsSystem(() =>
+        models.User.create({
+          email: 'second-admin@example.test',
+          provider: 'openid',
+          role: 'GOVERNANCE_ADMIN',
+          openidIssuer: 'https://identity.example',
+          openidId: 'second-administrator-subject',
+        }),
+      );
+      const rotate = async () => {
+        actor = secondAdministrator;
+        try {
+          const response = await request(app)
+            .patch(`/servers/${serverName}`)
+            .send({ config: connectionConfig(rotatedSecret) });
+          expect(response.status).toBe(200);
+        } finally {
+          actor = firstAdministrator;
+        }
+      };
+      if (!duringInspection) await rotate();
+      const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+      let inspectedSecret: string | undefined;
+      jest.mocked(MCPServerInspector.inspect).mockImplementationOnce(async (_name, input) => {
+        inspectedSecret = input.apiKey?.key ?? input.oauth?.client_secret;
+        if (duringInspection) await rotate();
+        return { ...input };
+      });
+      const response = await request(app)
+        .patch(`/servers/${serverName}`)
+        .send({ config: { ...connectionConfig(), title: 'Updated connection title' } });
+      expect(response.status).toBe(200);
+      expect(response.body.title).toBe('Updated connection title');
+      expect(inspectedSecret).toBe(duringInspection ? originalSecret : rotatedSecret);
+      const saved = await schemas.runAsSystem(() =>
+        models.MCPServer.findOne({ serverName }).lean(),
+      );
+      const encryptedSecret = saved!.config.apiKey?.key ?? saved!.config.oauth?.client_secret;
+      expect(await schemas.decryptV2(encryptedSecret!)).toBe(rotatedSecret);
+      for (const secret of [originalSecret, rotatedSecret]) {
+        expect(JSON.stringify(saved)).not.toContain(secret);
+        expect(JSON.stringify(response.body)).not.toContain(secret);
+        expect(JSON.stringify(await outbox().find({}).toArray())).not.toContain(secret);
+      }
+    },
+  );
+});
+
 it('rolls back both server and owner ACL when create audit storage fails', async () => {
   failAudit();
   const response = await request(app).post('/servers').send({ config }).timeout(10000);

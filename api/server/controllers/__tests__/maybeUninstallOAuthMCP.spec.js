@@ -16,7 +16,13 @@ const mockLoggerError = jest.fn();
 const mockGetTenantId = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
-  logger: { info: mockLoggerInfo, warn: mockLoggerWarn, error: mockLoggerError },
+  ...jest.requireActual('@librechat/data-schemas'),
+  logger: {
+    debug: jest.fn(),
+    info: mockLoggerInfo,
+    warn: mockLoggerWarn,
+    error: mockLoggerError,
+  },
   getTenantId: (...args) => mockGetTenantId(...args),
   webSearchKeys: [],
 }));
@@ -48,14 +54,6 @@ jest.mock('@librechat/api', () => {
     getNewS3URL: jest.fn(),
   };
 });
-
-jest.mock('librechat-data-provider', () => ({
-  Tools: {},
-  CacheKeys: { FLOWS: 'flows' },
-  Constants: { mcp_delimiter: '::', mcp_prefix: 'mcp_' },
-  FileSources: {},
-  ResourceType: {},
-}));
 
 jest.mock('~/config', () => ({
   getMCPManager: jest.fn(),
@@ -226,6 +224,70 @@ describe('maybeUninstallOAuthMCP', () => {
       }
     },
   );
+
+  test('does not commit governed revocation when the flow cache cannot delete authorization', async () => {
+    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    const { Keyv } = require('keyv');
+    const { FlowStateManager } = jest.requireActual('@librechat/api');
+    const store = new Keyv();
+    const flowManager = new FlowStateManager(store, { ttl: 180000, ci: true });
+    const tokens = { access_token: 'cached-access-token' };
+    const flowId = `${userId}:${serverName}`;
+    await flowManager.initFlow(flowId, 'mcp_get_tokens', {});
+    await flowManager.completeFlow(flowId, 'mcp_get_tokens', tokens);
+    const deletion = jest.spyOn(store, 'delete').mockRejectedValue(new Error('cache unavailable'));
+    setupOAuthServerFound();
+    mockGetTokens.mockResolvedValue(tokens);
+    mockDeleteUserTokens.mockResolvedValue(undefined);
+    mockDeleteFlow.mockImplementation((...args) => flowManager.deleteFlow(...args));
+    mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
+    const commit = jest.fn(async (deleteStoredTokens) => deleteStoredTokens());
+
+    try {
+      await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig, commit)).rejects.toThrow(
+        'Failed to clear MCP OAuth authorization',
+      );
+      expect(deletion).toHaveBeenCalled();
+      expect(mockDeleteFlow).toHaveBeenCalledWith(flowId, 'mcp_get_tokens');
+      expect(commit).not.toHaveBeenCalled();
+      expect(mockDeleteUserTokens).not.toHaveBeenCalled();
+      expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
+      expect(await flowManager.getFlowState(flowId, 'mcp_get_tokens')).toMatchObject({
+        status: 'COMPLETED',
+        result: tokens,
+      });
+    } finally {
+      deletion.mockRestore();
+      await store.clear();
+      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      mockDeleteFlow.mockResolvedValue(undefined);
+      mockRevokeOAuthToken.mockResolvedValue(undefined);
+    }
+  });
+
+  test('preserves non-governed cleanup when flow deletion returns false', async () => {
+    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+    setupOAuthServerFound();
+    mockGetTokens.mockResolvedValue({ access_token: 'cached-access-token' });
+    mockDeleteUserTokens.mockResolvedValue(undefined);
+    mockDeleteFlow.mockResolvedValue(false);
+    mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
+
+    try {
+      await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toBeUndefined();
+      expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(1);
+      expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
+      expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      mockDeleteFlow.mockResolvedValue(undefined);
+      mockRevokeOAuthToken.mockResolvedValue(undefined);
+    }
+  });
 
   test('is a no-op when pluginKey is not an MCP key', async () => {
     await maybeUninstallOAuthMCP(userId, 'plugin_google_calendar', appConfig);

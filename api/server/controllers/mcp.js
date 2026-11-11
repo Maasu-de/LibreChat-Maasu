@@ -10,7 +10,6 @@ const {
   checkAccess,
   isGovernancePilotEnabled,
   isGovernanceRemoteMCP,
-  preserveGovernanceMCPSecrets,
   rejectGovernanceMCPUpdate,
   createGovernanceMCPMutation,
   recordGovernanceMCPFailure,
@@ -505,7 +504,7 @@ const updateMCPServerController = async (req, res) => {
     const mutation = createGovernanceMCPMutation(req, 'mcp.updated');
     const parsedConfig = await getMCPServersRegistry().updateServer(
       serverName,
-      preserveGovernanceMCPSecrets(validation.data, existingConfig),
+      validation.data,
       'DB',
       userId,
       ...(mutation ? [mutation] : []),

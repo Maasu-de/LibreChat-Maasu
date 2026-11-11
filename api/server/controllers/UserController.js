@@ -457,8 +457,10 @@ const clearStoredMCPOAuthState = async (userId, serverName, commitTokenDeletion)
       flowDeletes.map(([flowId, type]) => flowManager.deleteFlow(flowId, type)),
     );
     for (const result of results) {
+      if (isGovernancePilotEnabled() && (result.status === 'rejected' || result.value === false)) {
+        throw new Error('Failed to clear MCP OAuth authorization');
+      }
       if (result.status === 'rejected') {
-        if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
         logger.warn(
           `[clearStoredMCPOAuthState] Failed to clear MCP OAuth flow state for ${serverName}:`,
           sanitizeMCPErrorForLogging(result.reason),

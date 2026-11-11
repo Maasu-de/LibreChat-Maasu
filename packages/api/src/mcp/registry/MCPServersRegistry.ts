@@ -11,6 +11,7 @@ import {
   CONFIG_CACHE_NAMESPACE,
 } from './cache/ServerConfigsCacheFactory';
 import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/errors';
+import { preserveGovernanceMCPSecrets } from '~/governance/mcp';
 import { sanitizeMCPErrorForLogging } from '~/mcp/utils';
 import { MCPServerInspector } from './MCPServerInspector';
 import { ServerConfigsDB } from './db/ServerConfigsDB';
@@ -511,9 +512,11 @@ export class MCPServersRegistry {
     const configRepo = this.getConfigRepository(storageLocation);
     const source = (storageLocation === 'CACHE' ? 'yaml' : 'user') as t.MCPServerSource;
 
-    // Merge existing admin API key if not provided in update (needed for inspection)
     let configForInspection = { ...config };
-    if (config.apiKey?.source === 'admin' && !config.apiKey?.key) {
+    if (mutation) {
+      const existingConfig = await configRepo.get(serverName, userId);
+      configForInspection = preserveGovernanceMCPSecrets(configForInspection, existingConfig);
+    } else if (config.apiKey?.source === 'admin' && !config.apiKey?.key) {
       const existingConfig = await configRepo.get(serverName, userId);
       if (existingConfig?.apiKey?.key) {
         configForInspection = {
@@ -545,6 +548,20 @@ export class MCPServersRegistry {
         throw error;
       }
       throw new MCPInspectionFailedError(serverName, error as Error);
+    }
+    /** Retain omitted secrets from the transaction's current record, including concurrent rotations. */
+    if (
+      mutation &&
+      config.apiKey?.source === 'admin' &&
+      !config.apiKey.key &&
+      parsedConfig.apiKey
+    ) {
+      const { key: _inspectionKey, ...apiKey } = parsedConfig.apiKey;
+      parsedConfig = { ...parsedConfig, apiKey };
+    }
+    if (mutation && config.oauth && !config.oauth.client_secret && parsedConfig.oauth) {
+      const { client_secret: _inspectionSecret, ...oauth } = parsedConfig.oauth;
+      parsedConfig = { ...parsedConfig, oauth };
     }
     const persist = async (session?: ClientSession) => {
       await configRepo.update(serverName, parsedConfig, userId, session);
