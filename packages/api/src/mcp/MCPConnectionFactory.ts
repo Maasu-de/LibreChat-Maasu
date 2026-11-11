@@ -25,6 +25,7 @@ import {
   isOAuthServer,
 } from './utils';
 import { isGovernancePilotEnabled } from '~/governance/mode';
+import { getGovernanceMCPOAuthBinding } from '~/governance/authorization';
 import { PENDING_STALE_MS, normalizeExpiresAt } from '~/flow/manager';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { withTimeout } from '~/utils/promise';
@@ -67,6 +68,7 @@ export class MCPConnectionFactory {
   protected readonly user?: t.OAuthConnectionOptions['user'];
   protected readonly flowManager?: FlowStateManager<MCPOAuthTokens | null>;
   protected readonly tokenMethods?: TokenMethods;
+  protected readonly oauthBinding?: string;
   protected signal?: AbortSignal;
   protected oauthStart?: t.OAuthStartHandler;
   protected oauthEnd?: () => Promise<void>;
@@ -323,6 +325,7 @@ export class MCPConnectionFactory {
           customUserVars: options?.customUserVars,
         });
     this.serverName = basic.serverName;
+    this.oauthBinding = getGovernanceMCPOAuthBinding(basic.serverConfig);
     this.useSSRFProtection = basic.useSSRFProtection === true;
     this.allowedDomains = basic.allowedDomains;
     this.allowedAddresses = basic.allowedAddresses;
@@ -565,11 +568,21 @@ export class MCPConnectionFactory {
   }
 
   private getBaseFlowId(): string {
-    return MCPOAuthHandler.generateFlowId(this.userId!, this.serverName, this.tenantId);
+    return MCPOAuthHandler.generateFlowId(
+      this.userId!,
+      this.serverName,
+      this.tenantId,
+      ...(this.oauthBinding ? [this.oauthBinding] : []),
+    );
   }
 
   private getTokenFlowId(): string {
-    return MCPOAuthHandler.generateTokenFlowId(this.userId!, this.serverName, this.tenantId);
+    return MCPOAuthHandler.generateTokenFlowId(
+      this.userId!,
+      this.serverName,
+      this.tenantId,
+      ...(this.oauthBinding ? [this.oauthBinding] : []),
+    );
   }
 
   /** Retrieves existing OAuth tokens from storage or returns null */
@@ -586,6 +599,7 @@ export class MCPConnectionFactory {
             MCPTokenStorage.getTokens({
               userId: this.userId!,
               serverName: this.serverName,
+              ...(this.oauthBinding && { binding: this.oauthBinding }),
               findToken: this.tokenMethods!.findToken!,
               createToken: this.tokenMethods!.createToken,
               updateToken: this.tokenMethods!.updateToken,
@@ -671,7 +685,7 @@ export class MCPConnectionFactory {
     // and `serverName` (common with username-based IDs in multi-tenant setups)
     // can never join each other's refresh and have those tokens applied to the
     // wrong connection.
-    const lockKey = `${this.tenantId ?? ''}:${this.userId ?? ''}:${this.serverName}`;
+    const lockKey = this.getTokenFlowId();
     const inflight = MCPConnectionFactory.inflightSilentRefreshes.get(lockKey);
     if (inflight) {
       logger.debug(`${this.logPrefix} Joining in-flight silent refresh attempt`);
@@ -733,6 +747,7 @@ export class MCPConnectionFactory {
         MCPTokenStorage.forceRefreshTokens({
           userId: this.userId!,
           serverName: this.serverName,
+          ...(this.oauthBinding && { binding: this.oauthBinding }),
           findToken: this.tokenMethods!.findToken!,
           createToken: this.tokenMethods!.createToken,
           updateToken: this.tokenMethods!.updateToken,
@@ -962,7 +977,10 @@ export class MCPConnectionFactory {
           const flowId = this.getBaseFlowId();
           const existingFlow = await this.flowManager!.getFlowState(flowId, 'mcp_oauth');
 
-          if (existingFlow?.status === 'PENDING') {
+          if (
+            existingFlow?.status === 'PENDING' &&
+            existingFlow.metadata.binding === this.oauthBinding
+          ) {
             const pendingAge = existingFlow.createdAt
               ? Date.now() - existingFlow.createdAt
               : Infinity;
@@ -1013,6 +1031,7 @@ export class MCPConnectionFactory {
               this.tokenMethods?.deleteTokens ? this.tokenMethods.findToken : undefined,
               this.allowedAddresses,
               this.tenantId,
+              ...(this.oauthBinding ? [this.oauthBinding] : []),
             ),
           );
 
@@ -1181,6 +1200,7 @@ export class MCPConnectionFactory {
       MCPTokenStorage.deleteClientRegistration({
         userId: this.userId!,
         serverName: this.serverName,
+        ...(this.oauthBinding && { binding: this.oauthBinding }),
         deleteTokens: this.tokenMethods!.deleteTokens,
       }),
     ).catch((err) => {
@@ -1285,7 +1305,7 @@ export class MCPConnectionFactory {
       if (existingFlow) {
         const flowMeta = existingFlow.metadata as MCPOAuthFlowMetadata | undefined;
 
-        if (existingFlow.status === 'PENDING') {
+        if (existingFlow.status === 'PENDING' && flowMeta?.binding === this.oauthBinding) {
           const pendingAge = existingFlow.createdAt
             ? Date.now() - existingFlow.createdAt
             : Infinity;
@@ -1329,7 +1349,7 @@ export class MCPConnectionFactory {
           );
         }
 
-        if (existingFlow.status === 'COMPLETED') {
+        if (existingFlow.status === 'COMPLETED' && flowMeta?.binding === this.oauthBinding) {
           const completedAge = existingFlow.completedAt
             ? Date.now() - existingFlow.completedAt
             : Infinity;
@@ -1384,6 +1404,7 @@ export class MCPConnectionFactory {
           this.tokenMethods?.deleteTokens ? this.tokenMethods.findToken : undefined,
           this.allowedAddresses,
           this.tenantId,
+          ...(this.oauthBinding ? [this.oauthBinding] : []),
         ),
       );
 

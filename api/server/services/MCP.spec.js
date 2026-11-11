@@ -39,7 +39,7 @@ jest.mock('@librechat/api', () => {
 });
 
 const { logger } = require('@librechat/data-schemas');
-const { MCPOAuthHandler } = require('@librechat/api');
+const { MCPOAuthHandler, getGovernanceMCPOAuthBinding } = require('@librechat/api');
 const { CacheKeys, Constants, Permissions, PermissionTypes } = require('librechat-data-provider');
 const D = Constants.mcp_delimiter;
 const {
@@ -422,6 +422,61 @@ describe('tests for the new helper functions used by the MCP connection status e
     const mockUserId = 'user-123';
     const mockServerName = 'test-server';
     const mockConfig = { updatedAt: Date.now() };
+
+    it.each(['PENDING', 'FAILED'])(
+      "finds a governed connection's bound %s OAuth flow and ignores it after the target changes",
+      async (status) => {
+        const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        MCPOAuthHandler.generateFlowId.mockRestore();
+        jest.spyOn(MCPOAuthHandler, 'generateFlowId');
+        const config = {
+          ...mockConfig,
+          type: 'sse',
+          url: 'https://mcp.example/server',
+          dbId: '507f1f77bcf86cd799439011',
+        };
+        const binding = getGovernanceMCPOAuthBinding(config);
+        const flowId = MCPOAuthHandler.generateFlowId(
+          mockUserId,
+          mockServerName,
+          undefined,
+          binding,
+        );
+        const flowManager = {
+          getFlowState: jest.fn(async (id) =>
+            id === flowId ? { status, createdAt: Date.now() } : null,
+          ),
+        };
+        mockGetFlowStateManager.mockReturnValue(flowManager);
+        mockGetOAuthReconnectionManager.mockReturnValue({ isReconnecting: () => false });
+        try {
+          const current = await getServerConnectionStatus(
+            mockUserId,
+            mockServerName,
+            config,
+            new Map(),
+            new Map(),
+            new Set([mockServerName]),
+          );
+          expect(current.connectionState).toBe(status === 'PENDING' ? 'connecting' : 'error');
+          expect(flowManager.getFlowState).toHaveBeenCalledWith(flowId, 'mcp_oauth');
+
+          const changed = await getServerConnectionStatus(
+            mockUserId,
+            mockServerName,
+            { ...config, url: 'https://replacement.example/server' },
+            new Map(),
+            new Map(),
+            new Set([mockServerName]),
+          );
+          expect(changed.connectionState).toBe('disconnected');
+        } finally {
+          if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+          else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        }
+      },
+    );
 
     it('should return app connection state when available', async () => {
       const appConnections = new Map([

@@ -4,6 +4,7 @@ const { Providers, Constants: AgentConstants } = require('@librechat/agents');
 const {
   sendEvent,
   isGovernancePilotEnabled,
+  getGovernanceMCPOAuthBinding,
   PENDING_STALE_MS,
   MCPOAuthHandler,
   isMCPDomainAllowed,
@@ -97,7 +98,10 @@ function evictStale(map, ttl) {
 const unavailableMsg =
   "This tool's MCP server is temporarily unavailable. Please try again shortly.";
 
-function getOAuthFlowId(userId, serverName, tenantId = getTenantId()) {
+function getOAuthFlowId(userId, serverName, tenantId = getTenantId(), binding) {
+  if (binding) {
+    return MCPOAuthHandler.generateFlowId(userId, serverName, tenantId, binding);
+  }
   if (!tenantId) {
     return MCPOAuthHandler.generateFlowId(userId, serverName);
   }
@@ -942,12 +946,13 @@ async function getMCPSetupData(userId, options = {}) {
  * @param {string} userId - The user ID
  * @param {string} serverName - The server name
  * @param {string} [tenantId] - The tenant ID for the current request.
+ * @param {string} [binding] - The current governed connection's authorization binding.
  * @returns {Object} Object containing hasActiveFlow and hasFailedFlow flags
  */
-async function checkOAuthFlowStatus(userId, serverName, tenantId = getTenantId()) {
+async function checkOAuthFlowStatus(userId, serverName, tenantId = getTenantId(), binding) {
   const flowsCache = getLogStores(CacheKeys.FLOWS);
   const flowManager = getFlowStateManager(flowsCache);
-  const flowId = getOAuthFlowId(userId, serverName, tenantId);
+  const flowId = getOAuthFlowId(userId, serverName, tenantId, binding);
 
   try {
     const flowState = await flowManager.getFlowState(flowId, 'mcp_oauth');
@@ -1033,7 +1038,13 @@ async function getServerConnectionStatus(
     if (oauthReconnectionManager.isReconnecting(userId, serverName)) {
       finalConnectionState = 'connecting';
     } else {
-      const { hasActiveFlow, hasFailedFlow } = await checkOAuthFlowStatus(userId, serverName);
+      const binding = getGovernanceMCPOAuthBinding(config);
+      const { hasActiveFlow, hasFailedFlow } = await checkOAuthFlowStatus(
+        userId,
+        serverName,
+        getTenantId(),
+        binding,
+      );
 
       if (hasFailedFlow) {
         finalConnectionState = 'error';

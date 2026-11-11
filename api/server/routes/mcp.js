@@ -10,6 +10,7 @@ const {
 const {
   getBasePath,
   isGovernancePilotEnabled,
+  getGovernanceMCPOAuthBinding,
   requireGovernanceMCPAdministrator,
   requireGovernanceMCPAdministration,
   isGovernanceMCPAuditConfigured,
@@ -74,8 +75,20 @@ const failGovernanceMCPOAuth = createGovernanceMCPOAuthFailureHandler({
   getServerConfig: (...args) => getMCPServersRegistry().getServerConfig(...args),
 });
 
-const getOAuthFlowId = (userId, serverName) =>
-  MCPOAuthHandler.generateFlowId(userId, serverName, getTenantId());
+const getOAuthFlowId = async (userId, serverName) => {
+  let binding;
+  if (isGovernancePilotEnabled()) {
+    const config = await getMCPServersRegistry().getServerConfig(serverName, userId);
+    binding = config ? getGovernanceMCPOAuthBinding(config) : undefined;
+    if (!binding) throw new Error('MCP connection not found');
+  }
+  return MCPOAuthHandler.generateFlowId(
+    userId,
+    serverName,
+    getTenantId(),
+    ...(binding ? [binding] : []),
+  );
+};
 
 const canAccessOAuthFlow = (flowId, userId) => {
   const parsed = MCPOAuthHandler.parseFlowId(flowId);
@@ -132,7 +145,7 @@ router.get('/:serverName/oauth/initiate', requireJwtAuth, setOAuthSession, async
       return res.status(403).json({ error: 'User mismatch' });
     }
 
-    const expectedFlowId = getOAuthFlowId(user.id, serverName);
+    const expectedFlowId = await getOAuthFlowId(user.id, serverName);
     if (typeof flowId !== 'string' || flowId !== expectedFlowId) {
       logger.error('[MCP OAuth] Invalid flow ID for initiate request', {
         serverName,
@@ -184,6 +197,15 @@ router.get('/:serverName/oauth/initiate', requireJwtAuth, setOAuthSession, async
       return res.status(400).json({ error: 'Invalid flow state' });
     }
 
+    let binding;
+    if (isGovernancePilotEnabled()) {
+      const serverConfig = await getMCPServersRegistry().getServerConfig(serverName, user.id);
+      binding = serverConfig ? getGovernanceMCPOAuthBinding(serverConfig) : undefined;
+      if (!binding || flowState.metadata?.binding !== binding) {
+        return res.status(400).json({ error: 'MCP connection authorization is no longer current' });
+      }
+    }
+
     if (typeof storedAuthorizationUrl === 'string' && storedAuthorizationUrl.length > 0) {
       logger.debug('[MCP OAuth] Reusing stored authorization URL', {
         serverName,
@@ -220,6 +242,7 @@ router.get('/:serverName/oauth/initiate', requireJwtAuth, setOAuthSession, async
       undefined,
       allowedAddresses,
       getTenantId(),
+      ...(binding ? [binding] : []),
     );
 
     logger.debug(
@@ -427,6 +450,9 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
           flowState.userId === 'system' ||
           flowState.serverName !== serverName ||
           !administrationConfig?.dbId ||
+          !flowState.binding ||
+          parsedFlowId.binding !== flowState.binding ||
+          getGovernanceMCPOAuthBinding(administrationConfig) !== flowState.binding ||
           !isGovernanceMCPAuditConfigured({ user: administrator })
         ) {
           throw new Error('OIDC administrator entitlement required');
@@ -459,6 +485,7 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
               flowState.metadata,
               flowState.resourceMetadata,
             ),
+            ...(administrator ? { binding: flowState.binding } : {}),
           };
           if (administrator) {
             await storeGovernanceMCPOAuth(
@@ -497,6 +524,7 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
               flowState.userId,
               serverName,
               flowState.tenantId,
+              ...(administrator ? [flowState.binding] : []),
             );
             await clearGetTokensFlow({
               flowManager,
@@ -684,7 +712,7 @@ router.post('/:serverName/oauth/bind', requireJwtAuth, setOAuthSession, async (r
       return res.status(401).json({ error: 'User not authenticated' });
     }
 
-    const flowId = getOAuthFlowId(user.id, serverName);
+    const flowId = await getOAuthFlowId(user.id, serverName);
     setOAuthCsrfCookie(res, flowId, OAUTH_CSRF_COOKIE_PATH);
 
     res.json({ success: true });
@@ -757,7 +785,7 @@ router.post('/oauth/cancel/:serverName', requireJwtAuth, async (req, res) => {
 
     const flowsCache = getLogStores(CacheKeys.FLOWS);
     const flowManager = getFlowStateManager(flowsCache);
-    const flowId = getOAuthFlowId(user.id, serverName);
+    const flowId = await getOAuthFlowId(user.id, serverName);
     const flowState = await flowManager.getFlowState(flowId, 'mcp_oauth');
 
     if (!flowState) {
@@ -858,7 +886,7 @@ router.post(
       }
 
       if (oauthRequired) {
-        const flowId = getOAuthFlowId(user.id, serverName);
+        const flowId = await getOAuthFlowId(user.id, serverName);
         setOAuthCsrfCookie(res, flowId, OAUTH_CSRF_COOKIE_PATH);
       }
 

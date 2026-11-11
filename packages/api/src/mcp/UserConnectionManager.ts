@@ -17,6 +17,7 @@ import { MCPConnectionFactory } from '~/mcp/MCPConnectionFactory';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { isMCPDomainAllowed } from '~/auth/domain';
 import { PENDING_STALE_MS } from '~/flow/manager';
+import { getGovernanceMCPOAuthBinding } from '~/governance/authorization';
 import { MCPConnection } from './connection';
 import { processMCPEnv } from '~/utils/env';
 import { mcpConfig } from './mcpConfig';
@@ -154,13 +155,16 @@ export abstract class UserConnectionManager {
     const forceNewConnection = forceNew || ephemeralConnection;
     const clearCooldown = forceNew === true;
 
-    const lockKey = `${userId}:${serverName}`;
+    const binding = getGovernanceMCPOAuthBinding(config);
+    const lockKey = binding
+      ? MCPOAuthHandler.generateFlowId(userId, serverName, getTenantId(), binding)
+      : `${userId}:${serverName}`;
 
     if (!forceNewConnection) {
       const pending = this.pendingConnections.get(lockKey);
       if (pending) {
         logger.debug(`[MCP][User: ${userId}][${serverName}] Joining in-flight connection attempt`);
-        await this.addPendingOAuthStart(pending.oauth, opts, userId);
+        await this.addPendingOAuthStart(pending.oauth, { ...opts, serverConfig: config }, userId);
         return pending.promise;
       }
     }
@@ -306,20 +310,30 @@ export abstract class UserConnectionManager {
   }
 
   private async getFlowPendingOAuthStart(
-    { flowManager, serverName }: Pick<t.UserMCPConnectionOptions, 'flowManager' | 'serverName'>,
+    {
+      flowManager,
+      serverName,
+      serverConfig,
+    }: Pick<t.UserMCPConnectionOptions, 'flowManager' | 'serverName' | 'serverConfig'>,
     userId: string,
   ): Promise<PendingOAuthStart | undefined> {
     if (!flowManager) {
       return undefined;
     }
 
-    const flowId = MCPOAuthHandler.generateFlowId(userId, serverName, getTenantId());
+    const binding = getGovernanceMCPOAuthBinding(serverConfig);
+    const flowId = MCPOAuthHandler.generateFlowId(
+      userId,
+      serverName,
+      getTenantId(),
+      ...(binding ? [binding] : []),
+    );
     const existingFlow = await flowManager.getFlowState(flowId, 'mcp_oauth');
     return this.getPendingOAuthStart(existingFlow);
   }
 
   private async reissuePendingOAuthStart(
-    { flowManager, oauthStart, serverName }: t.UserMCPConnectionOptions,
+    { flowManager, oauthStart, serverName, serverConfig }: t.UserMCPConnectionOptions,
     userId: string,
     pendingOAuth?: PendingOAuthState,
   ): Promise<void> {
@@ -329,7 +343,7 @@ export abstract class UserConnectionManager {
 
     try {
       const pendingOAuthStart = await this.getFlowPendingOAuthStart(
-        { flowManager, serverName },
+        { flowManager, serverName, serverConfig },
         userId,
       );
       if (!pendingOAuthStart) {

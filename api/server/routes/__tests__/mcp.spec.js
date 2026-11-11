@@ -3,7 +3,7 @@ const express = require('express');
 const request = require('supertest');
 const mongoose = require('mongoose');
 const cookieParser = require('cookie-parser');
-const { getBasePath, PENDING_STALE_MS } = require('@librechat/api');
+const { getBasePath, PENDING_STALE_MS, getGovernanceMCPOAuthBinding } = require('@librechat/api');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
 function generateTestCsrfToken(flowId) {
@@ -207,16 +207,22 @@ describe('MCP Routes', () => {
     const { MCPOAuthHandler } = require('@librechat/api');
     const { getTenantId } = require('@librechat/data-schemas');
     getTenantId.mockReturnValue(undefined);
-    MCPOAuthHandler.generateFlowId.mockImplementation((userId, serverName, tenantId) => {
+    MCPOAuthHandler.generateFlowId.mockImplementation((userId, serverName, tenantId, binding) => {
       const flowId = `${userId}:${serverName}`;
-      return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+      const tenantFlowId = tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+      return binding ? `bound:${binding}:${tenantFlowId}` : tenantFlowId;
     });
-    MCPOAuthHandler.generateTokenFlowId.mockImplementation((userId, serverName, tenantId) => {
-      const flowId = `${userId}:${serverName}`;
-      return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
-    });
+    MCPOAuthHandler.generateTokenFlowId.mockImplementation(
+      (userId, serverName, tenantId, binding) => {
+        const flowId = `${userId}:${serverName}`;
+        const tenantFlowId = tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        return binding ? `bound:${binding}:${tenantFlowId}` : tenantFlowId;
+      },
+    );
     MCPOAuthHandler.parseFlowId.mockImplementation((flowId) => {
-      const parts = flowId.split(':');
+      const bound = flowId.startsWith('bound:');
+      const binding = bound ? flowId.split(':')[1] : undefined;
+      const parts = (bound ? flowId.split(':').slice(2).join(':') : flowId).split(':');
       if (parts[0] === 'tenant') {
         if (parts.length < 4 || !parts[1] || !parts[2]) {
           return null;
@@ -228,6 +234,7 @@ describe('MCP Routes', () => {
           return null;
         }
         return {
+          ...(binding ? { binding } : {}),
           tenantId,
           userId: parts[2],
           serverName: parts.slice(3).join(':'),
@@ -237,6 +244,7 @@ describe('MCP Routes', () => {
         return null;
       }
       return {
+        ...(binding ? { binding } : {}),
         userId: parts[0],
         serverName: parts.slice(1).join(':'),
       };
@@ -421,7 +429,6 @@ describe('MCP Routes', () => {
           storeGovernanceMCPOAuth,
         } = require('@librechat/api');
         const userId = role === 'system' ? 'system' : actor.id;
-        const flowId = `${userId}:test-server`;
         const flowManager = {
           getFlowState: jest.fn().mockResolvedValue({ status: 'PENDING', createdAt: Date.now() }),
           deleteFlow: jest.fn().mockResolvedValue(true),
@@ -429,17 +436,21 @@ describe('MCP Routes', () => {
         };
         require('~/config').getFlowStateManager.mockReturnValue(flowManager);
         require('~/models').findUser.mockResolvedValue({ ...actor, role });
-        mockRegistryInstance.getServerConfig.mockResolvedValue({
+        const connection = {
           type: 'sse',
           url: 'https://mcp.test/server',
           dbId: '507f1f77bcf86cd799439011',
           requiresOAuth: true,
-        });
+        };
+        const binding = getGovernanceMCPOAuthBinding(connection);
+        const flowId = MCPOAuthHandler.generateFlowId(userId, 'test-server', undefined, binding);
+        mockRegistryInstance.getServerConfig.mockResolvedValue(connection);
         MCPOAuthHandler.getFlowState.mockResolvedValue({
           userId,
           serverName: 'test-server',
           metadata: {},
           clientInfo: {},
+          binding,
         });
         MCPOAuthHandler.completeOAuthFlow.mockResolvedValue({
           access_token: 'administrator-secret',
@@ -465,7 +476,7 @@ describe('MCP Routes', () => {
         expect(storeGovernanceMCPOAuth).toHaveBeenCalledWith(
           { user: actor },
           '507f1f77bcf86cd799439011',
-          expect.objectContaining({ userId: actor.id, serverName: 'test-server' }),
+          expect.objectContaining({ userId: actor.id, serverName: 'test-server', binding }),
         );
         expect(MCPOAuthHandler.completeOAuthFlow).toHaveBeenCalledWith(
           flowId,
@@ -477,7 +488,89 @@ describe('MCP Routes', () => {
         expect(storeGovernanceMCPOAuth.mock.invocationCallOrder[0]).toBeLessThan(
           flowManager.completeFlow.mock.invocationCallOrder[0],
         );
+        expect(MCPOAuthHandler.generateTokenFlowId).toHaveBeenCalledWith(
+          actor.id,
+          'test-server',
+          undefined,
+          binding,
+        );
         expect(response.text).not.toContain('administrator-secret');
+      },
+    );
+
+    it.each(['endpoint', 'connection', 'unbound'])(
+      'rejects a pending callback after its %s binding becomes stale',
+      async (change) => {
+        const { MCPOAuthHandler, storeGovernanceMCPOAuth } = require('@librechat/api');
+        const connection = {
+          type: 'sse',
+          url: 'https://mcp.test/server',
+          dbId: '507f1f77bcf86cd799439011',
+          requiresOAuth: true,
+        };
+        const binding = getGovernanceMCPOAuthBinding(connection);
+        const flowId = MCPOAuthHandler.generateFlowId(actor.id, 'test-server', undefined, binding);
+        const manager = {
+          getFlowState: jest.fn().mockResolvedValue({ status: 'PENDING', createdAt: Date.now() }),
+          failFlow: jest.fn().mockResolvedValue(true),
+        };
+        require('~/config').getFlowStateManager.mockReturnValue(manager);
+        require('~/models').findUser.mockResolvedValue(actor);
+        mockRegistryInstance.getServerConfig.mockResolvedValue({
+          ...connection,
+          ...(change === 'endpoint' ? { url: 'https://replacement.test/server' } : {}),
+          ...(change === 'connection' ? { dbId: '507f1f77bcf86cd799439012' } : {}),
+        });
+        MCPOAuthHandler.getFlowState.mockResolvedValue({
+          userId: actor.id,
+          serverName: 'test-server',
+          ...(change !== 'unbound' ? { binding } : {}),
+        });
+
+        const response = await request(app)
+          .get('/api/mcp/test-server/oauth/callback')
+          .set('Cookie', [`oauth_csrf=${generateTestCsrfToken(flowId)}`])
+          .query({ code: 'authorization-code', state: flowId });
+
+        expect(response.headers.location).toContain('/oauth/error?error=callback_failed');
+        expect(MCPOAuthHandler.completeOAuthFlow).not.toHaveBeenCalled();
+        expect(storeGovernanceMCPOAuth).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([false, true])(
+      'validates the connection binding before replaying a stored authorization URL; stale: %s',
+      async (stale) => {
+        const connection = {
+          type: 'sse',
+          url: 'https://mcp.test/server',
+          dbId: '507f1f77bcf86cd799439011',
+        };
+        const binding = getGovernanceMCPOAuthBinding(connection);
+        require('~/config').getFlowStateManager.mockReturnValue({
+          getFlowState: jest.fn().mockResolvedValue({
+            status: 'PENDING',
+            createdAt: Date.now(),
+            metadata: {
+              binding,
+              userId: actor.id,
+              serverName: 'test-server',
+              authorizationUrl: 'https://identity.test/authorize',
+            },
+          }),
+        });
+        mockRegistryInstance.getServerConfig.mockResolvedValue({
+          ...connection,
+          ...(stale ? { url: 'https://replacement.test/server' } : {}),
+        });
+
+        const response = await request(app)
+          .get('/api/mcp/test-server/oauth/initiate')
+          .query({ userId: actor.id, flowId: `bound:${binding}:${actor.id}:test-server` });
+
+        expect(response.status).toBe(stale ? 403 : 302);
+        if (stale) expect(response.headers.location).toBeUndefined();
+        else expect(response.headers.location).toBe('https://identity.test/authorize');
       },
     );
   });
@@ -509,7 +602,6 @@ describe('MCP Routes', () => {
       'publishes tokens only after commit; audit failure: %s',
       async (failAudit) => {
         const { MCPOAuthHandler, storeGovernanceMCPOAuth } = require('@librechat/api');
-        const flowId = `${actor.id}:test-server`;
         const manager = {
           getFlowState: jest.fn().mockResolvedValue({ status: 'PENDING', createdAt: Date.now() }),
           completeFlow: jest.fn().mockResolvedValue(true),
@@ -518,13 +610,23 @@ describe('MCP Routes', () => {
         };
         require('~/config').getFlowStateManager.mockReturnValue(manager);
         require('~/models').findUser.mockResolvedValue(actor);
-        mockRegistryInstance.getServerConfig.mockResolvedValue({
+        const connection = {
+          type: 'sse',
+          url: 'https://mcp.test/server',
           dbId: '507f1f77bcf86cd799439011',
-        });
+        };
+        const flowId = MCPOAuthHandler.generateFlowId(
+          actor.id,
+          'test-server',
+          undefined,
+          getGovernanceMCPOAuthBinding(connection),
+        );
+        mockRegistryInstance.getServerConfig.mockResolvedValue(connection);
         MCPOAuthHandler.getFlowState.mockResolvedValue({
           userId: actor.id,
           serverName: 'test-server',
           metadata: { toolFlowId: 'linked-flow' },
+          binding: getGovernanceMCPOAuthBinding(connection),
         });
         MCPOAuthHandler.completeOAuthFlow.mockResolvedValue({
           access_token: 'confidential-access',

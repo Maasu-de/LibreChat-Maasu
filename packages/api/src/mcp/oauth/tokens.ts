@@ -20,6 +20,7 @@ export class ReauthenticationRequiredError extends Error {
 interface StoreTokensParams {
   userId: string;
   serverName: string;
+  binding?: string;
   tokens: OAuthTokens | ExtendedOAuthTokens | MCPOAuthTokens;
   createToken: TokenMethods['createToken'];
   updateToken?: TokenMethods['updateToken'];
@@ -37,6 +38,7 @@ interface StoreTokensParams {
 interface GetTokensParams {
   userId: string;
   serverName: string;
+  binding?: string;
   findToken: TokenMethods['findToken'];
   refreshTokens?: (
     refreshToken: string,
@@ -85,6 +87,10 @@ function getJwtAccessTokenExpiry(accessToken?: string): number | null {
   return null;
 }
 
+function getTokenIdentifier(serverName: string, binding?: string): string {
+  return binding ? `mcp:${serverName}:${binding}` : `mcp:${serverName}`;
+}
+
 export class MCPTokenStorage {
   static getLogPrefix(userId: string, serverName: string): string {
     return isSystemUserId(userId)
@@ -101,6 +107,7 @@ export class MCPTokenStorage {
   static async storeTokens({
     userId,
     serverName,
+    binding,
     tokens,
     createToken,
     updateToken,
@@ -112,7 +119,7 @@ export class MCPTokenStorage {
     const logPrefix = this.getLogPrefix(userId, serverName);
 
     try {
-      const identifier = `mcp:${serverName}`;
+      const identifier = getTokenIdentifier(serverName, binding);
 
       // Encrypt and store access token
       const encryptedAccessToken = await encryptV2(tokens.access_token);
@@ -308,6 +315,7 @@ export class MCPTokenStorage {
   static async forceRefreshTokens({
     userId,
     serverName,
+    binding,
     findToken,
     createToken,
     updateToken,
@@ -321,7 +329,7 @@ export class MCPTokenStorage {
     existingRefreshToken?: IToken | null;
   }): Promise<MCPOAuthTokens | null> {
     const logPrefix = this.getLogPrefix(userId, serverName);
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
 
     const refreshTokenData =
       existingRefreshToken !== undefined
@@ -420,6 +428,7 @@ export class MCPTokenStorage {
       await this.storeTokens({
         userId,
         serverName,
+        binding,
         tokens: newTokens,
         createToken,
         updateToken,
@@ -453,7 +462,7 @@ export class MCPTokenStorage {
             `${logPrefix} Client registration rejected during token refresh, attempting to clear stale registration and refresh token`,
           );
           const results = await Promise.allSettled([
-            MCPTokenStorage.deleteClientRegistration({ userId, serverName, deleteTokens }),
+            MCPTokenStorage.deleteClientRegistration({ userId, serverName, binding, deleteTokens }),
             deleteTokens({
               userId,
               type: 'mcp_oauth_refresh',
@@ -484,6 +493,7 @@ export class MCPTokenStorage {
   static async getTokens({
     userId,
     serverName,
+    binding,
     findToken,
     createToken,
     updateToken,
@@ -493,7 +503,7 @@ export class MCPTokenStorage {
     const logPrefix = this.getLogPrefix(userId, serverName);
 
     try {
-      const identifier = `mcp:${serverName}`;
+      const identifier = getTokenIdentifier(serverName, binding);
 
       // Get access token
       const accessTokenData = await findToken({
@@ -528,6 +538,7 @@ export class MCPTokenStorage {
         return await this.forceRefreshTokens({
           userId,
           serverName,
+          binding,
           findToken,
           createToken,
           updateToken,
@@ -577,16 +588,18 @@ export class MCPTokenStorage {
   static async getClientInfoAndMetadata({
     userId,
     serverName,
+    binding,
     findToken,
   }: {
     userId: string;
     serverName: string;
+    binding?: string;
     findToken: TokenMethods['findToken'];
   }): Promise<{
     clientInfo: OAuthClientInformation;
     clientMetadata: Record<string, unknown>;
   } | null> {
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
 
     const clientInfoData: IToken | null = await findToken({
       userId,
@@ -624,13 +637,15 @@ export class MCPTokenStorage {
   static async deleteClientRegistration({
     userId,
     serverName,
+    binding,
     deleteTokens,
   }: {
     userId: string;
     serverName: string;
+    binding?: string;
     deleteTokens: TokenMethods['deleteTokens'];
   }): Promise<void> {
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
     await deleteTokens({
       userId,
       type: 'mcp_oauth_client',
@@ -646,13 +661,15 @@ export class MCPTokenStorage {
   static async deleteUserTokens({
     userId,
     serverName,
+    binding,
     deleteToken,
   }: {
     userId: string;
     serverName: string;
+    binding?: string;
     deleteToken: (filter: { userId: string; type: string; identifier: string }) => Promise<void>;
   }): Promise<void> {
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
 
     // delete client info token
     await deleteToken({

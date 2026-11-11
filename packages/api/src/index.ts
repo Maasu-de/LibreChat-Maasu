@@ -68,7 +68,10 @@ export {
   recordGovernanceMCPFailure,
 } from './governance/audit';
 export * from './governance/groups';
-export { getGovernanceGroupCapabilities } from './governance/authorization';
+export {
+  getGovernanceGroupCapabilities,
+  getGovernanceMCPOAuthBinding,
+} from './governance/authorization';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';
 export { createReviewEvent, createApprovalRetryEvent } from './governance/review';
 /* Files */

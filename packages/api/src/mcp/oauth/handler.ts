@@ -505,12 +505,13 @@ export class MCPOAuthHandler {
     findToken?: TokenMethods['findToken'],
     allowedAddresses?: string[] | null,
     tenantId?: string,
+    binding?: string,
   ): Promise<{ authorizationUrl: string; flowId: string; flowMetadata: MCPOAuthFlowMetadata }> {
     logger.debug(
       `[MCPOAuth] initiateOAuthFlow called for ${serverName} with URL: ${sanitizeUrlForLogging(serverUrl)}`,
     );
 
-    const flowId = this.generateFlowId(userId, serverName, tenantId);
+    const flowId = this.generateFlowId(userId, serverName, tenantId, binding);
     const state = this.generateState();
 
     logger.debug(`[MCPOAuth] Generated flowId: ${flowId}, state: ${state}`);
@@ -625,6 +626,7 @@ export class MCPOAuthHandler {
           ...(allowedAddresses !== undefined && { allowedAddresses }),
           ...(Object.keys(oauthHeaders).length > 0 && { oauthHeaders }),
           ...(tenantId && { tenantId }),
+          ...(binding && { binding }),
         };
 
         logger.debug(
@@ -672,6 +674,7 @@ export class MCPOAuthHandler {
             userId,
             serverName,
             findToken,
+            ...(binding && { binding }),
           });
           if (existing?.clientInfo?.client_id) {
             const storedRedirectUri = (existing.clientInfo as OAuthClientInformation)
@@ -807,6 +810,7 @@ export class MCPOAuthHandler {
         ...(Object.keys(oauthHeaders).length > 0 && { oauthHeaders }),
         ...(reusedStoredClient && { reusedStoredClient }),
         ...(tenantId && { tenantId }),
+        ...(binding && { binding }),
       };
 
       logger.debug(
@@ -943,17 +947,27 @@ export class MCPOAuthHandler {
    * Generates a flow ID for the OAuth flow
    * @returns Consistent ID so concurrent requests share the same flow
    */
-  public static generateFlowId(userId: string, serverName: string, tenantId?: string): string {
-    const flowId = `${userId}:${serverName}`;
-    if (!tenantId) {
-      return flowId;
-    }
-    return `tenant:${encodeURIComponent(tenantId)}:${flowId}`;
+  public static generateFlowId(
+    userId: string,
+    serverName: string,
+    tenantId?: string,
+    binding?: string,
+  ): string {
+    const flowId = tenantId
+      ? `tenant:${encodeURIComponent(tenantId)}:${userId}:${serverName}`
+      : `${userId}:${serverName}`;
+    return binding ? `bound:${binding}:${flowId}` : flowId;
   }
 
   public static parseFlowId(
     flowId: string,
-  ): { userId: string; serverName: string; tenantId?: string } | null {
+  ): { userId: string; serverName: string; tenantId?: string; binding?: string } | null {
+    if (flowId.startsWith('bound:')) {
+      const match = /^bound:([a-f0-9]{64}):(.+)$/.exec(flowId);
+      if (!match || match[2].startsWith('bound:')) return null;
+      const parsed = this.parseFlowId(match[2]);
+      return parsed ? { ...parsed, binding: match[1] } : null;
+    }
     const parts = flowId.split(':');
     if (parts[0] === 'tenant') {
       if (parts.length < 4 || !parts[1] || !parts[2]) {
@@ -990,8 +1004,13 @@ export class MCPOAuthHandler {
   }
 
   /** Same shape as `generateFlowId`; kept distinct so token-fetch flows can diverge from OAuth flows */
-  public static generateTokenFlowId(userId: string, serverName: string, tenantId?: string): string {
-    return this.generateFlowId(userId, serverName, tenantId);
+  public static generateTokenFlowId(
+    userId: string,
+    serverName: string,
+    tenantId?: string,
+    binding?: string,
+  ): string {
+    return this.generateFlowId(userId, serverName, tenantId, binding);
   }
 
   /**

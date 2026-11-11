@@ -14,6 +14,7 @@ const mockLoggerInfo = jest.fn();
 const mockLoggerWarn = jest.fn();
 const mockLoggerError = jest.fn();
 const mockGetTenantId = jest.fn();
+const mockGetGovernanceMCPOAuthBinding = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/data-schemas'),
@@ -31,13 +32,15 @@ jest.mock('@librechat/api', () => {
   return {
     MCPOAuthHandler: {
       revokeOAuthToken: (...args) => mockRevokeOAuthToken(...args),
-      generateFlowId: (userId, serverName, tenantId) => {
+      generateFlowId: (userId, serverName, tenantId, binding) => {
         const flowId = `${userId}:${serverName}`;
-        return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        const tenantFlowId = tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        return binding ? `bound:${binding}:${tenantFlowId}` : tenantFlowId;
       },
-      generateTokenFlowId: (userId, serverName, tenantId) => {
+      generateTokenFlowId: (userId, serverName, tenantId, binding) => {
         const flowId = `${userId}:${serverName}`;
-        return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        const tenantFlowId = tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        return binding ? `bound:${binding}:${tenantFlowId}` : tenantFlowId;
       },
     },
     MCPTokenStorage: {
@@ -46,6 +49,7 @@ jest.mock('@librechat/api', () => {
       deleteUserTokens: (...args) => mockDeleteUserTokens(...args),
     },
     isGovernancePilotEnabled: () => process.env.GOVERNANCE_PILOT_ENABLED === 'true',
+    getGovernanceMCPOAuthBinding: (...args) => mockGetGovernanceMCPOAuthBinding(...args),
     sanitizeMCPErrorForLogging: (error) =>
       process.env.GOVERNANCE_PILOT_ENABLED === 'true' ? 'MCP operation failed' : error,
     normalizeHttpError: jest.fn(),
@@ -162,6 +166,38 @@ describe('maybeUninstallOAuthMCP', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetTenantId.mockReturnValue(undefined);
+    mockGetGovernanceMCPOAuthBinding.mockReturnValue(undefined);
+  });
+
+  test('uses the current connection binding for revocation and cached token cleanup', async () => {
+    setupOAuthServerFound();
+    const binding = 'current-connection-binding';
+    mockGetGovernanceMCPOAuthBinding.mockReturnValue(binding);
+    mockGetTokens.mockResolvedValue({ access_token: 'access', refresh_token: 'refresh' });
+    mockDeleteUserTokens.mockResolvedValue(undefined);
+    mockDeleteFlow.mockResolvedValue(true);
+    mockRevokeOAuthToken.mockResolvedValue(undefined);
+
+    await maybeUninstallOAuthMCP(userId, pluginKey, appConfig);
+
+    expect(mockGetGovernanceMCPOAuthBinding).toHaveBeenCalledWith(serverConfig);
+    expect(mockGetClientInfoAndMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, serverName, binding }),
+    );
+    expect(mockGetTokens).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, serverName, binding }),
+    );
+    expect(mockDeleteUserTokens).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, serverName, binding }),
+    );
+    expect(mockDeleteFlow).toHaveBeenCalledWith(
+      `bound:${binding}:${userId}:${serverName}`,
+      'mcp_get_tokens',
+    );
+    expect(mockDeleteFlow).toHaveBeenCalledWith(
+      `bound:${binding}:${userId}:${serverName}`,
+      'mcp_oauth',
+    );
   });
 
   test.each([false, true])(
