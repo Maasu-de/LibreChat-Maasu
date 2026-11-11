@@ -640,6 +640,8 @@ describe('two-model comparison', () => {
         text,
         messages: [{ role: 'user', content: text }],
         dlpToken: 'earlier-token',
+        masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }],
+        maskedFileIds: ['file-report'],
       },
       60_000,
     );
@@ -663,6 +665,10 @@ describe('two-model comparison', () => {
     expect(await getReviewStore().get('approved-review')).toBeUndefined();
     expect(isDlpUnsent(req)).toBe(false);
     expect(req.governanceDlpReview).toBeUndefined();
+    expect(req.governanceDlpMasked).toEqual({
+      masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }],
+      maskedFileIds: ['file-report'],
+    });
   });
 
   it('asks again when the approval is no longer valid', async () => {

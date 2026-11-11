@@ -1091,6 +1091,29 @@ describe('BaseClient', () => {
         expect(saves).toEqual([0, 1]);
         const calls = TestClient.saveMessageToDatabase.mock.calls;
         expect(calls.map(([message]) => message.isCreatedByUser)).toEqual([true, false]);
+        expect(calls[0][0]).not.toHaveProperty('governanceMasks');
+        expect(calls[0][0]).not.toHaveProperty('governanceMaskedFiles');
+      });
+
+      test("saves the approved review's masks with the user message", async () => {
+        const { req, callGateway } = governedRequest(async () => completion());
+        const masks = [{ start: 6, end: 13, category: 'EMAIL_ADDRESS' }];
+        req.governanceDlpMasked = { masks, maskedFileIds: ['file-report'] };
+        TestClient.options.req = req;
+        const sendCompletion = TestClient.sendCompletion.bind(TestClient);
+        TestClient.sendCompletion = async (...args) => {
+          await callGateway();
+          return sendCompletion(...args);
+        };
+
+        await TestClient.sendMessage('Hello, world!');
+
+        const [[userMessage]] = TestClient.saveMessageToDatabase.mock.calls;
+        expect(userMessage).toMatchObject({
+          isCreatedByUser: true,
+          governanceMasks: masks,
+          governanceMaskedFiles: ['file-report'],
+        });
       });
 
       test('stores nothing when the gateway does not start a completion', async () => {

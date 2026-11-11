@@ -43,6 +43,17 @@ export interface GovernanceFileFinding {
    * earlier one only in case or spacing is left out.
    */
   terms?: string[];
+  /** What the gateway puts in place of the matched values when it masks them. */
+  replacement?: string;
+}
+
+/** A replacement in a sent message's text, which took the place of a value the gateway masked. */
+export interface GovernanceMask {
+  /** Code-point range of the replacement in the message's text. */
+  start: number;
+  end: number;
+  category: string;
+  label?: string;
 }
 
 /** Compared models that findings of these categories may not be sent to. */

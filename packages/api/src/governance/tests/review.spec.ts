@@ -132,6 +132,7 @@ function setup({
   const onReview = jest.fn<void, [GovernanceDlpReview]>();
   const onSent = jest.fn();
   const onApprovalKept = jest.fn<void, [boolean]>();
+  const onApproved = jest.fn<void, [StoredReview]>();
   const governedFetch = createGovernanceDlpFetch({
     userId: 'user-123',
     fetch: upstream,
@@ -141,6 +142,7 @@ function setup({
     onReview,
     onSent,
     onApprovalKept,
+    onApproved,
     reviews,
   });
   const send = (messages: GovernanceChatMessage[]) =>
@@ -150,7 +152,7 @@ function setup({
       body: JSON.stringify({ model: 'governed-model', messages, stream: true, top_p: 0.5 }),
     });
   const sentBody = (call: number) => JSON.parse(String(upstream.mock.calls[call]?.[1]?.body));
-  return { upstream, onReview, onSent, onApprovalKept, reviews, send, sentBody };
+  return { upstream, onReview, onSent, onApprovalKept, onApproved, reviews, send, sentBody };
 }
 
 describe('readReview', () => {
@@ -212,7 +214,7 @@ describe('submitted text helpers', () => {
     ]);
   });
 
-  it('counts findings in attached files per file, category and action, with their values', () => {
+  it("counts findings in the submitted message's files per file, category and action, never earlier messages' files", () => {
     const messages = [
       { role: 'user', content: ATTACHED },
       { role: 'assistant', content: `ok ${IBAN}` },
@@ -235,12 +237,12 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-report',
         category: 'IBAN_CODE',
         action: 'MASK',
+        replacement: '[IBAN]',
         count: 2,
         terms: [IBAN],
       },
@@ -249,6 +251,7 @@ describe('submitted text helpers', () => {
         fileId: 'file-notes',
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
+        replacement: '[EMAIL]',
         count: 1,
         terms: ['max@example.com'],
       },
@@ -289,6 +292,7 @@ describe('submitted text helpers', () => {
         fileId: 'file-team',
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
+        replacement: '[EMAIL]',
         count: 3,
         terms: ['ann@example.com', 'max@example.com'],
       },
@@ -297,6 +301,7 @@ describe('submitted text helpers', () => {
         fileId: 'file-team',
         category: 'TENANT_TERM',
         action: 'MASK',
+        replacement: '[TERM]',
         count: 2,
         terms: ['Project Phoenix'],
       },
@@ -322,12 +327,12 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-1',
         category: 'IBAN_CODE',
         action: 'MASK',
+        replacement: '[IBAN]',
         count: 1,
         terms: [IBAN],
       },
@@ -336,13 +341,14 @@ describe('submitted text helpers', () => {
         fileId: 'file-2',
         category: 'EMAIL_ADDRESS',
         action: 'MASK',
+        replacement: '[EMAIL]',
         count: 1,
         terms: ['max@example.com'],
       },
     ]);
   });
 
-  it('never names a history file by ID when the same file is attached again', () => {
+  it('counts only the submitted copy of a file that an earlier message also attached', () => {
     const messages = [
       { role: 'user', content: WITH_FILES },
       { role: 'assistant', content: 'ok' },
@@ -359,12 +365,12 @@ describe('submitted text helpers', () => {
     ];
 
     expect(findingsInFiles(messages, findings, submitted, fileContexts)).toEqual([
-      { filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1, terms: [IBAN] },
       {
         filename: 'report.pdf',
         fileId: 'file-report',
         category: 'IBAN_CODE',
         action: 'MASK',
+        replacement: '[IBAN]',
         count: 1,
         terms: [IBAN],
       },
@@ -396,6 +402,7 @@ describe('submitted text helpers', () => {
         fileId: 'file-real',
         category: 'IBAN_CODE',
         action: 'MASK',
+        replacement: '[IBAN]',
         count: 1,
         terms: [IBAN],
       },
@@ -450,6 +457,7 @@ describe('submitted text helpers', () => {
         category,
         label: 'Project Names',
         action: 'MASK',
+        replacement: '[IBAN]',
         count: 1,
         terms: [IBAN],
       },
@@ -568,6 +576,8 @@ describe('DLP approval flow', () => {
       messages: maskedMessages,
       dlpToken: 'approval-token',
       expiresAt,
+      masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }],
+      maskedFileIds: [],
     });
     expect(onSent).not.toHaveBeenCalled();
   });
@@ -683,6 +693,7 @@ describe('DLP approval flow', () => {
             fileId: 'file-report',
             category: 'IBAN_CODE',
             action: 'MASK',
+            replacement: '[IBAN]',
             count: 2,
             terms: [IBAN],
           },
@@ -693,6 +704,8 @@ describe('DLP approval flow', () => {
     expect(reviews.entries.get('review-files')).toMatchObject({
       text: SUBMITTED,
       messages: maskedMessages,
+      masks: [],
+      maskedFileIds: ['file-report'],
     });
   });
 
@@ -795,15 +808,18 @@ describe('DLP approval flow', () => {
   it('sends the stored approved request and token when the user confirms', async () => {
     const reviews = memoryStore();
     const approved = [{ role: 'user', content: MASKED }];
-    reviews.entries.set('review-1', {
+    const stored: StoredReview = {
       userId: 'user-123',
       model: 'governed-model',
       text: MASKED,
       messages: approved,
       dlpToken: 'approval-token',
-    });
+      masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }],
+      maskedFileIds: ['file-report'],
+    };
+    reviews.entries.set('review-1', stored);
     const completion = completionResponse();
-    const { onSent, send, sentBody } = setup({
+    const { onSent, onApproved, send, sentBody } = setup({
       text: MASKED,
       reviewId: 'review-1',
       reviews,
@@ -824,6 +840,7 @@ describe('DLP approval flow', () => {
       dlp_token: 'approval-token',
     });
     expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onApproved).toHaveBeenCalledWith(stored);
     expect(reviews.entries.has('review-1')).toBe(false);
   });
 
