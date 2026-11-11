@@ -166,6 +166,41 @@ describe('maybeUninstallOAuthMCP', () => {
     mockGetTenantId.mockReturnValue(undefined);
   });
 
+  test.each([false, true])(
+    'commits governed local revocation before provider calls; commit failure: %s',
+    async (failCommit) => {
+      setupOAuthServerFound();
+      mockGetTokens.mockResolvedValue({ access_token: 'access', refresh_token: 'refresh' });
+      mockDeleteUserTokens.mockResolvedValue(undefined);
+      mockDeleteFlow.mockResolvedValue(undefined);
+      let committed = false;
+      const session = { id: 'transaction-session' };
+      mockRevokeOAuthToken.mockImplementation(async () => {
+        expect(committed).toBe(true);
+      });
+      const commit = jest.fn(async (deleteStoredTokens) => {
+        expect(mockDeleteFlow).toHaveBeenCalled();
+        expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
+        if (failCommit) throw new Error('audit unavailable');
+        mockDeleteUserTokens.mockImplementationOnce(async ({ deleteToken }) => {
+          await deleteToken({ userId, type: 'mcp_oauth', identifier: `mcp:${serverName}` });
+        });
+        await deleteStoredTokens(session);
+        committed = true;
+      });
+      const result = maybeUninstallOAuthMCP(userId, pluginKey, appConfig, commit);
+      if (failCommit) {
+        await expect(result).rejects.toThrow('audit unavailable');
+        expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
+        expect(mockDeleteUserTokens).not.toHaveBeenCalled();
+      } else {
+        await expect(result).resolves.toBeUndefined();
+        expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(2);
+        expect(mockDeleteTokens).toHaveBeenCalledWith(expect.objectContaining({ userId }), session);
+      }
+    },
+  );
+
   test.each(['tokens', 'flow'])(
     'does not report governed revocation success when %s cleanup fails',
     async (failure) => {

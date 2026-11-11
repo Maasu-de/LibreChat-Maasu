@@ -415,15 +415,18 @@ const resendVerificationController = async (req, res) => {
 };
 
 /** Best-effort cleanup of stored MCP OAuth tokens and flow state. */
-const clearStoredMCPOAuthState = async (userId, serverName) => {
-  try {
+const clearStoredMCPOAuthState = async (userId, serverName, commitTokenDeletion) => {
+  const deleteStoredTokens = async (session) => {
     await MCPTokenStorage.deleteUserTokens({
       userId,
       serverName,
       deleteToken: async (filter) => {
-        await db.deleteTokens(filter);
+        await db.deleteTokens(filter, ...(session ? [session] : []));
       },
     });
+  };
+  try {
+    if (!commitTokenDeletion) await deleteStoredTokens();
   } catch (error) {
     if (isGovernancePilotEnabled()) throw new Error('Failed to clear MCP OAuth authorization');
     logger.warn(
@@ -469,10 +472,11 @@ const clearStoredMCPOAuthState = async (userId, serverName) => {
       sanitizeMCPErrorForLogging(error),
     );
   }
+  if (commitTokenDeletion) await commitTokenDeletion(deleteStoredTokens);
 };
 
 /** Revokes MCP OAuth tokens at the provider when possible, then clears local state. */
-const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
+const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenDeletion) => {
   if (!pluginKey.startsWith(Constants.mcp_prefix)) {
     // this is not an MCP server, so nothing to do here
     return;
@@ -484,7 +488,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
     appConfig?.mcpServers?.[serverName];
   const oauthServers = await getMCPServersRegistry().getOAuthServers(userId);
   if (!oauthServers.has(serverName) || !serverConfig) {
-    await clearStoredMCPOAuthState(userId, serverName);
+    await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion);
     return;
   }
 
@@ -501,14 +505,14 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
       `[maybeUninstallOAuthMCP] Unable to load OAuth client metadata for ${serverName}; clearing local MCP OAuth state only.`,
       sanitizeMCPErrorForLogging(error),
     );
-    await clearStoredMCPOAuthState(userId, serverName);
+    await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion);
     return;
   }
   if (clientTokenData == null) {
     logger.info(
       `[maybeUninstallOAuthMCP] Missing OAuth client metadata for ${serverName}; clearing local MCP OAuth state only.`,
     );
-    await clearStoredMCPOAuthState(userId, serverName);
+    await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion);
     return;
   }
   const { clientInfo, clientMetadata } = clientTokenData;
@@ -539,6 +543,8 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
   // overrides are honored for OAuth revocation, consistent with inspection/connection.
   const allowedDomains = appConfig?.mcpSettings?.allowedDomains;
   const allowedAddresses = appConfig?.mcpSettings?.allowedAddresses;
+
+  if (commitTokenDeletion) await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion);
 
   if (tokens?.access_token) {
     try {
@@ -591,7 +597,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
   }
 
   // 4. delete tokens from the DB and clear the flow state after revocation attempts
-  await clearStoredMCPOAuthState(userId, serverName);
+  if (!commitTokenDeletion) await clearStoredMCPOAuthState(userId, serverName);
 };
 
 module.exports = {

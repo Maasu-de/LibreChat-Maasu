@@ -11,8 +11,11 @@ const {
   getBasePath,
   isGovernancePilotEnabled,
   requireGovernanceMCPAdministrator,
+  requireGovernanceMCPAdministration,
   isGovernanceMCPAuditConfigured,
   queueGovernanceMCPAudit,
+  recordGovernanceMCPFailure,
+  storeGovernanceMCPOAuth,
   createGovernanceMCPHandlers,
   createGovernanceMCPOAuthFailureHandler,
   createSafeUser,
@@ -250,6 +253,10 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
   const basePath = getBasePath();
   let administrator;
   let administrationConfig;
+  let callbackFlowId;
+  let callbackFlowManager;
+  let callbackTenantId;
+  let authorizationCommitted = false;
   try {
     const { serverName } = req.params;
     const { code, state, error: oauthError } = req.query;
@@ -314,8 +321,10 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
 
     const flowsCache = getLogStores(CacheKeys.FLOWS);
     const flowManager = getFlowStateManager(flowsCache);
+    callbackFlowManager = flowManager;
 
     const flowId = await MCPOAuthHandler.resolveStateToFlowId(state, flowManager);
+    callbackFlowId = flowId;
     if (!flowId) {
       logger.error('[MCP OAuth] Could not resolve state to flow ID', { state });
       return res.redirect(`${basePath}/oauth/error?error=invalid_state`);
@@ -359,6 +368,7 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
 
     logger.debug('[MCP OAuth] Getting flow state for flowId: ' + flowId);
     const flowState = await MCPOAuthHandler.getFlowState(flowId, flowManager);
+    callbackTenantId = flowState?.tenantId;
 
     if (!flowState) {
       logger.error('[MCP OAuth] Flow state not found for flowId:', flowId);
@@ -429,13 +439,15 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
         code,
         flowManager,
         oauthHeaders,
+        ...(administrator ? [false] : []),
       );
       logger.info('[MCP OAuth] OAuth flow completed');
+      if (administrator && !tokens) throw new Error('OAuth authorization returned no tokens');
 
       /** Persist tokens immediately so reconnection uses fresh credentials */
       if (flowState?.userId && tokens) {
         try {
-          await MCPTokenStorage.storeTokens({
+          const tokenData = {
             userId: flowState.userId,
             serverName,
             tokens,
@@ -447,7 +459,22 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
               flowState.metadata,
               flowState.resourceMetadata,
             ),
-          });
+          };
+          if (administrator) {
+            await storeGovernanceMCPOAuth(
+              { user: administrator },
+              administrationConfig.dbId,
+              tokenData,
+            );
+            authorizationCommitted = true;
+            try {
+              await flowManager.completeFlow(flowId, 'mcp_oauth', tokens);
+            } catch {
+              logger.warn('[MCP OAuth] Committed authorization flow could not be published');
+            }
+          } else {
+            await MCPTokenStorage.storeTokens(tokenData);
+          }
           logger.debug('[MCP OAuth] Stored OAuth tokens prior to reconnection', {
             serverName,
             userId: flowState.userId,
@@ -492,13 +519,6 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
         }
       }
 
-      if (administrator) {
-        await queueGovernanceMCPAudit(
-          { user: administrator },
-          'mcp.oauth.authorized',
-          administrationConfig.dbId,
-        );
-      }
       try {
         const mcpManager = getMCPManager(flowState.userId);
         logger.debug(`[MCP OAuth] Attempting to reconnect ${serverName} with new OAuth tokens`);
@@ -575,6 +595,34 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
     const redirectUrl = `${basePath}/oauth/success?serverName=${encodeURIComponent(serverName)}`;
     res.redirect(redirectUrl);
   } catch (error) {
+    if (administrator && !authorizationCommitted) {
+      const failAuthorization = async () => {
+        await recordGovernanceMCPFailure(
+          { user: administrator },
+          'mcp.oauth.authorized',
+          administrationConfig?.dbId,
+        );
+        try {
+          if (callbackFlowId)
+            await callbackFlowManager?.failFlow(
+              callbackFlowId,
+              'mcp_oauth',
+              'OAuth authorization failed',
+            );
+        } catch {
+          logger.warn('[MCP OAuth] Failed authorization flow could not be cleared');
+        }
+      };
+      if (callbackTenantId && !getTenantId())
+        await tenantStorage.run({ tenantId: callbackTenantId }, failAuthorization);
+      else await failAuthorization();
+    }
+    if (authorizationCommitted) {
+      logger.warn('[MCP OAuth] Committed authorization cache update remains pending');
+      return res.redirect(
+        `${basePath}/oauth/success?serverName=${encodeURIComponent(req.params.serverName)}`,
+      );
+    }
     logger.error(
       '[MCP OAuth] OAuth callback error',
       isGovernancePilotEnabled() ? 'MCP operation failed' : error,
@@ -1005,19 +1053,31 @@ async function getOAuthHeaders(serverName, userId, configServers) {
 const governanceMCP = createGovernanceMCPHandlers({
   getRegistry: getMCPServersRegistry,
   getManager: getMCPManager,
-  reinitialize: reinitMCPServer,
+  discover: ({ user, serverName }) =>
+    getMCPManager().discoverServerTools({
+      user,
+      serverName,
+      flowManager: getFlowStateManager(getLogStores(CacheKeys.FLOWS)),
+      tokenMethods: {
+        findToken: db.findToken,
+        createToken: db.createToken,
+        updateToken: db.updateToken,
+        deleteTokens: db.deleteTokens,
+      },
+      throwOnError: true,
+    }),
   revoke: maybeUninstallOAuthMCP,
 });
 router.get(
   '/servers/:serverName/inspect',
   requireJwtAuth,
-  requireGovernanceMCPAdministrator,
+  requireGovernanceMCPAdministration,
   governanceMCP.inspect,
 );
 router.post(
   '/:serverName/oauth/revoke',
   requireJwtAuth,
-  requireGovernanceMCPAdministrator,
+  requireGovernanceMCPAdministration,
   governanceMCP.revoke,
 );
 

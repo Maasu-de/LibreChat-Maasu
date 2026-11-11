@@ -846,6 +846,7 @@ export class MCPOAuthHandler {
     authorizationCode: string,
     flowManager: FlowStateManager<MCPOAuthTokens>,
     oauthHeaders: Record<string, string>,
+    completeFlow = true,
   ): Promise<MCPOAuthTokens> {
     try {
       /** Flow state which contains our metadata */
@@ -911,7 +912,7 @@ export class MCPOAuthHandler {
       };
 
       /** Now complete the flow with the tokens */
-      await flowManager.completeFlow(flowId, this.FLOW_TYPE, mcpTokens);
+      if (completeFlow) await flowManager.completeFlow(flowId, this.FLOW_TYPE, mcpTokens);
 
       return mcpTokens;
     } catch (error) {

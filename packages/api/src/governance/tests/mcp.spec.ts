@@ -7,6 +7,7 @@ import {
   isGovernanceMCPApi,
   isGovernanceRemoteMCP,
   requireGovernanceMCPAdministrator,
+  requireGovernanceMCPAdministration,
   createGovernanceMCPHandlers,
 } from '../mcp';
 import { enforceGovernancePilot } from '../pilot';
@@ -120,6 +121,43 @@ describe('governed MCP administration boundary', () => {
     ).resolves.toMatchObject({ status: 204 });
   });
 
+  it.each(['USER', 'ADMIN', 'GOVERNANCE_ADMIN'])(
+    'does not add administration endpoints outside governed mode for %s',
+    async (role) => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+      const server = express();
+      server.use((req, _res, next) => {
+        Object.assign(req, { user: { ...administrator, role } });
+        next();
+      });
+      server.use(requireGovernanceMCPAdministration);
+      server.use((_req, res) => {
+        res.sendStatus(204);
+      });
+      await expect(request(server).get('/servers/remote/inspect')).resolves.toMatchObject({
+        status: 404,
+      });
+      await expect(request(server).post('/remote/oauth/revoke')).resolves.toMatchObject({
+        status: 404,
+      });
+    },
+  );
+
+  it('allows the governed-only endpoint guard for an OIDC governance administrator', async () => {
+    const server = express();
+    server.use((req, _res, next) => {
+      Object.assign(req, { user: administrator });
+      next();
+    });
+    server.use(requireGovernanceMCPAdministration);
+    server.use((_req, res) => {
+      res.sendStatus(204);
+    });
+    await expect(request(server).get('/servers/remote/inspect')).resolves.toMatchObject({
+      status: 204,
+    });
+  });
+
   it('blocks MCP ACL management while preserving the existing agent ACL boundary', async () => {
     await expect(
       request(app()).put('/api/permissions/mcpServer/connection'),
@@ -217,14 +255,12 @@ describe('administrative inspection and revocation', () => {
     process.env.GOVERNANCE_PILOT_ENABLED = 'false';
     const getServerConfig = jest.fn().mockResolvedValue(config);
     const disconnectUserConnection = jest.fn().mockResolvedValue(undefined);
-    const reinitialize = jest
-      .fn()
-      .mockResolvedValue({ success: true, oauthRequired: false, tools });
+    const discover = jest.fn().mockResolvedValue({ oauthRequired: false, oauthUrl: null, tools });
     const revoke = jest.fn().mockResolvedValue(undefined);
     const handlers = createGovernanceMCPHandlers({
       getRegistry: () => ({ getServerConfig }),
       getManager: () => ({ disconnectUserConnection }),
-      reinitialize,
+      discover,
       revoke,
     });
     const server = express();
@@ -234,16 +270,18 @@ describe('administrative inspection and revocation', () => {
     });
     server.get('/inspect/:serverName', handlers.inspect);
     server.post('/revoke/:serverName', handlers.revoke);
-    return { server, getServerConfig, disconnectUserConnection, reinitialize, revoke };
+    return { server, getServerConfig, disconnectUserConnection, discover, revoke };
   }
 
   it.each([true, false])(
     'reports failed discovery separately from a valid empty list: %s',
     async (failed) => {
-      const { server, reinitialize } = setup();
-      reinitialize.mockResolvedValueOnce(
-        failed ? undefined : { success: true, oauthRequired: false, tools: [] },
-      );
+      const { server, discover } = setup();
+      discover.mockResolvedValueOnce({
+        tools: failed ? null : [],
+        oauthRequired: false,
+        oauthUrl: null,
+      });
       const response = await request(server).get('/inspect/remote');
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ success: !failed, tools: [] });
@@ -251,7 +289,7 @@ describe('administrative inspection and revocation', () => {
   );
 
   it('returns discovered tool definitions without credentials or internal metadata', async () => {
-    const { server, getServerConfig, reinitialize } = setup();
+    const { server, getServerConfig, discover } = setup();
     const response = await request(server).get('/inspect/remote');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
@@ -265,7 +303,7 @@ describe('administrative inspection and revocation', () => {
       ],
     });
     expect(getServerConfig).toHaveBeenCalledWith('remote', actorId);
-    expect(reinitialize).toHaveBeenCalledWith(
+    expect(discover).toHaveBeenCalledWith(
       expect.objectContaining({
         serverName: 'remote',
         user: expect.objectContaining({ id: actorId }),
@@ -276,8 +314,8 @@ describe('administrative inspection and revocation', () => {
   });
 
   it('reports an inspection error without returning provider messages or tools', async () => {
-    const { server, reinitialize } = setup();
-    reinitialize.mockRejectedValue(new Error('Provider echoed service-secret'));
+    const { server, discover } = setup();
+    discover.mockRejectedValue(new Error('Provider echoed service-secret'));
     const response = await request(server).get('/inspect/remote');
     expect(response.status).toBe(500);
     expect(response.body).toEqual({
@@ -288,8 +326,8 @@ describe('administrative inspection and revocation', () => {
   });
 
   it('does not report successful authenticated inspection while OAuth is required', async () => {
-    const { server, reinitialize } = setup();
-    reinitialize.mockResolvedValue({ success: true, oauthRequired: true, tools });
+    const { server, discover } = setup();
+    discover.mockResolvedValue({ oauthRequired: true, oauthUrl: null, tools });
     const response = await request(server).get('/inspect/remote');
     expect(response.body).toEqual({ success: false, tools: [] });
   });

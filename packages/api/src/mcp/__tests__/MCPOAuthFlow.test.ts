@@ -40,59 +40,74 @@ describe('MCP OAuth Flow — Real HTTP Server', () => {
     jest.clearAllMocks();
   });
 
-  it('completes browser authorization and keeps the resulting tokens scoped to the administrator', async () => {
-    const server = await createOAuthMCPServer({
-      issueRefreshTokens: true,
-      enforceClientId: true,
-      requireResourceParameter: true,
-    });
-    const manager = new FlowStateManager<MCPOAuthTokens>(new Keyv(), { ttl: 30000, ci: true });
-    const tokenStore = new InMemoryTokenStore();
-    const userId = 'governance-administrator';
-    const serverName = 'administrative-inspection';
-    try {
-      const flow = await MCPOAuthHandler.initiateOAuthFlow(
-        serverName,
-        server.url,
-        userId,
-        {},
-        undefined,
-        [server.url],
-      );
-      await manager.initFlow(flow.flowId, 'mcp_oauth', flow.flowMetadata);
-      const authorization = await fetch(flow.authorizationUrl, { redirect: 'manual' });
-      const location = authorization.headers.get('location');
-      if (!location) throw new Error('OAuth provider did not redirect to the callback');
-      const callback = new URL(location);
-      expect(callback.searchParams.get('state')).toBe(flow.flowMetadata.state);
-      const code = callback.searchParams.get('code');
-      if (!code) throw new Error('OAuth provider did not return an authorization code');
-      const tokens = await MCPOAuthHandler.completeOAuthFlow(flow.flowId, code, manager, {});
-      expect(tokens.access_token).toBeTruthy();
-      expect(tokens.refresh_token).toBeTruthy();
-      expect(await manager.getFlowState(flow.flowId, 'mcp_oauth')).toMatchObject({
-        status: 'COMPLETED',
+  it.each([true, false])(
+    'completes browser authorization with immediate flow publication %s',
+    async (completeFlow) => {
+      const server = await createOAuthMCPServer({
+        issueRefreshTokens: true,
+        enforceClientId: true,
+        requireResourceParameter: true,
       });
-      await MCPTokenStorage.storeTokens({
-        userId,
-        serverName,
-        tokens,
-        createToken: tokenStore.createToken,
-      });
-      expect(
-        await MCPTokenStorage.getTokens({ userId, serverName, findToken: tokenStore.findToken }),
-      ).toMatchObject({ access_token: tokens.access_token });
-      await expect(
-        MCPTokenStorage.getTokens({
-          userId: 'another-administrator',
+      const manager = new FlowStateManager<MCPOAuthTokens>(new Keyv(), { ttl: 30000, ci: true });
+      const tokenStore = new InMemoryTokenStore();
+      const userId = 'governance-administrator';
+      const serverName = 'administrative-inspection';
+      try {
+        const flow = await MCPOAuthHandler.initiateOAuthFlow(
           serverName,
-          findToken: tokenStore.findToken,
-        }),
-      ).rejects.toThrow(ReauthenticationRequiredError);
-    } finally {
-      await server.close();
-    }
-  });
+          server.url,
+          userId,
+          {},
+          undefined,
+          [server.url],
+        );
+        await manager.initFlow(flow.flowId, 'mcp_oauth', flow.flowMetadata);
+        const authorization = await fetch(flow.authorizationUrl, { redirect: 'manual' });
+        const location = authorization.headers.get('location');
+        if (!location) throw new Error('OAuth provider did not redirect to the callback');
+        const callback = new URL(location);
+        expect(callback.searchParams.get('state')).toBe(flow.flowMetadata.state);
+        const code = callback.searchParams.get('code');
+        if (!code) throw new Error('OAuth provider did not return an authorization code');
+        const tokens = await MCPOAuthHandler.completeOAuthFlow(
+          flow.flowId,
+          code,
+          manager,
+          {},
+          completeFlow,
+        );
+        expect(tokens.access_token).toBeTruthy();
+        expect(tokens.refresh_token).toBeTruthy();
+        expect(await manager.getFlowState(flow.flowId, 'mcp_oauth')).toMatchObject({
+          status: completeFlow ? 'COMPLETED' : 'PENDING',
+        });
+        await MCPTokenStorage.storeTokens({
+          userId,
+          serverName,
+          tokens,
+          createToken: tokenStore.createToken,
+        });
+        if (!completeFlow) {
+          await manager.completeFlow(flow.flowId, 'mcp_oauth', tokens);
+          expect(await manager.getFlowState(flow.flowId, 'mcp_oauth')).toMatchObject({
+            status: 'COMPLETED',
+          });
+        }
+        expect(
+          await MCPTokenStorage.getTokens({ userId, serverName, findToken: tokenStore.findToken }),
+        ).toMatchObject({ access_token: tokens.access_token });
+        await expect(
+          MCPTokenStorage.getTokens({
+            userId: 'another-administrator',
+            serverName,
+            findToken: tokenStore.findToken,
+          }),
+        ).rejects.toThrow(ReauthenticationRequiredError);
+      } finally {
+        await server.close();
+      }
+    },
+  );
 
   describe('Token refresh with real server', () => {
     let server: OAuthTestServer;

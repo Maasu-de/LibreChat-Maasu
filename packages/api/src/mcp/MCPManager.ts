@@ -18,6 +18,7 @@ import {
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
   requiresUserScopedConnection,
+  sanitizeMCPErrorForLogging,
 } from './utils';
 import { MCPServersInitializer } from './registry/MCPServersInitializer';
 import { OboTokenResolutionError, resolveOboToken } from '~/mcp/oauth';
@@ -126,7 +127,9 @@ export class MCPManager extends UserConnectionManager {
     const logPrefix = user?.id ? `[MCP][User: ${user.id}][${serverName}]` : `[MCP][${serverName}]`;
 
     try {
-      const existingAppConnection = await this.appConnections?.get(serverName);
+      const existingAppConnection = args.throwOnError
+        ? undefined
+        : await this.appConnections?.get(serverName);
       if (existingAppConnection && (await existingAppConnection.isConnected())) {
         const tools = await existingAppConnection.fetchTools();
         return { tools, oauthRequired: false, oauthUrl: null };
@@ -189,7 +192,10 @@ export class MCPManager extends UserConnectionManager {
         try {
           await result.connection.disconnect();
         } catch (error) {
-          logger.warn(`${logPrefix} [Discovery] Failed to disconnect discovery connection`, error);
+          logger.warn(
+            `${logPrefix} [Discovery] Failed to disconnect discovery connection`,
+            sanitizeMCPErrorForLogging(error),
+          );
         }
       }
       return {
@@ -200,13 +206,17 @@ export class MCPManager extends UserConnectionManager {
     };
 
     if (!useOAuth) {
-      const result = await MCPConnectionFactory.discoverTools(basic, {
-        user: args.user,
-        customUserVars: args.customUserVars,
-        requestBody: args.requestBody,
-        graphTokenResolver: args.graphTokenResolver,
-        connectionTimeout: args.connectionTimeout,
-      });
+      const result = await MCPConnectionFactory.discoverTools(
+        basic,
+        {
+          user: args.user,
+          customUserVars: args.customUserVars,
+          requestBody: args.requestBody,
+          graphTokenResolver: args.graphTokenResolver,
+          connectionTimeout: args.connectionTimeout,
+        },
+        args.throwOnError,
+      );
       return finalizeDiscoveryResult(result);
     }
 
@@ -215,20 +225,24 @@ export class MCPManager extends UserConnectionManager {
       return { tools: null, oauthRequired: true, oauthUrl: null };
     }
 
-    const result = await MCPConnectionFactory.discoverTools(basic, {
-      user,
-      useOAuth: true,
-      flowManager: args.flowManager,
-      tokenMethods: args.tokenMethods,
-      signal: args.signal,
-      oauthStart: args.oauthStart,
-      customUserVars: args.customUserVars,
-      requestBody: args.requestBody,
-      graphTokenResolver: args.graphTokenResolver,
-      connectionTimeout: args.connectionTimeout,
-      oboTokenResolver: args.oboTokenResolver,
-      oboTrustChecker: args.oboTrustChecker,
-    });
+    const result = await MCPConnectionFactory.discoverTools(
+      basic,
+      {
+        user,
+        useOAuth: true,
+        flowManager: args.flowManager,
+        tokenMethods: args.tokenMethods,
+        signal: args.signal,
+        oauthStart: args.oauthStart,
+        customUserVars: args.customUserVars,
+        requestBody: args.requestBody,
+        graphTokenResolver: args.graphTokenResolver,
+        connectionTimeout: args.connectionTimeout,
+        oboTokenResolver: args.oboTokenResolver,
+        oboTrustChecker: args.oboTrustChecker,
+      },
+      args.throwOnError,
+    );
 
     return finalizeDiscoveryResult(result);
   }

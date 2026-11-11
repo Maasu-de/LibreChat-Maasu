@@ -1,20 +1,25 @@
 import { getTenantId, tenantStorage, logger } from '@librechat/data-schemas';
 import { Constants, SystemRoles } from 'librechat-data-provider';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { MCPManager } from '~/mcp/MCPManager';
 import type { MCPServersRegistry } from '~/mcp/registry/MCPServersRegistry';
 import type { AppConfig, AllMethods } from '@librechat/data-schemas';
 import type { MCPOAuthTokens } from '~/mcp/oauth';
 import type { FlowStateManager } from '~/flow/manager';
 import type { ZodIssue } from 'zod';
-import type { ParsedServerConfig } from '~/mcp/types';
+import type { ParsedServerConfig, ToolDiscoveryResult } from '~/mcp/types';
 import type { RequestHandler, Response } from 'express';
+import type { ClientSession } from 'mongoose';
 import type { ServerRequest } from '~/types/http';
 import type { MCPOptions, MCPServerUserInput } from 'librechat-data-provider';
 import { isGovernancePilotEnabled } from './mode';
-import { isGovernanceMCPAuditConfigured, queueGovernanceMCPAudit } from './audit';
+import {
+  isGovernanceMCPAuditConfigured,
+  queueGovernanceMCPAudit,
+  mutateGovernanceMCP,
+  recordGovernanceMCPFailure,
+} from './audit';
 import { createSafeUser } from '~/utils/env';
-import { MCPOAuthHandler } from '~/mcp/oauth';
+import { MCPOAuthHandler, MCPTokenStorage } from '~/mcp/oauth';
 import { validateOAuthCsrf, validateOAuthSession } from '~/oauth/csrf';
 import { PENDING_STALE_MS } from '~/flow/manager';
 import { getBasePath } from '~/utils/path';
@@ -107,17 +112,54 @@ export const requireGovernanceMCPAdministrator: RequestHandler = (req, res, next
   next();
 };
 
+export const requireGovernanceMCPAdministration: RequestHandler = (req, res, next) => {
+  if (!isGovernancePilotEnabled()) {
+    res.sendStatus(404);
+    return;
+  }
+  requireGovernanceMCPAdministrator(req, res, next);
+};
+
+export async function storeGovernanceMCPOAuth(
+  req: ServerRequest,
+  connectionId: string,
+  params: Parameters<typeof MCPTokenStorage.storeTokens>[0],
+): Promise<void> {
+  await mutateGovernanceMCP(
+    req,
+    'mcp.oauth.authorized',
+    async (session) => {
+      await MCPTokenStorage.storeTokens({
+        ...params,
+        ...(session && {
+          createToken: (token) => params.createToken(token, session),
+          updateToken: params.updateToken
+            ? (query, token) => params.updateToken!(query, token, session)
+            : undefined,
+          findToken: params.findToken
+            ? (query, options) => params.findToken!(query, { ...options, session })
+            : undefined,
+        }),
+      });
+    },
+    connectionId,
+  );
+}
+
 interface GovernanceMCPDependencies {
   getRegistry: () => Pick<MCPServersRegistry, 'getServerConfig'>;
   getManager: () => Pick<MCPManager, 'disconnectUserConnection'>;
-  reinitialize: (params: {
+  discover: (params: {
     user: ReturnType<typeof createSafeUser>;
     serverName: string;
     serverConfig: ParsedServerConfig;
-  }) => Promise<
-    { success: boolean; oauthRequired: boolean; tools: Tool[] | null } | null | undefined
-  >;
-  revoke: (userId: string, pluginKey: string, appConfig?: AppConfig) => Promise<void>;
+  }) => Promise<ToolDiscoveryResult>;
+  revoke: (
+    userId: string,
+    pluginKey: string,
+    appConfig?: AppConfig,
+    commitTokenDeletion?: (operation: (session?: ClientSession) => Promise<void>) => Promise<void>,
+  ) => Promise<void>;
 }
 
 export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
@@ -134,12 +176,12 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
         res.status(404).json({ message: 'MCP connection not found' });
         return;
       }
-      const result = await deps.reinitialize({
+      const result = await deps.discover({
         user: createSafeUser(request.user),
         serverName,
         serverConfig: config,
       });
-      const success = Boolean(result?.success && !result.oauthRequired);
+      const success = result.tools != null && !result.oauthRequired;
       await queueGovernanceMCPAudit(
         request,
         'mcp.inspected',
@@ -157,8 +199,7 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
           : [],
       });
     } catch {
-      if (config?.dbId)
-        await queueGovernanceMCPAudit(request, 'mcp.inspected', config.dbId, 'failure');
+      await recordGovernanceMCPFailure(request, 'mcp.inspected', config?.dbId);
       res
         .status(500)
         .json({ success: false, tools: [], message: 'MCP connection inspection failed' });
@@ -168,19 +209,38 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
     const request = req as ServerRequest;
     const { serverName } = req.params;
     let config: ParsedServerConfig | undefined;
+    let revocationCommitted = false;
     try {
       config = await deps.getRegistry().getServerConfig(serverName, request.user?.id);
       if (!config?.dbId || !request.user?.id) {
         res.status(404).json({ message: 'MCP connection not found' });
         return;
       }
-      await deps.revoke(request.user.id, `${Constants.mcp_prefix}${serverName}`, request.config);
-      await deps.getManager().disconnectUserConnection(request.user.id, serverName);
-      await queueGovernanceMCPAudit(request, 'mcp.oauth.revoked', config.dbId);
+      const userId = request.user.id;
+      const connectionId = config.dbId;
+      if (isGovernancePilotEnabled()) {
+        await deps.revoke(
+          userId,
+          `${Constants.mcp_prefix}${serverName}`,
+          request.config,
+          async (operation) => {
+            await deps.getManager().disconnectUserConnection(userId, serverName);
+            await mutateGovernanceMCP(request, 'mcp.oauth.revoked', operation, connectionId);
+            revocationCommitted = true;
+          },
+        );
+      } else {
+        await deps.revoke(userId, `${Constants.mcp_prefix}${serverName}`, request.config);
+        await deps.getManager().disconnectUserConnection(userId, serverName);
+      }
       res.json({ success: true });
     } catch {
-      if (config?.dbId)
-        await queueGovernanceMCPAudit(request, 'mcp.oauth.revoked', config.dbId, 'failure');
+      if (revocationCommitted) {
+        logger.warn('[Governance MCP] Provider revocation cleanup remains pending');
+        res.json({ success: true });
+        return;
+      }
+      await recordGovernanceMCPFailure(request, 'mcp.oauth.revoked', config?.dbId);
       res.status(500).json({ message: 'MCP OAuth revocation failed' });
     }
   };

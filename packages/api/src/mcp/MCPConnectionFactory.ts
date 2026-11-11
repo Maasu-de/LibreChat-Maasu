@@ -24,6 +24,7 @@ import {
   isClientRejectionMessage,
   isOAuthServer,
 } from './utils';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { PENDING_STALE_MS, normalizeExpiresAt } from '~/flow/manager';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { withTimeout } from '~/utils/promise';
@@ -132,14 +133,15 @@ export class MCPConnectionFactory {
   static async discoverTools(
     basic: t.BasicConnectionOptions,
     options?: Omit<t.OAuthConnectionOptions, 'returnOnOAuth'> | t.UserConnectionContext,
+    throwOnError = false,
   ): Promise<ToolDiscoveryResult> {
     const preparedBasic = await this.prepareBasicConnectionOptions(basic, options);
     if (options != null && 'useOAuth' in options) {
       const factory = new this(preparedBasic, { ...options, returnOnOAuth: true });
-      return factory.discoverToolsInternal();
+      return factory.discoverToolsInternal(throwOnError);
     }
     const factory = new this(preparedBasic, options);
-    return factory.discoverToolsInternal();
+    return factory.discoverToolsInternal(throwOnError);
   }
 
   /**
@@ -164,7 +166,7 @@ export class MCPConnectionFactory {
     return serverConfig === basic.serverConfig ? basic : { ...basic, serverConfig };
   }
 
-  protected async discoverToolsInternal(): Promise<ToolDiscoveryResult> {
+  protected async discoverToolsInternal(throwOnError = false): Promise<ToolDiscoveryResult> {
     const oauthUrl: string | null = null;
     let oauthRequired = false;
 
@@ -205,15 +207,29 @@ export class MCPConnectionFactory {
       );
 
       if (await connection.isConnected()) {
-        const tools = await connection.fetchTools();
+        const tools = throwOnError
+          ? await connection.fetchTools(true)
+          : await connection.fetchTools();
         connection.removeListener('oauthRequired', oauthHandler);
         return { tools, connection, oauthRequired: false, oauthUrl: null };
       }
-    } catch {
+    } catch (error) {
       MCPConnection.decrementCycleCount(this.serverName);
+      if (throwOnError) {
+        connection.removeListener('oauthRequired', oauthHandler);
+        await connection.disconnect().catch(() => {});
+        if (!oauthRequired) throw error;
+        return { tools: null, connection: null, oauthRequired, oauthUrl };
+      }
       logger.debug(
         `${this.logPrefix} [Discovery] Connection failed, attempting unauthenticated tool listing`,
       );
+    }
+
+    if (throwOnError) {
+      connection.removeListener('oauthRequired', oauthHandler);
+      await connection.disconnect().catch(() => {});
+      return { tools: null, connection: null, oauthRequired, oauthUrl };
     }
 
     try {
@@ -1050,21 +1066,22 @@ export class MCPConnectionFactory {
         const { tokens } = result;
         try {
           connection.setOAuthTokens(tokens);
-          await this.runWithCapturedTenant(() =>
-            MCPTokenStorage.storeTokens({
-              userId: this.userId!,
-              serverName: this.serverName,
-              tokens,
-              createToken: this.tokenMethods!.createToken,
-              updateToken: this.tokenMethods!.updateToken,
-              findToken: this.tokenMethods!.findToken,
-              clientInfo: result.clientInfo,
-              metadata: MCPOAuthHandler.buildStoredClientMetadata(
-                result.metadata,
-                result.resourceMetadata,
-              ),
-            }),
-          );
+          if (!isGovernancePilotEnabled())
+            await this.runWithCapturedTenant(() =>
+              MCPTokenStorage.storeTokens({
+                userId: this.userId!,
+                serverName: this.serverName,
+                tokens,
+                createToken: this.tokenMethods!.createToken,
+                updateToken: this.tokenMethods!.updateToken,
+                findToken: this.tokenMethods!.findToken,
+                clientInfo: result.clientInfo,
+                metadata: MCPOAuthHandler.buildStoredClientMetadata(
+                  result.metadata,
+                  result.resourceMetadata,
+                ),
+              }),
+            );
           // Same rationale as the silent-refresh success path: invalidate the
           // `mcp_get_tokens` cache so the next `getOAuthTokens` reads the
           // freshly stored tokens rather than the just-rejected ones the

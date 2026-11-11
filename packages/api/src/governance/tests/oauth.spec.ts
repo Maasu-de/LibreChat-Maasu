@@ -162,7 +162,7 @@ it.each([false, true])(
           getServerConfig: jest.fn().mockResolvedValue({ dbId: connectionId }),
         }),
         getManager: () => ({ disconnectUserConnection: disconnect }),
-        reinitialize: jest.fn(),
+        discover: jest.fn(),
         revoke: async (userId, _plugin, _config, commit) => {
           if (!commit) throw new Error('Governed deletion must supply a transaction');
           await commit(async (session) =>

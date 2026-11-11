@@ -1293,6 +1293,36 @@ describe('MCPManager', () => {
       expect(MCPConnectionFactory.discoverTools).not.toHaveBeenCalled();
     });
 
+    it('uses fresh strict discovery instead of cached app tools and preserves failures', async () => {
+      const get = jest.fn().mockResolvedValue(mockConnection);
+      mockAppConnections({ get });
+      const user = { id: 'administrator', role: 'GOVERNANCE_ADMIN' } as IUser;
+      (mockRegistryInstance.getServerConfig as jest.Mock).mockResolvedValue({
+        type: 'streamable-http',
+        url: 'https://mcp.example/server',
+      });
+      (MCPConnectionFactory.discoverTools as jest.Mock).mockRejectedValue(
+        new Error('MCP tool discovery failed'),
+      );
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+
+      await expect(
+        manager.discoverServerTools({ serverName, user, throwOnError: true }),
+      ).rejects.toThrow('MCP tool discovery failed');
+
+      expect(get).not.toHaveBeenCalled();
+      expect(mockRegistryInstance.getServerConfig).toHaveBeenCalledWith(
+        serverName,
+        user.id,
+        undefined,
+      );
+      expect(MCPConnectionFactory.discoverTools).toHaveBeenCalledWith(
+        expect.objectContaining({ serverName }),
+        expect.objectContaining({ user }),
+        true,
+      );
+    });
+
     it('should use MCPConnectionFactory.discoverTools when no app connection available', async () => {
       const discoveryConnection = {
         disconnect: jest.fn().mockResolvedValue(undefined),
@@ -1368,6 +1398,7 @@ describe('MCPManager', () => {
           graphTokenResolver,
           connectionTimeout: 10000,
         }),
+        undefined,
       );
     });
 
@@ -1496,6 +1527,7 @@ describe('MCPManager', () => {
           useOAuth: true,
           graphTokenResolver: expect.any(Function),
         }),
+        undefined,
       );
     });
   });

@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import type { ClientSession } from 'mongoose';
 import { logger, encryptV2, decryptV2, createMethods } from '@librechat/data-schemas';
 import {
   ResourceType,
@@ -159,6 +160,7 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
     config: ParsedServerConfig,
     userId?: string,
     reservedServerNames?: Iterable<string>,
+    session?: ClientSession,
   ): Promise<AddServerResult> {
     logger.debug(
       `[ServerConfigsDB.add] Creating DB-backed server from config title. Placeholder: ${serverName}; userId: ${userId}`,
@@ -180,11 +182,14 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
     const transformedConfig = this.transformUserApiKeyConfig(sanitizedConfig);
     /** Encrypted config before storing in database */
     const encryptedConfig = await this.encryptConfig(transformedConfig);
-    const createdServer = await this._dbMethods.createMCPServer({
-      config: encryptedConfig,
-      author: userId,
-      reservedServerNames,
-    });
+    const createdServer = await this._dbMethods.createMCPServer(
+      {
+        config: encryptedConfig,
+        author: userId,
+        reservedServerNames,
+      },
+      session,
+    );
     await this._aclService.grantPermission({
       principalType: PrincipalType.USER,
       principalId: userId,
@@ -192,6 +197,7 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
       resourceId: createdServer._id,
       accessRoleId: AccessRoleIds.MCPSERVER_OWNER,
       grantedBy: userId,
+      session,
     });
     return {
       serverName: createdServer.serverName,
@@ -209,6 +215,7 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
     serverName: string,
     config: ParsedServerConfig,
     userId?: string,
+    session?: ClientSession,
   ): Promise<void> {
     if (!userId) {
       throw new Error(
@@ -216,7 +223,7 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
       );
     }
 
-    const existingServer = await this._dbMethods.findMCPServerByServerName(serverName);
+    const existingServer = await this._dbMethods.findMCPServerByServerName(serverName, session);
 
     let configToSave: ParsedServerConfig = sanitizeUserManagedOAuthConfig({
       ...config,
@@ -258,7 +265,7 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
       };
     }
 
-    await this._dbMethods.updateMCPServer(serverName, { config: configToSave });
+    await this._dbMethods.updateMCPServer(serverName, { config: configToSave }, session);
   }
 
   /**
@@ -285,14 +292,15 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
    * @param serverName - The serverName of the server to remove
    * @param userId - User performing the deletion (for logging)
    */
-  public async remove(serverName: string, userId?: string): Promise<void> {
+  public async remove(serverName: string, userId?: string, session?: ClientSession): Promise<void> {
     logger.debug(`[ServerConfigsDB.remove] removing ${serverName}. UserId: ${userId}`);
-    const deletedServer = await this._dbMethods.deleteMCPServer(serverName);
+    const deletedServer = await this._dbMethods.deleteMCPServer(serverName, session);
     if (deletedServer && deletedServer._id) {
       logger.debug(`[ServerConfigsDB.remove] removing all permissions entries of ${serverName}.`);
       await this._aclService.removeAllPermissions({
         resourceType: ResourceType.MCPSERVER,
         resourceId: deletedServer._id!,
+        session,
       });
       return;
     }
@@ -305,8 +313,12 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
    * @param userId - the user id provide the scope of the request. If the user Id is not provided, only publicly visible servers are returned.
    * @returns The parsed server config or undefined if not found. If accessed via agent, consumeOnly will be true.
    */
-  public async get(serverName: string, userId?: string): Promise<ParsedServerConfig | undefined> {
-    const server = await this._dbMethods.findMCPServerByServerName(serverName);
+  public async get(
+    serverName: string,
+    userId?: string,
+    session?: ClientSession,
+  ): Promise<ParsedServerConfig | undefined> {
+    const server = await this._dbMethods.findMCPServerByServerName(serverName, session);
     if (!server) return undefined;
 
     if (isGovernancePilotEnabled()) {

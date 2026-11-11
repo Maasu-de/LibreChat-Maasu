@@ -103,6 +103,7 @@ export async function queueGovernanceMCPAudit(
   action: MCPAuditAction,
   connectionId: string,
   outcome: 'success' | 'failure' = 'success',
+  session?: ClientSession,
 ): Promise<void> {
   if (!isGovernancePilotEnabled()) return;
   const actor = req.user;
@@ -114,21 +115,89 @@ export async function queueGovernanceMCPAudit(
   }
   const occurredAt = new Date();
   const id = randomUUID();
-  await outbox().insertOne({
-    _id: id,
-    createdAt: occurredAt,
-    status: 'pending',
-    retryCount: 0,
-    nextAttemptAt: occurredAt,
-    payload: {
-      mutation_id: id,
-      occurred_at: occurredAt.toISOString(),
-      action,
-      outcome,
-      actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
-      resource: { type: 'mcp_connection', id: connectionId },
+  await outbox().insertOne(
+    {
+      _id: id,
+      createdAt: occurredAt,
+      status: 'pending',
+      retryCount: 0,
+      nextAttemptAt: occurredAt,
+      payload: {
+        mutation_id: id,
+        occurred_at: occurredAt.toISOString(),
+        action,
+        outcome,
+        actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+        resource: { type: 'mcp_connection', id: connectionId },
+      },
     },
-  });
+    { session },
+  );
+}
+
+export type GovernanceMCPMutation = <T>(
+  operation: (session?: ClientSession) => Promise<T>,
+  connectionId: string | ((result: T) => string),
+) => Promise<T>;
+
+/** Commit connection state and its durable audit delivery in the same transaction. */
+export async function mutateGovernanceMCP<T>(
+  req: ServerRequest,
+  action: MCPAuditAction,
+  operation: (session?: ClientSession) => Promise<T>,
+  connectionId: string | ((result: T) => string),
+): Promise<T> {
+  if (!isGovernancePilotEnabled()) return operation();
+  if (!isGovernanceMCPAuditConfigured(req)) {
+    throw new Error('Governance MCP audit is not configured');
+  }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const session = await mongoose.startSession();
+    try {
+      return await session.withTransaction(
+        async () => {
+          const result = await operation(session);
+          const id = typeof connectionId === 'function' ? connectionId(result) : connectionId;
+          await queueGovernanceMCPAudit(req, action, id, 'success', session);
+          return result;
+        },
+        { writeConcern: { w: 'majority' } },
+      );
+    } catch (error) {
+      if (
+        action !== 'mcp.created' ||
+        !(error instanceof mongoose.mongo.MongoServerError) ||
+        error.code !== 11000 ||
+        error.keyPattern?.serverName !== 1 ||
+        attempt === 4
+      )
+        throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+  throw new Error('MCP connection creation could not be completed');
+}
+
+export function createGovernanceMCPMutation(
+  req: ServerRequest,
+  action: MCPAuditAction,
+): GovernanceMCPMutation | undefined {
+  if (!isGovernancePilotEnabled()) return;
+  return (operation, connectionId) => mutateGovernanceMCP(req, action, operation, connectionId);
+}
+
+export async function recordGovernanceMCPFailure(
+  req: ServerRequest,
+  action: MCPAuditAction,
+  connectionId?: string,
+): Promise<void> {
+  if (!connectionId) return;
+  try {
+    await queueGovernanceMCPAudit(req, action, connectionId, 'failure');
+  } catch {
+    logger.warn('[Governance MCP] Failed operation could not be recorded');
+  }
 }
 
 export function groupSessionArgs(session?: ClientSession): [] | [ClientSession] {

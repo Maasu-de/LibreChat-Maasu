@@ -60,7 +60,13 @@ export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
 export * from './governance/mcp';
-export { isGovernanceMCPAuditConfigured, queueGovernanceMCPAudit } from './governance/audit';
+export {
+  isGovernanceMCPAuditConfigured,
+  queueGovernanceMCPAudit,
+  mutateGovernanceMCP,
+  createGovernanceMCPMutation,
+  recordGovernanceMCPFailure,
+} from './governance/audit';
 export * from './governance/groups';
 export { getGovernanceGroupCapabilities } from './governance/authorization';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';
