@@ -24,6 +24,7 @@ jest.mock('~/server/services/Config', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  isGovernancePilotEnabled: jest.requireActual('@librechat/api').isGovernancePilotEnabled,
   sendEvent: jest.fn(),
   MCPOAuthHandler: jest.fn(),
   isMCPDomainAllowed: jest.fn(),

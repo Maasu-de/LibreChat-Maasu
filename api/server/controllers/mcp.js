@@ -413,14 +413,18 @@ const getMCPServerById = async (req, res) => {
     if (!serverName) {
       return res.status(400).json({ message: 'Server name is required' });
     }
-    const configServers = await resolveConfigServers(req);
+    const governed = isGovernancePilotEnabled();
+    const configServers = governed ? undefined : await resolveConfigServers(req);
     const parsedConfig = await getMCPServersRegistry().getServerConfig(
       serverName,
       userId,
       configServers,
     );
 
-    if (!parsedConfig) {
+    if (
+      !parsedConfig ||
+      (governed && (!parsedConfig.dbId || !isGovernanceRemoteMCP(parsedConfig)))
+    ) {
       return res.status(404).json({ message: 'MCP server not found' });
     }
 

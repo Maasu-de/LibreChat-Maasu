@@ -47,6 +47,8 @@ const {
   createMCPTool,
   createMCPTools,
   createMCPPermissionContext,
+  resolveConfigServers,
+  resolveAllMcpConfigs,
   getMCPSetupData,
   createOAuthStart,
   checkOAuthFlowStatus,
@@ -87,6 +89,85 @@ jest.mock('./Tools/mcp', () => ({
 jest.mock('./GraphTokenService', () => ({
   getGraphApiToken: jest.fn(),
 }));
+
+describe('governed administrative connection resolution', () => {
+  let environment;
+  const managed = {
+    type: 'sse',
+    url: 'https://managed.example/mcp',
+    dbId: '507f1f77bcf86cd799439011',
+    source: 'user',
+    requiresOAuth: true,
+  };
+  const configs = {
+    managed,
+    yamlRemote: {
+      type: 'sse',
+      url: 'https://yaml.example/mcp?api_key=confidential-yaml-credential',
+      source: 'yaml',
+    },
+    local: { type: 'stdio', command: 'sh', source: 'yaml' },
+    unsupported: {
+      type: 'websocket',
+      url: 'wss://remote.example/mcp',
+      dbId: '507f1f77bcf86cd799439012',
+      source: 'user',
+    },
+    configRemote: { type: 'sse', url: 'https://config.example/mcp', source: 'config' },
+  };
+
+  beforeEach(() => {
+    environment = process.env;
+    process.env = { ...environment, GOVERNANCE_PILOT_ENABLED: 'true' };
+    jest.clearAllMocks();
+    mockRegistryInstance.getAllServerConfigs.mockResolvedValue(configs);
+  });
+
+  afterEach(() => {
+    process.env = environment;
+  });
+
+  it('does not initialize operator configuration when resolving config servers', async () => {
+    await expect(resolveConfigServers({ user: { id: 'administrator' } })).resolves.toEqual({});
+    expect(mockGetAppConfig).not.toHaveBeenCalled();
+    expect(mockRegistryInstance.ensureConfigServers).not.toHaveBeenCalled();
+  });
+
+  it('returns only supported managed connections without resolving operator configuration', async () => {
+    const result = await resolveAllMcpConfigs('administrator', { role: 'GOVERNANCE_ADMIN' });
+
+    expect(result).toEqual({ managed });
+    expect(JSON.stringify(result)).not.toContain('confidential-yaml-credential');
+    expect(mockRegistryInstance.getAllServerConfigs).toHaveBeenCalledWith(
+      'administrator',
+      undefined,
+      'GOVERNANCE_ADMIN',
+    );
+    expect(mockGetAppConfig).not.toHaveBeenCalled();
+    expect(mockRegistryInstance.ensureConfigServers).not.toHaveBeenCalled();
+  });
+
+  it('does not load or reconnect operator connections for administrative status', async () => {
+    const getLoaded = jest.fn();
+    const userConnections = new Map([['managed', { connectionState: 'connected' }]]);
+    require('~/config').getMCPManager.mockReturnValue({
+      appConnections: { getLoaded },
+      getUserConnections: jest.fn(() => userConnections),
+    });
+
+    const result = await getMCPSetupData('administrator', { role: 'GOVERNANCE_ADMIN' });
+
+    expect(result).toEqual({
+      mcpConfig: { managed },
+      appConnections: new Map(),
+      userConnections,
+      oauthServers: new Set(['managed']),
+    });
+    expect(getLoaded).not.toHaveBeenCalled();
+    expect(mockGetAppConfig).not.toHaveBeenCalled();
+    expect(mockRegistryInstance.ensureConfigServers).not.toHaveBeenCalled();
+  });
+});
 
 describe('tests for the new helper functions used by the MCP connection status endpoints', () => {
   let mockGetMCPManager;

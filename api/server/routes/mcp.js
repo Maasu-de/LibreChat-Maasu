@@ -10,6 +10,7 @@ const {
 const {
   getBasePath,
   isGovernancePilotEnabled,
+  isGovernanceRemoteMCP,
   getGovernanceMCPOAuthBinding,
   requireGovernanceMCPAdministrator,
   requireGovernanceMCPAdministration,
@@ -871,19 +872,23 @@ router.post(
 
       logger.info(`[MCP Reinitialize] Reinitializing server: ${serverName}`);
 
-      const mcpManager = getMCPManager();
-      const configServers = await resolveConfigServers(req);
+      const governed = isGovernancePilotEnabled();
+      const configServers = governed ? undefined : await resolveConfigServers(req);
       const serverConfig = await getMCPServersRegistry().getServerConfig(
         serverName,
         user.id,
         configServers,
       );
-      if (!serverConfig) {
+      if (
+        !serverConfig ||
+        (governed && (!serverConfig.dbId || !isGovernanceRemoteMCP(serverConfig)))
+      ) {
         return res.status(404).json({
           error: `MCP server '${serverName}' not found in configuration`,
         });
       }
 
+      const mcpManager = getMCPManager();
       await mcpManager.disconnectUserConnection(user.id, serverName);
       logger.info(
         `[MCP Reinitialize] Disconnected existing user connection for server: ${serverName}`,

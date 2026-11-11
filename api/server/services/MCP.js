@@ -4,6 +4,7 @@ const { Providers, Constants: AgentConstants } = require('@librechat/agents');
 const {
   sendEvent,
   isGovernancePilotEnabled,
+  isGovernanceRemoteMCP,
   getGovernanceMCPOAuthBinding,
   isGovernanceMCPOAuthAuthorized,
   PENDING_STALE_MS,
@@ -125,6 +126,7 @@ async function getAppConfigForUser(userId, user) {
  * @returns {Promise<Record<string, import('@librechat/api').ParsedServerConfig>>}
  */
 async function resolveConfigServers(req) {
+  if (isGovernancePilotEnabled()) return {};
   try {
     const registry = getMCPServersRegistry();
     const appConfig = await getAppConfigForRequest(req);
@@ -159,6 +161,12 @@ async function resolveMcpConfigNames(req) {
  */
 async function resolveAllMcpConfigs(userId, user) {
   const registry = getMCPServersRegistry();
+  if (isGovernancePilotEnabled()) {
+    const configs = await registry.getAllServerConfigs(userId, undefined, user?.role);
+    return Object.fromEntries(
+      Object.entries(configs).filter(([, config]) => config.dbId && isGovernanceRemoteMCP(config)),
+    );
+  }
   const appConfig = await getAppConfigForUser(userId, user);
   let configServers = {};
   try {
@@ -910,22 +918,30 @@ function createToolInstance({
 async function getMCPSetupData(userId, options = {}) {
   const registry = getMCPServersRegistry();
   const { role, tenantId } = options;
+  const governed = isGovernancePilotEnabled();
 
-  const appConfig = await getAppConfig({ role, tenantId, userId });
-  const configServers = await registry.ensureConfigServers(appConfig?.mcpConfig || {});
-  const mcpConfig = role
-    ? await registry.getAllServerConfigs(userId, configServers, role)
-    : await registry.getAllServerConfigs(userId, configServers);
+  let mcpConfig;
+  if (governed) {
+    mcpConfig = await resolveAllMcpConfigs(userId, { role });
+  } else {
+    const appConfig = await getAppConfig({ role, tenantId, userId });
+    const configServers = await registry.ensureConfigServers(appConfig?.mcpConfig || {});
+    mcpConfig = role
+      ? await registry.getAllServerConfigs(userId, configServers, role)
+      : await registry.getAllServerConfigs(userId, configServers);
+  }
   const mcpManager = getMCPManager(userId);
   /** @type {Map<string, import('@librechat/api').MCPConnection>} */
   let appConnections = new Map();
-  try {
-    // Use getLoaded() instead of getAll() to avoid forcing connection creation.
-    // getAll() creates connections for all servers, which is problematic for servers
-    // that require user context (e.g., those with {{LIBRECHAT_USER_ID}} placeholders).
-    appConnections = (await mcpManager.appConnections?.getLoaded()) || new Map();
-  } catch (error) {
-    logger.error(`[MCP][User: ${userId}] Error getting app connections:`, error);
+  if (!governed) {
+    try {
+      // Use getLoaded() instead of getAll() to avoid forcing connection creation.
+      // getAll() creates connections for all servers, which is problematic for servers
+      // that require user context (e.g., those with {{LIBRECHAT_USER_ID}} placeholders).
+      appConnections = (await mcpManager.appConnections?.getLoaded()) || new Map();
+    } catch (error) {
+      logger.error(`[MCP][User: ${userId}] Error getting app connections:`, error);
+    }
   }
   const userConnections = mcpManager.getUserConnections(userId) || new Map();
   const oauthServers = new Set(

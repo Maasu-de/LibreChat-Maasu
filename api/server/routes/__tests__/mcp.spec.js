@@ -302,6 +302,185 @@ describe('MCP Routes', () => {
       expect(mockRegistryInstance.getAllServerConfigs).not.toHaveBeenCalled();
     });
 
+    describe('connection reinitialization', () => {
+      const connectionId = '507f1f77bcf86cd799439011';
+      let manager;
+
+      beforeEach(() => {
+        manager = { disconnectUserConnection: jest.fn().mockResolvedValue() };
+        require('~/config').getMCPManager.mockReturnValue(manager);
+        require('~/server/services/Tools/mcp').reinitMCPServer.mockReset().mockResolvedValue({
+          success: true,
+          oauthRequired: false,
+          oauthUrl: null,
+        });
+      });
+
+      it.each([
+        ['YAML stdio', { type: 'stdio', command: 'node', startup: false, source: 'yaml' }],
+        ['YAML remote', { type: 'sse', url: 'https://mcp.test/server', source: 'yaml' }],
+        [
+          'config remote',
+          { type: 'streamable-http', url: 'https://mcp.test/server', source: 'config' },
+        ],
+        ['stored stdio', { type: 'stdio', command: 'node', dbId: connectionId }],
+        [
+          'per-user credentials',
+          {
+            type: 'sse',
+            url: 'https://mcp.test/server',
+            dbId: connectionId,
+            apiKey: { source: 'user' },
+          },
+        ],
+        [
+          'OBO',
+          {
+            type: 'streamable-http',
+            url: 'https://mcp.test/server',
+            dbId: connectionId,
+            obo: { scopes: 'api://server/.default' },
+          },
+        ],
+      ])('rejects %s before touching connections or credentials', async (_name, config) => {
+        mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+
+        await request(app).post('/api/mcp/server/reinitialize').expect(404);
+
+        expect(manager.disconnectUserConnection).not.toHaveBeenCalled();
+        expect(require('~/server/services/Tools/mcp').reinitMCPServer).not.toHaveBeenCalled();
+        expect(require('~/server/services/MCP').resolveConfigServers).not.toHaveBeenCalled();
+        expect(require('@librechat/api').getUserMCPAuthMap).not.toHaveBeenCalled();
+        expect(require('@librechat/api').queueGovernanceMCPAudit).not.toHaveBeenCalled();
+      });
+
+      it.each(['http', 'streamable-http', 'sse'])(
+        'preserves reinitialization and auditing for managed %s connections',
+        async (type) => {
+          const config = { type, url: 'https://mcp.test/server', dbId: connectionId };
+          mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+
+          const response = await request(app).post('/api/mcp/server/reinitialize');
+
+          expect(response.status).toBe(200);
+          expect(response.body).toMatchObject({ success: true, oauthRequired: false });
+          expect(manager.disconnectUserConnection).toHaveBeenCalledWith(actor.id, 'server');
+          expect(require('~/server/services/Tools/mcp').reinitMCPServer).toHaveBeenCalledWith(
+            expect.objectContaining({ serverName: 'server', serverConfig: config }),
+          );
+          expect(require('@librechat/api').queueGovernanceMCPAudit).toHaveBeenCalledWith(
+            expect.objectContaining({ user: actor }),
+            'mcp.inspected',
+            connectionId,
+            'success',
+          );
+          expect(require('~/server/services/MCP').resolveConfigServers).not.toHaveBeenCalled();
+        },
+      );
+
+      it('preserves OAuth initiation for a managed remote connection', async () => {
+        const config = {
+          type: 'streamable-http',
+          url: 'https://mcp.test/server',
+          dbId: connectionId,
+          oauth: {},
+        };
+        mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+        require('~/server/services/Tools/mcp').reinitMCPServer.mockResolvedValue({
+          success: false,
+          oauthRequired: true,
+          oauthUrl: 'https://provider.test/authorize',
+        });
+
+        const response = await request(app).post('/api/mcp/server/reinitialize');
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({
+          oauthRequired: true,
+          oauthUrl: 'https://provider.test/authorize',
+        });
+        expect(require('@librechat/api').queueGovernanceMCPAudit).toHaveBeenCalledWith(
+          expect.objectContaining({ user: actor }),
+          'mcp.inspected',
+          connectionId,
+          'failure',
+        );
+      });
+
+      it('preserves configured local connections outside governed mode', async () => {
+        process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+        const config = { type: 'stdio', command: 'node', startup: false, source: 'yaml' };
+        mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+
+        await request(app).post('/api/mcp/server/reinitialize').expect(200);
+
+        expect(manager.disconnectUserConnection).toHaveBeenCalledWith(actor.id, 'server');
+        expect(require('~/server/services/Tools/mcp').reinitMCPServer).toHaveBeenCalledWith(
+          expect.objectContaining({ serverName: 'server', serverConfig: config }),
+        );
+        expect(require('~/server/services/MCP').resolveConfigServers).toHaveBeenCalledTimes(1);
+        expect(require('@librechat/api').queueGovernanceMCPAudit).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('connection configuration reads', () => {
+      const connectionId = '507f1f77bcf86cd799439011';
+
+      it.each([
+        {
+          type: 'sse',
+          url: 'https://mcp.test/server?api_key=confidential-yaml-key',
+          source: 'yaml',
+        },
+        {
+          type: 'streamable-http',
+          url: 'https://mcp.test/server?api_key=confidential-config-key',
+          source: 'config',
+        },
+        { type: 'stdio', command: 'node', source: 'yaml', startup: false },
+        { type: 'stdio', command: 'node', dbId: connectionId },
+        {
+          type: 'sse',
+          url: 'https://mcp.test/server?api_key=confidential-stored-key',
+          dbId: connectionId,
+        },
+      ])(
+        'rejects out-of-scope configurations without exposing their contents: %j',
+        async (config) => {
+          mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+
+          const response = await request(app).get('/api/mcp/servers/server');
+
+          expect(response.status).toBe(404);
+          expect(response.body).toEqual({ message: 'MCP server not found' });
+          expect(response.text).not.toContain('confidential-');
+          expect(require('~/server/services/MCP').resolveConfigServers).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each(['http', 'streamable-http', 'sse'])(
+        'returns a managed %s configuration without service credentials',
+        async (type) => {
+          mockRegistryInstance.getServerConfig.mockResolvedValue({
+            type,
+            url: 'https://mcp.test/server',
+            dbId: connectionId,
+            apiKey: { source: 'admin', authorization_type: 'bearer', key: 'confidential-key' },
+            oauth: { client_id: 'client', client_secret: 'confidential-client-secret' },
+          });
+
+          const response = await request(app).get('/api/mcp/servers/server');
+
+          expect(response.status).toBe(200);
+          expect(response.body).toMatchObject({ type, dbId: connectionId });
+          expect(response.text).not.toContain('confidential-');
+          expect(response.body.apiKey).not.toHaveProperty('key');
+          expect(response.body.oauth).not.toHaveProperty('client_secret');
+          expect(require('~/server/services/MCP').resolveConfigServers).not.toHaveBeenCalled();
+        },
+      );
+    });
+
     describe('failed administrative actions', () => {
       const connectionId = '507f1f77bcf86cd799439011';
       const state = 'opaque-confidential-state';
