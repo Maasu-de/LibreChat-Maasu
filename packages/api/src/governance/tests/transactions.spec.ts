@@ -160,6 +160,72 @@ it('rolls back both server and owner ACL when create audit storage fails', async
   expect(await schemas.runAsSystem(() => models.MCPServer.countDocuments())).toBe(0);
   expect(await schemas.runAsSystem(() => models.AclEntry.countDocuments())).toBe(0);
 });
+it('audits rejected creations with distinct attempt references and no submitted secrets', async () => {
+  const responses = await Promise.all(
+    [
+      { type: 'stdio', command: 'confidential-command' },
+      { ...config, url: 'https://mcp.example/server?key=confidential-url-key' },
+    ].map((input) => request(app).post('/servers').send({ config: input })),
+  );
+  expect(responses.map(({ status }) => status)).toEqual([400, 400]);
+  expect(await schemas.runAsSystem(() => models.MCPServer.countDocuments())).toBe(0);
+  expect(await schemas.runAsSystem(() => models.AclEntry.countDocuments())).toBe(0);
+  const events = await outbox().find({}).toArray();
+  expect(events).toHaveLength(2);
+  expect(new Set(events.map(({ payload }) => payload.resource.id)).size).toBe(2);
+  for (const event of events) {
+    expect(event.payload).toMatchObject({
+      action: 'mcp.created',
+      outcome: 'failure',
+      actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+      resource: { type: 'mcp_connection', id: expect.stringMatching(/^[a-f0-9]{24}$/) },
+      occurred_at: expect.any(String),
+    });
+  }
+  expect(JSON.stringify(events)).not.toMatch(/confidential|mcp\.example/);
+});
+it('audits an inspection failure with a safe creation-attempt reference', async () => {
+  const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+  jest
+    .mocked(MCPServerInspector.inspect)
+    .mockRejectedValueOnce(new Error('Unreachable server with confidential-service-key'));
+  const response = await request(app).post('/servers').send({ config });
+  expect(response.status).toBe(400);
+  expect(await schemas.runAsSystem(() => models.MCPServer.countDocuments())).toBe(0);
+  expect(await schemas.runAsSystem(() => models.AclEntry.countDocuments())).toBe(0);
+  const events = await outbox().find({}).toArray();
+  expect(events).toHaveLength(1);
+  expect(events[0].payload).toMatchObject({
+    action: 'mcp.created',
+    outcome: 'failure',
+    actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+    resource: { type: 'mcp_connection', id: expect.stringMatching(/^[a-f0-9]{24}$/) },
+  });
+  expect(JSON.stringify(events)).not.toMatch(/confidential|mcp\.example/);
+});
+it('audits a rolled-back creation after a transient audit-storage failure', async () => {
+  failAudit(true);
+  const response = await request(app).post('/servers').send({ config });
+  expect(response.status).toBeGreaterThanOrEqual(400);
+  expect(await schemas.runAsSystem(() => models.MCPServer.countDocuments())).toBe(0);
+  expect(await schemas.runAsSystem(() => models.AclEntry.countDocuments())).toBe(0);
+  const events = await outbox().find({}).toArray();
+  expect(events).toHaveLength(1);
+  expect(events[0].payload).toMatchObject({
+    action: 'mcp.created',
+    outcome: 'failure',
+    resource: { type: 'mcp_connection', id: expect.stringMatching(/^[a-f0-9]{24}$/) },
+  });
+  expect(JSON.stringify(events)).not.toContain('confidential-service-key');
+});
+it('does not audit rejected creation input outside governed mode', async () => {
+  process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+  const response = await request(app)
+    .post('/servers')
+    .send({ config: { type: 'stdio', command: 'confidential-command' } });
+  expect(response.status).toBe(400);
+  expect(await outbox().countDocuments()).toBe(0);
+});
 it('rolls back an update when enqueue fails and records the actual failed outcome', async () => {
   const name = await create();
   const previous = await schemas.runAsSystem(() =>

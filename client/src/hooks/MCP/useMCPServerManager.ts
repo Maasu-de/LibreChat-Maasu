@@ -33,7 +33,7 @@ import { mcpServerInitStatesAtom, getServerInitState } from '~/store/mcp';
 
 export interface MCPServerDefinition {
   serverName: string;
-  config: MCPOptions;
+  config: MCPOptions & { updatedAt?: number };
   dbId?: string; // MongoDB ObjectId for database servers (used for permissions)
   effectivePermissions: number; // Permission bits (VIEW=1, EDIT=2, DELETE=4, SHARE=8)
   consumeOnly?: boolean;

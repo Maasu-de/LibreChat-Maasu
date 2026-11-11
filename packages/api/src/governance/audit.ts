@@ -187,14 +187,19 @@ export function createGovernanceMCPMutation(
   return (operation, connectionId) => mutateGovernanceMCP(req, action, operation, connectionId);
 }
 
+/** Failed creations use an opaque attempt reference because no connection was persisted. */
 export async function recordGovernanceMCPFailure(
   req: ServerRequest,
   action: MCPAuditAction,
   connectionId?: string,
 ): Promise<void> {
-  if (!connectionId) return;
+  if (!isGovernancePilotEnabled()) return;
   try {
-    await queueGovernanceMCPAudit(req, action, connectionId, 'failure');
+    const reference =
+      connectionId ??
+      (action === 'mcp.created' ? new mongoose.Types.ObjectId().toHexString() : undefined);
+    if (!reference) return;
+    await queueGovernanceMCPAudit(req, action, reference, 'failure');
   } catch {
     logger.warn('[Governance MCP] Failed operation could not be recorded');
   }

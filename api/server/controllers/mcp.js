@@ -355,12 +355,14 @@ const createMCPServerController = async (req, res) => {
 
     const validation = MCPServerUserInputSchema.safeParse(config);
     if (!validation.success) {
+      await recordGovernanceMCPFailure(req, 'mcp.created');
       return res.status(400).json({
         message: 'Invalid configuration',
         errors: validation.error.errors,
       });
     }
     if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(validation.data)) {
+      await recordGovernanceMCPFailure(req, 'mcp.created');
       return res
         .status(400)
         .json({ message: 'Only remote administrative MCP connections are supported' });

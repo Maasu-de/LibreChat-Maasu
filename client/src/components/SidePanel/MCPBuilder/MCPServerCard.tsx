@@ -51,6 +51,15 @@ export default function MCPServerCard({
   const description = server.config?.description;
   const statusDotColor = getStatusDotColor(serverStatus, isInitializing);
   const canEdit = canCreateEditMCPs && canEditThisServer;
+  const inspectionRevision =
+    administration &&
+    (server.config.updatedAt ??
+      JSON.stringify([
+        server.config.type,
+        'url' in server.config ? server.config.url : undefined,
+        server.config.apiKey,
+        server.config.oauth,
+      ]));
 
   const handleInitialize = () => {
     /** If server has custom user vars and is not already connected, show config dialog first
@@ -149,7 +158,12 @@ export default function MCPServerCard({
         </div>
       </div>
 
-      {administration && <MCPInspection serverName={server.serverName} />}
+      {administration && (
+        <MCPInspection
+          key={`${server.dbId ?? server.serverName}:${inspectionRevision}`}
+          serverName={server.serverName}
+        />
+      )}
 
       {/* Edit Dialog - separate from card */}
       {canEdit && (
