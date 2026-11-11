@@ -15,7 +15,7 @@ import type { ServerRequest } from '~/types/http';
 import type { MCPOAuthTokens } from '~/mcp/oauth';
 import { MCPOAuthHandler } from '~/mcp/oauth';
 import { FlowStateManager, PENDING_STALE_MS } from '~/flow/manager';
-import { generateOAuthCsrfToken } from '~/oauth/csrf';
+import { generateOAuthCsrfToken, setOAuthCsrfCookie, setOAuthSessionCookie } from '~/oauth/csrf';
 import { createGovernanceMCPOAuthFailureHandler, rejectGovernanceMCPUpdate } from '../mcp';
 
 const environment = process.env;
@@ -93,7 +93,13 @@ function app(requestTenant?: string) {
   const server = express();
   server.use(express.json());
   server.use((req, _res, next) => {
-    req.cookies = { oauth_csrf: req.get('x-test-csrf'), oauth_session: req.get('x-test-session') };
+    req.cookies = {
+      oauth_csrf:
+        req.get('x-test-csrf') ?? req.headers.cookie?.match(/(?:^|;\s*)oauth_csrf=([^;]+)/)?.[1],
+      oauth_session:
+        req.get('x-test-session') ??
+        req.headers.cookie?.match(/(?:^|;\s*)oauth_session=([^;]+)/)?.[1],
+    };
     Object.assign(req, { user: { id: 'browser-supplied-actor', role: 'USER' } });
     if (requestTenant) tenantStorage.run({ tenantId: requestTenant }, next);
     else next();
@@ -111,6 +117,7 @@ function app(requestTenant?: string) {
     },
   });
   server.get('/callback/:serverName', handler);
+  server.get('/:serverName/oauth/callback', handler);
   server.patch('/rejected', (req, res) => {
     Object.assign(req, { user: actor });
     return rejectGovernanceMCPUpdate(
@@ -122,6 +129,38 @@ function app(requestTenant?: string) {
   });
   return { server, contexts };
 }
+
+it('audits a denied authorization using browser cookies under the public chat base path', async () => {
+  process.env.SESSION_COOKIE_SECURE = 'false';
+  const { server: callbacks, contexts } = app();
+  const server = express();
+  server.get('/chat/api/mcp/bind', (_req, res) => {
+    setOAuthCsrfCookie(res, flowId, '/api/mcp');
+    setOAuthSessionCookie(res, actor.id);
+    res.sendStatus(204);
+  });
+  server.use('/chat/api/mcp', callbacks);
+  const browser = request.agent(server);
+  await browser.get('/chat/api/mcp/bind').expect(204);
+
+  const response = await browser
+    .get(`/chat/api/mcp/${serverName}/oauth/callback`)
+    .query({ state, error: 'access_denied' });
+
+  expect(response.headers.location).toBe('/chat/oauth/error?error=authorization_failed');
+  expect((await outbox().findOne())?.payload).toMatchObject({
+    action: 'mcp.oauth.authorized',
+    outcome: 'failure',
+    actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+    resource: { type: 'mcp_connection', id: connectionId },
+  });
+  expect(contexts).toEqual([tenantId, tenantId]);
+  expect(await manager.getFlowState(flowId, 'mcp_oauth')).toMatchObject({
+    status: 'FAILED',
+    error: 'authorization_failed',
+  });
+  expect(await models.Token.countDocuments({})).toBe(0);
+});
 
 it.each(['csrf', 'session'])(
   'audits the real flow actor and restores its tenant using the %s browser binding',
