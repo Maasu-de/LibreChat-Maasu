@@ -14,6 +14,7 @@ const {
   isGovernanceMCPAuditConfigured,
   queueGovernanceMCPAudit,
   createGovernanceMCPHandlers,
+  createGovernanceMCPOAuthFailureHandler,
   createSafeUser,
   MCPOAuthHandler,
   MCPTokenStorage,
@@ -64,6 +65,11 @@ router.use((req, res, next) => {
 });
 
 const OAUTH_CSRF_COOKIE_PATH = '/api/mcp';
+const failGovernanceMCPOAuth = createGovernanceMCPOAuthFailureHandler({
+  getFlowManager: () => getFlowStateManager(getLogStores(CacheKeys.FLOWS)),
+  findUser: db.findUser,
+  getServerConfig: (...args) => getMCPServersRegistry().getServerConfig(...args),
+});
 
 const getOAuthFlowId = (userId, serverName) =>
   MCPOAuthHandler.generateFlowId(userId, serverName, getTenantId());
@@ -248,12 +254,19 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
     const { serverName } = req.params;
     const { code, state, error: oauthError } = req.query;
 
-    logger.debug('[MCP OAuth] Callback received', {
-      serverName,
-      code: code ? 'present' : 'missing',
-      state,
-      error: oauthError,
-    });
+    logger.debug(
+      '[MCP OAuth] Callback received',
+      isGovernancePilotEnabled()
+        ? {
+            serverName,
+            hasCode: Boolean(code),
+            hasState: Boolean(state),
+            hasError: Boolean(oauthError),
+          }
+        : { serverName, code: code ? 'present' : 'missing', state, error: oauthError },
+    );
+
+    if (oauthError && isGovernancePilotEnabled()) return failGovernanceMCPOAuth(req, res);
 
     if (oauthError) {
       const failure = isGovernancePilotEnabled() ? 'authorization_failed' : String(oauthError);

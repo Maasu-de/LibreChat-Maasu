@@ -11,6 +11,7 @@ const {
   isGovernancePilotEnabled,
   isGovernanceRemoteMCP,
   preserveGovernanceMCPSecrets,
+  rejectGovernanceMCPUpdate,
   queueGovernanceMCPAudit,
   isUserSourced,
   MCPErrorCodes,
@@ -439,19 +440,29 @@ const updateMCPServerController = async (req, res) => {
     const userId = req.user?.id;
     const { serverName } = req.params;
     const { config } = req.body;
+    let existingConfig;
+    if (isGovernancePilotEnabled()) {
+      existingConfig = await getMCPServersRegistry().getServerConfig(serverName, userId);
+      connectionId = existingConfig?.dbId;
+    }
 
     const validation = MCPServerUserInputSchema.safeParse(config);
     if (!validation.success) {
-      return res.status(400).json({
-        message: 'Invalid configuration',
-        errors: validation.error.errors,
-      });
+      return rejectGovernanceMCPUpdate(
+        req,
+        res,
+        { message: 'Invalid configuration', errors: validation.error.errors },
+        connectionId,
+      );
     }
 
     if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(validation.data)) {
-      return res
-        .status(400)
-        .json({ message: 'Only remote administrative MCP connections are supported' });
+      return rejectGovernanceMCPUpdate(
+        req,
+        res,
+        { message: 'Only remote administrative MCP connections are supported' },
+        connectionId,
+      );
     }
 
     /**
@@ -462,7 +473,7 @@ const updateMCPServerController = async (req, res) => {
      * to point OBO-minted tokens at an attacker-controlled endpoint. Adds,
      * modifies, and removes are all caught.
      */
-    const existingConfig = await getMCPServersRegistry().getServerConfig(serverName, userId);
+    existingConfig ??= await getMCPServersRegistry().getServerConfig(serverName, userId);
     connectionId = existingConfig?.dbId;
     if (configHasObo(existingConfig) && !(await callerCanConfigureObo(req))) {
       if (violatesOboLockdown(existingConfig, validation.data)) {

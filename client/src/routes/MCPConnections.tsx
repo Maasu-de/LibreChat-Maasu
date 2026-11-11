@@ -5,6 +5,7 @@ import { useGatewaySessionWatch } from '~/data-provider';
 import MCPBuilderPanel from '~/components/SidePanel/MCPBuilder/MCPBuilderPanel';
 import { MCPAdministrationContext } from '~/components/SidePanel/MCPBuilder/administration';
 import useAuthRedirect from './useAuthRedirect';
+import './MCPConnections.css';
 
 export default function MCPConnections({ embedded = false }: { embedded?: boolean }) {
   const localize = useLocalize();
@@ -79,14 +80,14 @@ export default function MCPConnections({ embedded = false }: { embedded?: boolea
         aria-label={localize('com_ui_mcp_connections')}
         className={
           embedded
-            ? 'h-full w-full overflow-y-auto bg-surface-primary p-4 text-text-primary'
-            : 'mx-auto min-h-screen w-full max-w-5xl bg-surface-primary p-6 text-text-primary'
+            ? 'mcp-connections h-full w-full overflow-y-auto text-text-primary'
+            : 'mcp-connections mx-auto min-h-screen w-full max-w-5xl p-6 text-text-primary'
         }
       >
         {!embedded && (
           <h1 className="text-2xl font-semibold">{localize('com_ui_mcp_connections')}</h1>
         )}
-        <p className="mb-6 mt-2 text-sm text-text-secondary">
+        <p className="mcp-connections-description">
           {localize('com_ui_mcp_connections_description')}
         </p>
         <MCPBuilderPanel />

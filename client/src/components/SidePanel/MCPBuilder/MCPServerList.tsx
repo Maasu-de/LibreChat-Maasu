@@ -27,7 +27,7 @@ export default function MCPServerList({
 
   if (servers.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-lg border border-border-light bg-transparent p-6 text-center">
+      <div className="mcp-server-empty flex flex-col items-center justify-center rounded-lg border border-border-light bg-transparent p-6 text-center">
         <div className="mb-2 flex size-10 items-center justify-center rounded-full bg-surface-tertiary">
           <MCPIcon className="size-5 text-text-secondary" aria-hidden="true" />
         </div>
@@ -48,7 +48,11 @@ export default function MCPServerList({
   }
 
   return (
-    <div className="space-y-2" role="list" aria-label={localize('com_ui_mcp_servers')}>
+    <div
+      className="mcp-server-list space-y-2"
+      role="list"
+      aria-label={localize('com_ui_mcp_servers')}
+    >
       {servers.map((server) => (
         <div key={`card_${server.serverName}`} role="listitem">
           <MCPServerCard

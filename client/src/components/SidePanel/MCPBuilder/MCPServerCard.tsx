@@ -93,7 +93,7 @@ export default function MCPServerCard({
     <>
       <div
         className={cn(
-          'group flex items-center gap-3 rounded-lg px-3 py-2.5',
+          'mcp-server-card group flex items-center gap-3 rounded-lg px-3 py-2.5',
           'border border-border-light bg-transparent',
         )}
         aria-label={`${displayName} - ${getStatusText()}`}
@@ -125,7 +125,7 @@ export default function MCPServerCard({
         </div>
 
         {/* Server Info */}
-        <div className="min-w-0 flex-1">
+        <div className="mcp-server-info min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-text-primary">{displayName}</div>
           {description && <p className="truncate text-xs text-text-secondary">{description}</p>}
         </div>

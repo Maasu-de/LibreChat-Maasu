@@ -7,7 +7,7 @@ export default function MCPInspection({ serverName }: { serverName: string }) {
   const inspection = useInspectMCPServerMutation();
 
   return (
-    <div className="space-y-3 border-x border-b border-border-light p-3">
+    <div className="mcp-inspection space-y-3 border-x border-b border-border-light p-3">
       <Button
         variant="outline"
         onClick={() => inspection.mutate(serverName)}

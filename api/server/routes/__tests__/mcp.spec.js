@@ -288,6 +288,129 @@ describe('MCP Routes', () => {
       expect(mockRegistryInstance.getAllServerConfigs).not.toHaveBeenCalled();
     });
 
+    describe('failed administrative actions', () => {
+      const connectionId = '507f1f77bcf86cd799439011';
+      const state = 'opaque-confidential-state';
+      const flowId = 'test-user-id:test-server';
+      const outbox = () => mongoose.connection.db.collection('governance_group_audit_outbox');
+      let manager;
+      beforeEach(async () => {
+        await outbox().deleteMany({});
+        require('~/models').findUser.mockResolvedValue(actor);
+        mockRegistryInstance.getServerConfig.mockResolvedValue({
+          type: 'sse',
+          url: 'https://mcp.test/server',
+          dbId: connectionId,
+          requiresOAuth: true,
+        });
+        manager = {
+          getFlowState: jest.fn(async (id, type) => {
+            if (id === state && type === 'mcp_oauth_state') return { metadata: { flowId } };
+            if (id === flowId && type === 'mcp_oauth')
+              return {
+                type,
+                status: 'PENDING',
+                createdAt: Date.now(),
+                metadata: { state, serverName: 'test-server', userId: actor.id },
+              };
+            return null;
+          }),
+          failFlow: jest.fn().mockResolvedValue(true),
+        };
+        require('~/config').getFlowStateManager.mockReturnValue(manager);
+      });
+
+      it('audits a validated OAuth provider failure without logging provider details or state', async () => {
+        const { MCPOAuthHandler, MCPTokenStorage } = require('@librechat/api');
+        const { logger } = require('@librechat/data-schemas');
+        const response = await request(app)
+          .get('/api/mcp/test-server/oauth/callback')
+          .set('Cookie', [`oauth_csrf=${generateTestCsrfToken(flowId)}`])
+          .query({ state, error: 'confidential-provider-error' });
+        expect(response.headers.location).toContain('/oauth/error?error=authorization_failed');
+        expect(manager.failFlow).toHaveBeenCalledWith(flowId, 'mcp_oauth', 'authorization_failed');
+        expect((await outbox().findOne()).payload).toMatchObject({
+          action: 'mcp.oauth.authorized',
+          outcome: 'failure',
+          actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+          resource: { type: 'mcp_connection', id: connectionId },
+        });
+        expect(MCPOAuthHandler.completeOAuthFlow).not.toHaveBeenCalled();
+        expect(MCPTokenStorage.storeTokens).not.toHaveBeenCalled();
+        const logs = JSON.stringify([
+          logger.debug.mock.calls,
+          logger.error.mock.calls,
+          logger.warn.mock.calls,
+        ]);
+        expect(logs).not.toContain(state);
+        expect(logs).not.toContain('confidential-provider-error');
+      });
+
+      it.each(['state', 'cookie', 'path'])(
+        'does not record or fail a forged callback with the wrong %s',
+        async (invalid) => {
+          const response = await request(app)
+            .get(`/api/mcp/${invalid === 'path' ? 'another-server' : 'test-server'}/oauth/callback`)
+            .set('Cookie', [
+              `oauth_csrf=${generateTestCsrfToken(invalid === 'cookie' ? 'another-flow' : flowId)}`,
+            ])
+            .query({ state: invalid === 'state' ? 'forged-state' : state, error: 'access_denied' });
+          expect(response.headers.location).toContain('/oauth/error?error=authorization_failed');
+          expect(await outbox().countDocuments()).toBe(0);
+          expect(manager.failFlow).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each([
+        { type: 'stdio', command: 'sh' },
+        { type: 'sse', url: 'https://mcp.test/server?secret=confidential-input' },
+      ])(
+        'audits invalid updates to a known connection without mutating its configuration',
+        async (config) => {
+          const response = await request(app)
+            .patch('/api/mcp/servers/test-server')
+            .send({ config });
+          expect(response.status).toBe(400);
+          expect(mockRegistryInstance.updateServer).not.toHaveBeenCalled();
+          expect((await outbox().findOne()).payload).toMatchObject({
+            action: 'mcp.updated',
+            outcome: 'failure',
+            actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+            resource: { type: 'mcp_connection', id: connectionId },
+          });
+          expect(JSON.stringify(await outbox().findOne())).not.toContain('confidential-input');
+        },
+      );
+
+      it('does not invent an audit reference for an invalid update to an unknown connection', async () => {
+        mockRegistryInstance.getServerConfig.mockResolvedValue(undefined);
+        const response = await request(app).patch('/api/mcp/servers/missing').send({ config: {} });
+        expect(response.status).toBe(400);
+        expect(await outbox().countDocuments()).toBe(0);
+        expect(mockRegistryInstance.updateServer).not.toHaveBeenCalled();
+      });
+
+      it('returns a failed response without mutation when rejected-update audit storage fails', async () => {
+        const database = mongoose.connection.db;
+        const original = database.collection.bind(database);
+        const failure = jest.spyOn(database, 'collection').mockImplementation((name, options) => {
+          if (name === 'governance_group_audit_outbox')
+            throw new Error('confidential-outbox-failure');
+          return original(name, options);
+        });
+        try {
+          const response = await request(app)
+            .patch('/api/mcp/servers/test-server')
+            .send({ config: {} });
+          expect(response.status).toBe(503);
+          expect(response.text).not.toContain('confidential-outbox-failure');
+          expect(mockRegistryInstance.updateServer).not.toHaveBeenCalled();
+        } finally {
+          failure.mockRestore();
+        }
+      });
+    });
+
     it.each(['GOVERNANCE_ADMIN', 'USER', 'ADMIN', 'system'])(
       'completes authorization only for an OIDC governance actor: %s',
       async (role) => {

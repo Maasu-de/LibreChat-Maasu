@@ -1,15 +1,23 @@
+import { getTenantId, tenantStorage, logger } from '@librechat/data-schemas';
 import { Constants, SystemRoles } from 'librechat-data-provider';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { MCPManager } from '~/mcp/MCPManager';
 import type { MCPServersRegistry } from '~/mcp/registry/MCPServersRegistry';
-import type { AppConfig } from '@librechat/data-schemas';
+import type { AppConfig, AllMethods } from '@librechat/data-schemas';
+import type { MCPOAuthTokens } from '~/mcp/oauth';
+import type { FlowStateManager } from '~/flow/manager';
+import type { ZodIssue } from 'zod';
 import type { ParsedServerConfig } from '~/mcp/types';
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 import type { ServerRequest } from '~/types/http';
 import type { MCPOptions, MCPServerUserInput } from 'librechat-data-provider';
 import { isGovernancePilotEnabled } from './mode';
 import { isGovernanceMCPAuditConfigured, queueGovernanceMCPAudit } from './audit';
 import { createSafeUser } from '~/utils/env';
+import { MCPOAuthHandler } from '~/mcp/oauth';
+import { validateOAuthCsrf, validateOAuthSession } from '~/oauth/csrf';
+import { PENDING_STALE_MS } from '~/flow/manager';
+import { getBasePath } from '~/utils/path';
 
 /** The administrative surface cannot expose execution, sharing, or token retrieval. */
 export function isGovernanceMCPApi(method: string, path: string): boolean {
@@ -177,4 +185,102 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
     }
   };
   return { inspect, revoke };
+}
+
+interface GovernanceMCPOAuthFailureDependencies {
+  getFlowManager: () => FlowStateManager<MCPOAuthTokens | null>;
+  findUser: AllMethods['findUser'];
+  getServerConfig: MCPServersRegistry['getServerConfig'];
+}
+
+/** Only a browser-bound, pending administrator flow may produce a failed authorization event. */
+export function createGovernanceMCPOAuthFailureHandler(
+  deps: GovernanceMCPOAuthFailureDependencies,
+): RequestHandler<{ serverName: string }> {
+  return async (req, res) => {
+    const redirect = `${getBasePath()}/oauth/error?error=`;
+    const { state, error } = req.query;
+    const { serverName } = req.params;
+    try {
+      if (typeof state !== 'string' || !state || typeof error !== 'string' || !error) {
+        res.redirect(`${redirect}authorization_failed`);
+        return;
+      }
+      const manager = deps.getFlowManager();
+      const flowId = await MCPOAuthHandler.resolveStateToFlowId(state, manager);
+      const parsed = flowId ? MCPOAuthHandler.parseFlowId(flowId) : null;
+      if (!flowId || !parsed || parsed.userId === 'system' || parsed.serverName !== serverName) {
+        res.redirect(`${redirect}authorization_failed`);
+        return;
+      }
+      const flow = await manager.getFlowState(flowId, 'mcp_oauth');
+      const age = flow ? Date.now() - flow.createdAt : Infinity;
+      const tenantId = getTenantId();
+      if (
+        !flow ||
+        flow.type !== 'mcp_oauth' ||
+        flow.status !== 'PENDING' ||
+        !Number.isFinite(age) ||
+        age < 0 ||
+        age >= PENDING_STALE_MS ||
+        flow.metadata.state !== state ||
+        flow.metadata.userId !== parsed.userId ||
+        flow.metadata.serverName !== serverName ||
+        flow.metadata.tenantId !== parsed.tenantId ||
+        (tenantId && tenantId !== parsed.tenantId)
+      ) {
+        res.redirect(`${redirect}authorization_failed`);
+        return;
+      }
+      const browserBound =
+        validateOAuthCsrf(req, res, flowId, '/api/mcp') || validateOAuthSession(req, parsed.userId);
+      if (!browserBound) {
+        res.redirect(`${redirect}authorization_failed`);
+        return;
+      }
+      const fail = async () => {
+        const actor = await deps.findUser({ _id: parsed.userId });
+        const connection = await deps.getServerConfig(serverName, parsed.userId);
+        if (
+          actor?.provider !== 'openid' ||
+          actor.role !== SystemRoles.GOVERNANCE_ADMIN ||
+          !connection?.dbId ||
+          !isGovernanceRemoteMCP(connection)
+        )
+          return;
+        await queueGovernanceMCPAudit(
+          { user: actor } as ServerRequest,
+          'mcp.oauth.authorized',
+          connection.dbId,
+          'failure',
+        );
+        await manager.failFlow(flowId, 'mcp_oauth', 'authorization_failed');
+      };
+      if (parsed.tenantId && !tenantId)
+        await tenantStorage.run({ tenantId: parsed.tenantId }, fail);
+      else await fail();
+      res.redirect(`${redirect}authorization_failed`);
+    } catch {
+      logger.warn('[Governance MCP] Failed authorization could not be recorded');
+      res.redirect(`${redirect}callback_failed`);
+    }
+  };
+}
+
+export async function rejectGovernanceMCPUpdate(
+  req: ServerRequest,
+  res: Response,
+  error: { message: string; errors?: ZodIssue[] },
+  connectionId?: string,
+): Promise<void> {
+  if (isGovernancePilotEnabled() && connectionId) {
+    try {
+      await queueGovernanceMCPAudit(req, 'mcp.updated', connectionId, 'failure');
+    } catch {
+      logger.warn('[Governance MCP] Rejected update could not be recorded');
+      res.status(503).json({ message: 'MCP administration audit is unavailable' });
+      return;
+    }
+  }
+  res.status(400).json(error);
 }
