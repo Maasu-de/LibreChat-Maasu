@@ -95,6 +95,32 @@ describe('ServerConfigsDB', () => {
       process.env = { ...environment };
     });
 
+    it.each(['streamable-http', 'http', 'sse'] as const)(
+      'keeps queried %s connections visible and editable for OIDC administrators',
+      async (type) => {
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        const administrator = await mongoose.models.User.create({
+          email: `mcp-query-${type}@example.test`,
+          provider: 'openid',
+          role: 'GOVERNANCE_ADMIN',
+        });
+        const url = 'https://example.com/mcp?tenant=acme&api-version=2';
+        const created = await serverConfigsDB.add('queried', { type, url }, administrator.id);
+        expect((await serverConfigsDB.get(created.serverName, administrator.id))?.url).toBe(url);
+        expect((await serverConfigsDB.getAll(administrator.id))[created.serverName]?.url).toBe(url);
+
+        const updatedUrl = 'https://example.com/mcp?tenant=another&api-version=3';
+        await serverConfigsDB.update(
+          created.serverName,
+          { type, url: updatedUrl },
+          administrator.id,
+        );
+        expect((await serverConfigsDB.get(created.serverName, administrator.id))?.url).toBe(
+          updatedUrl,
+        );
+      },
+    );
+
     it('shares remote management between OIDC administrators, denies users, and keeps service credentials encrypted', async () => {
       process.env.GOVERNANCE_PILOT_ENABLED = 'true';
       const [owner, administrator, regular] = await mongoose.models.User.create([

@@ -24,6 +24,29 @@ import { validateOAuthCsrf, validateOAuthSession } from '~/oauth/csrf';
 import { PENDING_STALE_MS } from '~/flow/manager';
 import { getBasePath } from '~/utils/path';
 
+const credentialQueryParameter =
+  /^(authorization|proxyauthorization|auth|key|apikey|xapikey|accesskey|subscriptionkey|token|accesstoken|refreshtoken|idtoken|authtoken|secret|clientsecret|password|passwd|pwd|credential|credentials|signature|sig|jwt|session|sessionid|sessiontoken|assertion|code|xamzcredential|xamzsignature|xamzsecuritytoken|xgoogcredential|xgoogsignature)$/i;
+
+function isGovernanceMCPUrl(value: string, allowRoutingParameters = false): boolean {
+  try {
+    const url = new URL(value);
+    const allowedQuery = allowRoutingParameters
+      ? !Array.from(url.searchParams.keys()).some((name) =>
+          credentialQueryParameter.test(name.replace(/[^a-z0-9]/gi, '')),
+        )
+      : !url.search;
+    return (
+      ['http:', 'https:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      allowedQuery &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** The administrative surface cannot expose execution, sharing, or token retrieval. */
 export function isGovernanceMCPApi(method: string, path: string): boolean {
   const normalized = path.replace(/\/+$/, '');
@@ -55,28 +78,15 @@ export function isGovernanceRemoteMCP(config: MCPOptions | MCPServerUserInput): 
   if ('headers' in candidate && Object.keys(candidate.headers ?? {}).length) return false;
   if ('oauth_headers' in candidate && Object.keys(candidate.oauth_headers ?? {}).length)
     return false;
+  if (!isGovernanceMCPUrl(candidate.url, true)) return false;
   return [
-    candidate.url,
     candidate.oauth?.authorization_url,
     candidate.oauth?.token_url,
     candidate.oauth?.revocation_endpoint,
     candidate.oauth?.redirect_uri,
   ]
     .filter((value): value is string => typeof value === 'string' && Boolean(value))
-    .every((value) => {
-      try {
-        const url = new URL(value);
-        return (
-          ['http:', 'https:'].includes(url.protocol) &&
-          !url.username &&
-          !url.password &&
-          !url.search &&
-          !url.hash
-        );
-      } catch {
-        return false;
-      }
-    });
+    .every((value) => isGovernanceMCPUrl(value));
 }
 
 export function preserveGovernanceMCPSecrets(

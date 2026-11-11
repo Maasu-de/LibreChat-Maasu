@@ -183,6 +183,43 @@ describe('remote administrative connection input', () => {
     },
   );
 
+  it.each(['streamable-http', 'http', 'sse'])(
+    'preserves non-secret routing parameters for remote %s connections',
+    (type) => {
+      const config = MCPServerUserInputSchema.parse({
+        type,
+        url: 'https://mcp.example/server?tenant=acme&api-version=2&toolset=read&toolset=write',
+      });
+      expect(isGovernanceRemoteMCP(config)).toBe(true);
+    },
+  );
+
+  it.each([
+    'api_key',
+    'apiKey',
+    'X-API-Key',
+    'access_token',
+    'refreshToken',
+    'ID-TOKEN',
+    'client_secret',
+    'secret',
+    'password',
+    'authorization',
+    'credential',
+    'signature',
+    'sig',
+    'session_id',
+    'X-Amz-Security-Token',
+    'X-Goog-Credential',
+    '%61pi_key',
+  ])('rejects credential parameter %s alongside non-secret routing parameters', (name) => {
+    const config = MCPServerUserInputSchema.parse({
+      type: 'streamable-http',
+      url: `https://mcp.example/server?tenant=acme&${name}=secret&tenant=another`,
+    });
+    expect(isGovernanceRemoteMCP(config)).toBe(false);
+  });
+
   it('accepts administrator credentials and leaves response redaction to existing storage', () => {
     const config = MCPServerUserInputSchema.parse({
       type: 'streamable-http',
