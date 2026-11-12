@@ -4,6 +4,7 @@
   "com_ui_mcp_admin_required": "A Governance administrator role is required.",
   "com_ui_mcp_invalid_admin_connection": "Use a remote HTTP or SSE connection. Only tenant, api-version, and toolset routing parameters are supported in the connection URL. Enter service credentials in Authentication, not in the URL.",
   "com_ui_mcp_inspect": "Inspect connection and tools",
+  "com_ui_mcp_inspection_hide": "Hide connection and tools",
   "com_ui_mcp_inspection_success": "Connection inspected successfully. No tools were executed.",
   "com_ui_mcp_no_tools": "No tools discovered.",
   "com_ui_mcp_authorized": "Authorized",
