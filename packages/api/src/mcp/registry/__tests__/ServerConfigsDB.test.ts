@@ -7,6 +7,7 @@ import {
   PermissionBits,
   PrincipalModel,
 } from 'librechat-data-provider';
+import type { MCPServerDocument } from '@librechat/data-schemas';
 import type { ParsedServerConfig } from '~/mcp/types';
 
 type ServerConfigsDBType = import('../db/ServerConfigsDB').ServerConfigsDB;
@@ -183,8 +184,9 @@ describe('ServerConfigsDB', () => {
       ).rejects.toThrow();
       const persisted = await mongoose.models.MCPServer.findOne({
         serverName: safe.serverName,
-      }).lean();
-      expect(persisted.config.url).toBe(safeUrl);
+      }).lean<MCPServerDocument | null>();
+      if (!persisted) throw new Error('Expected the existing MCP connection to remain stored');
+      expect(persisted.config).toMatchObject({ type: 'sse', url: safeUrl });
       expect(JSON.stringify(persisted)).not.toContain('must-not-be-persisted');
       expect((await serverConfigsDB.get(safe.serverName, administrator.id))?.url).toBe(safeUrl);
     });

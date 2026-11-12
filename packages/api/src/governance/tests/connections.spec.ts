@@ -273,7 +273,7 @@ it('reuses an authorized connection but discards it when another process revokes
     expect(await fixture.start()).toBe(initial);
     await fixture.revoke(new MCPManager());
     await expect(fixture.start()).rejects.toThrow('OAuth flow initiated - return early');
-    expect(initial.connectionState).toBe('disconnected');
+    await expect(initial.isConnected()).resolves.toBe(false);
     expect(
       fixture.manager.getUserConnections(fixture.actor.id)?.has(fixture.serverName) ?? false,
     ).toBe(false);
@@ -293,7 +293,7 @@ it('does not relabel an old connection after revocation and fresh authorization 
     fixture.requests.length = 0;
     const replacement = await fixture.start();
     expect(replacement).not.toBe(initial);
-    expect(initial.connectionState).toBe('disconnected');
+    await expect(initial.isConnected()).resolves.toBe(false);
     expect(fixture.requests).toContain(`Bearer ${freshToken}`);
     expect(fixture.requests).not.toContain(`Bearer ${initialToken}`);
     expect(await fixture.start()).toBe(replacement);
@@ -318,7 +318,8 @@ it('discards a tentative cache entry when its publication transaction fails', as
     );
   try {
     await expect(fixture.start()).rejects.toBe(failure);
-    expect(unpublished?.connectionState).toBe('disconnected');
+    if (!unpublished) throw new Error('MCP connection was not published');
+    await expect(unpublished.isConnected()).resolves.toBe(false);
     expect(
       fixture.manager.getUserConnections(fixture.actor.id)?.has(fixture.serverName) ?? false,
     ).toBe(false);
@@ -340,7 +341,7 @@ it('does not reconnect a disposed governed connection after a queued reconnect d
     await new Promise((resolve) => setTimeout(resolve, 2100));
     expect(fixture.requests).toHaveLength(count);
     expect(disconnect).toHaveBeenCalledTimes(cleanupCalls);
-    expect(connection.connectionState).toBe('disconnected');
+    await expect(connection.isConnected()).resolves.toBe(false);
   } finally {
     await fixture.close();
   }
@@ -376,7 +377,7 @@ it('does not restore a connection disposed during an in-flight reconnect handsha
     await fixture.manager.disconnectUserConnection(fixture.actor.id, fixture.serverName);
     gate.release();
     await expect(reconnect).rejects.toThrow();
-    expect(connection.connectionState).toBe('disconnected');
+    await expect(connection.isConnected()).resolves.toBe(false);
     expect(
       fixture.manager.getUserConnections(fixture.actor.id)?.has(fixture.serverName) ?? false,
     ).toBe(false);
