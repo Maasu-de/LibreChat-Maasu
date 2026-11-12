@@ -63,6 +63,13 @@ describe('resolveUsageLabels', () => {
     process.env = { ...originalEnv };
   });
 
+  it('resolves usage pseudonyms with an uppercase configured tenant UUID', async () => {
+    process.env.PILOT_TENANT_ID = 'ABCDEFAB-1234-4567-89AB-ABCDEFABCDEF';
+    const pseudonym = 'sha256:67ad2dbcd8904b56d8999d24fe200b0717df695d7d4f90c5aee71e71e15994f7';
+    const result = await resolveUsageLabels(dashboard({ by_user: [row(pseudonym)] }), createDeps());
+    expect(result.by_user[0]).toMatchObject({ key: pseudonym, label: 'Nikola Test (665f1)' });
+  });
+
   it('replaces user pseudonyms with the matching LibreChat user name', async () => {
     const result = await resolveUsageLabels(dashboard(), createDeps());
 
