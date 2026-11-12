@@ -458,7 +458,7 @@ it('rolls back a populated deletion when its removal deliveries cannot be persis
   }
 });
 
-it('treats multiple stored aliases as one affected member', async () => {
+it('audits effective source-alias removal even when a native alias remains', async () => {
   const user = await runAsSystem(() =>
     models.User.create({
       email: 'alias@test.example',
@@ -474,13 +474,103 @@ it('treats multiple stored aliases as one affected member', async () => {
       memberIds: [user._id.toString(), 'alias-external'],
     }),
   );
-  await request(app).delete(`/groups/${group._id}/members/alias-external`);
-  expect(await outbox().countDocuments()).toBe(0);
+  expect(await runAsSystem(() => methods.findGroupsByMemberId(user._id))).toHaveLength(1);
+  expect((await request(app).delete(`/groups/${group._id}/members/alias-external`)).status).toBe(
+    200,
+  );
+  expect(await runAsSystem(() => methods.findGroupsByMemberId(user._id))).toHaveLength(0);
+  const removal = await outbox().findOne();
+  expect(removal?.payload).toMatchObject({ action: 'membership.removed', cause: 'member_removed' });
+  expect(await outbox().countDocuments()).toBe(1);
   await request(app).delete(`/groups/${group._id}`);
   const records = await outbox().find().toArray();
   const removals = records.filter((record) => record.payload.action === 'membership.removed');
   expect(removals).toHaveLength(1);
   expect(removals[0].payload.resource.affected_subject_ref).toBe(
     affectedSubjectRef(user._id.toString()),
+  );
+});
+
+it('audits adding the effective source alias when only a native alias was stored', async () => {
+  const user = await runAsSystem(() =>
+    models.User.create({
+      email: 'source-alias@test.example',
+      provider: 'openid',
+      role: 'USER',
+      idOnTheSource: 'effective-source',
+    }),
+  );
+  const group = await runAsSystem(() =>
+    methods.createGroup({
+      name: 'Native alias',
+      source: 'local',
+      memberIds: [user._id.toString()],
+    }),
+  );
+  expect(await runAsSystem(() => methods.findGroupsByMemberId(user._id))).toHaveLength(0);
+  expect(
+    (await request(app).post(`/groups/${group._id}/members`).send({ userId: user._id.toString() }))
+      .status,
+  ).toBe(200);
+  expect(await runAsSystem(() => methods.findGroupsByMemberId(user._id))).toHaveLength(1);
+  expect(
+    (await request(app).post(`/groups/${group._id}/members`).send({ userId: user._id.toString() }))
+      .status,
+  ).toBe(200);
+  const records = await outbox().find().toArray();
+  expect(records).toHaveLength(1);
+  expect(records[0].payload).toMatchObject({
+    action: 'membership.added',
+    resource: {
+      affected_subject_ref: affectedSubjectRef(user._id.toString()),
+    },
+  });
+});
+
+it('emits one removal for a deleted effective member with multiple stored aliases', async () => {
+  const user = await runAsSystem(() =>
+    models.User.create({
+      email: 'deleted-alias@test.example',
+      provider: 'openid',
+      role: 'USER',
+      idOnTheSource: 'deleted-source',
+    }),
+  );
+  const group = await runAsSystem(() =>
+    methods.createGroup({
+      name: 'Deleted aliases',
+      source: 'local',
+      memberIds: [user._id.toString(), 'deleted-source'],
+    }),
+  );
+  expect(await runAsSystem(() => methods.findGroupsByMemberId(user._id))).toHaveLength(1);
+  expect((await request(app).delete(`/groups/${group._id}`)).status).toBe(200);
+  const records = await outbox().find().toArray();
+  expect(records).toHaveLength(2);
+  const removal = records.find((record) => record.payload.action === 'membership.removed');
+  expect(removal?.payload).toMatchObject({
+    cause: 'group_deleted',
+    resource: {
+      affected_subject_ref: affectedSubjectRef(user._id.toString()),
+    },
+  });
+});
+
+it.each(['PILOT_TENANT_ID', 'USAGE_PSEUDONYMIZATION_SECRET'])(
+  'rejects pilot group writes when %s is missing',
+  async (setting) => {
+    delete process.env[setting];
+    expect((await request(app).post('/groups').send({ name: 'Must not persist' })).status).toBe(
+      503,
+    );
+    expect(await runAsSystem(() => models.Group.countDocuments())).toBe(0);
+    expect(await outbox().countDocuments()).toBe(0);
+  },
+);
+
+it('canonicalizes uppercase tenant UUIDs like the Gateway', () => {
+  process.env.PILOT_TENANT_ID = 'ABCDEFAB-1234-4567-89AB-ABCDEFABCDEF';
+  expect(affectedSubjectRef('member')).toBe(
+    'sha256:5a50950938c9fb4dcb20daf972388944bb49cffd082ce37a6977d5ed4e88dd58',
   );
 });

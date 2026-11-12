@@ -1,10 +1,11 @@
 import mongoose from 'mongoose';
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { logger } from '@librechat/data-schemas';
 import type { ClientSession } from 'mongoose';
 import type { IGroup } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import { isGovernancePilotEnabled } from './mode';
+import { pseudonymizeUserId } from './subjects';
 
 export type GroupMutationAction =
   | 'group.created'
@@ -32,7 +33,7 @@ export function affectedSubjectRef(userId: string): string {
   const secret = process.env.USAGE_PSEUDONYMIZATION_SECRET;
   const tenant = process.env.PILOT_TENANT_ID;
   if (!secret || !tenant) throw new Error('Governance subject references are not configured');
-  return `sha256:${createHmac('sha256', secret).update(`${tenant.toLowerCase()}:${userId}`).digest('hex')}`;
+  return pseudonymizeUserId(secret, tenant, userId);
 }
 
 interface GroupAuditDelivery {
@@ -113,7 +114,7 @@ export async function mutateGovernanceGroup(
   action: GroupMutationAction,
   operation: (session?: ClientSession) => Promise<IGroup | null>,
   previousGroup?: (session?: ClientSession) => Promise<IGroup | null>,
-  resolveMembers?: (ids: string[], session: ClientSession) => Promise<Map<string, string>>,
+  resolveMembers?: (ids: string[], session: ClientSession) => Promise<Map<string, string | null>>,
 ): Promise<IGroup | null> {
   if (!isGovernancePilotEnabled()) return operation();
   const actor = req.user;
@@ -140,9 +141,16 @@ export async function mutateGovernanceGroup(
         const resolved =
           membershipChanged && resolveMembers
             ? await resolveMembers([...new Set([...oldMembers, ...newMembers])], session)
-            : new Map<string, string>();
-        const previousSubjects = new Set([...oldMembers].map((id) => resolved.get(id) ?? id));
-        const currentSubjects = new Set([...newMembers].map((id) => resolved.get(id) ?? id));
+            : new Map<string, string | null>();
+        const subjects = (members: Set<string>): Set<string> =>
+          new Set(
+            [...members].flatMap((id) => {
+              const subject = resolved.get(id);
+              return subject === null ? [] : [subject ?? id];
+            }),
+          );
+        const previousSubjects = subjects(oldMembers);
+        const currentSubjects = subjects(newMembers);
         const events: { action: GroupMutationAction; userId?: string }[] = [];
         if (
           action === 'group.created' ||

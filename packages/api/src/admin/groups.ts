@@ -115,24 +115,25 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
     deleteAclEntries,
   } = deps;
 
+  /** Resolve effective membership aliases; null marks a known alias ignored by group lookup. */
   async function resolveAuditMembers(
     ids: string[],
     session: ClientSession,
-  ): Promise<Map<string, string>> {
+  ): Promise<Map<string, string | null>> {
     if (!ids.length) return new Map();
     const objectIds = ids.filter(isValidObjectIdString);
     const conditions: FilterQuery<IUser>[] = [{ idOnTheSource: { $in: ids } }];
     if (objectIds.length) conditions.push({ _id: { $in: objectIds } });
     const users = await findUsers({ $or: conditions }, 'idOnTheSource', { session });
-    const resolved = new Map<string, string>();
+    const resolved = new Map<string, string | null>();
     for (const user of users) {
       const nativeId = user._id.toString();
-      resolved.set(nativeId, nativeId);
-      if (user.idOnTheSource) resolved.set(user.idOnTheSource, nativeId);
+      const effectiveMemberId = user.idOnTheSource || nativeId;
+      resolved.set(nativeId, effectiveMemberId === nativeId ? nativeId : null);
+      resolved.set(effectiveMemberId, nativeId);
     }
     for (const id of objectIds) {
-      const nativeId = resolved.get(id.toLowerCase());
-      if (nativeId && !resolved.has(id)) resolved.set(id, nativeId);
+      if (!resolved.has(id) && resolved.has(id.toLowerCase())) resolved.set(id, null);
     }
     return resolved;
   }
