@@ -24,6 +24,7 @@ type GroupListFilter = Pick<GroupFilterOptions, 'source' | 'search'>;
 
 const VALID_GROUP_SOURCES: ReadonlySet<string> = new Set(['local', 'entra']);
 const MAX_CREATE_MEMBER_IDS = 500;
+const MAX_MEMBER_ID_LENGTH = 256;
 const MAX_SEARCH_LENGTH = 200;
 const MAX_NAME_LENGTH = 500;
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -225,6 +226,15 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         return res
           .status(400)
           .json({ error: `memberIds must not exceed ${MAX_CREATE_MEMBER_IDS} entries` });
+      }
+      if (
+        rawIds.some(
+          (id) => typeof id !== 'string' || !id.trim() || id.length > MAX_MEMBER_ID_LENGTH,
+        )
+      ) {
+        return res.status(400).json({
+          error: `memberIds must contain non-empty strings of at most ${MAX_MEMBER_ID_LENGTH} characters`,
+        });
       }
       let memberIds = rawIds;
       const objectIds = rawIds.filter(isValidObjectIdString);

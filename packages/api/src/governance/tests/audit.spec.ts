@@ -574,3 +574,40 @@ it('canonicalizes uppercase tenant UUIDs like the Gateway', () => {
     'sha256:5a50950938c9fb4dcb20daf972388944bb49cffd082ce37a6977d5ed4e88dd58',
   );
 });
+
+describe.each(['true', 'false'])('raw member validation with pilot mode %s', (enabled) => {
+  it.each([
+    { label: 'an empty string', id: '' },
+    { label: 'a whitespace-only string', id: ' \t\n' },
+    { label: 'a string longer than 256 characters', id: 'x'.repeat(257) },
+    { label: 'a number', id: 42 },
+    { label: 'a boolean', id: false },
+    { label: 'null', id: null },
+    { label: 'an object', id: { member: 'external' } },
+    { label: 'an array', id: ['external'] },
+  ])('rejects $label before creating a group or audit delivery', async ({ id }) => {
+    process.env.GOVERNANCE_PILOT_ENABLED = enabled;
+    const response = await request(app)
+      .post('/groups')
+      .send({
+        name: 'Invalid members',
+        memberIds: [actor._id.toString(), id],
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe(
+      'memberIds must contain non-empty strings of at most 256 characters',
+    );
+    expect(await runAsSystem(() => models.Group.countDocuments())).toBe(0);
+    expect(await outbox().countDocuments()).toBe(0);
+  });
+});
+
+it('accepts external member identifiers at the 1- and 256-character boundaries', async () => {
+  const memberIds = ['a', 'x'.repeat(256)];
+  const response = await request(app).post('/groups').send({ name: 'Valid boundaries', memberIds });
+  expect(response.status).toBe(201);
+  const group = await runAsSystem(() => methods.findGroupById(response.body.group._id));
+  expect(group?.memberIds).toEqual(memberIds);
+  const records = await outbox().find().toArray();
+  expect(records.filter((record) => record.payload.action === 'membership.added')).toHaveLength(2);
+});
