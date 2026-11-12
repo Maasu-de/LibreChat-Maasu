@@ -611,3 +611,103 @@ it('accepts external member identifiers at the 1- and 256-character boundaries',
   const records = await outbox().find().toArray();
   expect(records.filter((record) => record.payload.action === 'membership.added')).toHaveLength(2);
 });
+
+it.each([
+  {
+    scope: 'issuers',
+    issuers: ['https://issuer-one.example', 'https://issuer-two.example'],
+    tenants: ['tenant-a', 'tenant-a'],
+  },
+  {
+    scope: 'tenants',
+    issuers: ['https://issuer.example', 'https://issuer.example'],
+    tenants: ['tenant-a', 'tenant-b'],
+  },
+])(
+  'audits every effective member sharing a source alias across $scope',
+  async ({ issuers, tenants }) => {
+    const sharedAlias = 'review-shared-source';
+    const users = await runAsSystem(() =>
+      models.User.create(
+        issuers.map((issuer, index) => ({
+          email: `shared-${index}@test.example`,
+          provider: 'openid',
+          role: 'USER',
+          openidId: 'shared-subject',
+          openidIssuer: issuer,
+          tenantId: tenants[index],
+          idOnTheSource: sharedAlias,
+        })),
+      ),
+    );
+    const references = users.map((user) => affectedSubjectRef(user._id.toString())).sort();
+    expect(new Set(references).size).toBe(2);
+    const created = await request(app)
+      .post('/groups')
+      .send({ name: 'Shared members', memberIds: [sharedAlias] });
+    expect(created.status).toBe(201);
+    const id = created.body.group._id;
+    expect(created.body.group.memberIds).toEqual([sharedAlias]);
+    for (const user of users) {
+      const groups = await runAsSystem(() => methods.findGroupsByMemberId(user._id));
+      expect(groups.map((group) => group._id.toString())).toContain(id);
+    }
+    let records = await outbox().find().toArray();
+    expect(records).toHaveLength(3);
+    expect(
+      records
+        .filter((record) => record.payload.action === 'membership.added')
+        .map((record) => record.payload.resource.affected_subject_ref)
+        .sort(),
+    ).toEqual(references);
+
+    expect(
+      (await request(app).post(`/groups/${id}/members`).send({ userId: users[0]._id.toString() }))
+        .status,
+    ).toBe(200);
+    expect(await outbox().countDocuments()).toBe(3);
+    expect((await request(app).delete(`/groups/${id}/members/${sharedAlias}`)).status).toBe(200);
+    for (const user of users) {
+      expect(await runAsSystem(() => methods.findGroupsByMemberId(user._id))).toHaveLength(0);
+    }
+    records = await outbox().find().toArray();
+    expect(records).toHaveLength(5);
+    const individualRemovals = records.filter(
+      (record) => record.payload.action === 'membership.removed',
+    );
+    expect(individualRemovals.map((record) => record.payload.cause)).toEqual([
+      'member_removed',
+      'member_removed',
+    ]);
+    expect(
+      individualRemovals.map((record) => record.payload.resource.affected_subject_ref).sort(),
+    ).toEqual(references);
+    expect((await request(app).delete(`/groups/${id}/members/${sharedAlias}`)).status).toBe(200);
+    expect(await outbox().countDocuments()).toBe(5);
+
+    expect(
+      (await request(app).post(`/groups/${id}/members`).send({ userId: users[0]._id.toString() }))
+        .status,
+    ).toBe(200);
+    expect(await outbox().countDocuments()).toBe(7);
+    expect(
+      (await request(app).post(`/groups/${id}/members`).send({ userId: users[1]._id.toString() }))
+        .status,
+    ).toBe(200);
+    expect(await outbox().countDocuments()).toBe(7);
+    for (const user of users) {
+      const groups = await runAsSystem(() => methods.findGroupsByMemberId(user._id));
+      expect(groups.map((group) => group._id.toString())).toContain(id);
+    }
+    expect((await request(app).delete(`/groups/${id}`)).status).toBe(200);
+    records = await outbox().find().toArray();
+    expect(records).toHaveLength(10);
+    expect(records.filter((record) => record.payload.action === 'group.deleted')).toHaveLength(1);
+    const deletionRemovals = records.filter((record) => record.payload.cause === 'group_deleted');
+    expect(
+      deletionRemovals.map((record) => record.payload.resource.affected_subject_ref).sort(),
+    ).toEqual(references);
+    for (const user of users) expect(JSON.stringify(records)).not.toContain(user._id.toString());
+    expect(JSON.stringify(records)).not.toContain(sharedAlias);
+  },
+);

@@ -114,7 +114,7 @@ export async function mutateGovernanceGroup(
   action: GroupMutationAction,
   operation: (session?: ClientSession) => Promise<IGroup | null>,
   previousGroup?: (session?: ClientSession) => Promise<IGroup | null>,
-  resolveMembers?: (ids: string[], session: ClientSession) => Promise<Map<string, string | null>>,
+  resolveMembers?: (ids: string[], session: ClientSession) => Promise<Map<string, Set<string>>>,
 ): Promise<IGroup | null> {
   if (!isGovernancePilotEnabled()) return operation();
   const actor = req.user;
@@ -141,14 +141,9 @@ export async function mutateGovernanceGroup(
         const resolved =
           membershipChanged && resolveMembers
             ? await resolveMembers([...new Set([...oldMembers, ...newMembers])], session)
-            : new Map<string, string | null>();
+            : new Map<string, Set<string>>();
         const subjects = (members: Set<string>): Set<string> =>
-          new Set(
-            [...members].flatMap((id) => {
-              const subject = resolved.get(id);
-              return subject === null ? [] : [subject ?? id];
-            }),
-          );
+          new Set([...members].flatMap((id) => [...(resolved.get(id) ?? [id])]));
         const previousSubjects = subjects(oldMembers);
         const currentSubjects = subjects(newMembers);
         const events: { action: GroupMutationAction; userId?: string }[] = [];
