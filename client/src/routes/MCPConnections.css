@@ -31,7 +31,8 @@
 }
 
 .mcp-connections .mcp-connections-add,
-.mcp-connections .mcp-inspection > button {
+.mcp-connections .mcp-inspection > button,
+.mcp-connections-dialog-footer > button {
   height: auto;
   padding: 11px 22px;
   font-size: 17px;
@@ -105,4 +106,22 @@
   border-color: var(--border-medium);
   border-radius: 18px;
   background: var(--aimo-surface);
+}
+
+.mcp-connections-dialog[role='dialog'] {
+  gap: 24px;
+  border: 1px solid #e0e0e0;
+  background: var(--aimo-surface);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.47;
+  letter-spacing: -0.022em;
+}
+
+.dark .mcp-connections-dialog {
+  border-color: #38383a;
+}
+
+.mcp-connections-dialog h2 {
+  font-size: 21px;
 }

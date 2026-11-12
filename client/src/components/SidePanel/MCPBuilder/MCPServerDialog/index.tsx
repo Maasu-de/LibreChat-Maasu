@@ -28,6 +28,7 @@ import { useMCPServerForm } from './hooks/useMCPServerForm';
 import { useLocalize, useCopyToClipboard } from '~/hooks';
 import MCPServerForm from './MCPServerForm';
 import { useMCPAdministration } from '../administration';
+import { cn } from '~/utils';
 
 interface MCPServerDialogProps {
   open: boolean;
@@ -46,6 +47,9 @@ export default function MCPServerDialog({
 }: MCPServerDialogProps) {
   const localize = useLocalize();
   const administration = useMCPAdministration();
+  const dialogClassName = administration ? 'mcp-connections-dialog' : undefined;
+  const overlayClassName = administration ? 'bg-transparent backdrop-blur-none' : undefined;
+  const footerClassName = administration ? 'mcp-connections-dialog-footer' : undefined;
   const { user } = useAuthContext();
   const { showToast } = useToastContext();
 
@@ -118,7 +122,9 @@ export default function MCPServerDialog({
       <OGDialog open={showDeleteConfirm} onOpenChange={(isOpen) => setShowDeleteConfirm(isOpen)}>
         <OGDialogTemplate
           title={localize('com_ui_delete_mcp_server')}
-          className="w-11/12 max-w-md"
+          className={cn('w-11/12 max-w-md', dialogClassName)}
+          overlayClassName={overlayClassName}
+          footerClassName={footerClassName}
           description={localize('com_ui_mcp_server_delete_confirm', { 0: server?.serverName })}
           selection={
             <Button
@@ -144,7 +150,11 @@ export default function MCPServerDialog({
           }
         }}
       >
-        <OGDialogContent showCloseButton={false} className="w-11/12 max-w-lg">
+        <OGDialogContent
+          showCloseButton={false}
+          className={cn('w-11/12 max-w-lg', dialogClassName)}
+          overlayClassName={overlayClassName}
+        >
           <OGDialogHeader>
             <OGDialogTitle>{localize('com_ui_mcp_server_created')}</OGDialogTitle>
           </OGDialogHeader>
@@ -179,7 +189,7 @@ export default function MCPServerDialog({
                 </Button>
               </div>
             </div>
-            <OGDialogFooter>
+            <OGDialogFooter className={footerClassName}>
               <Button
                 variant="default"
                 onClick={() => {
@@ -210,9 +220,10 @@ export default function MCPServerDialog({
               : undefined
           }
           showCloseButton={false}
-          className="w-11/12 md:max-w-3xl"
+          className={cn('w-11/12 md:max-w-3xl', dialogClassName)}
+          overlayClassName={overlayClassName}
           main={<MCPServerForm formHook={formHook} />}
-          footerClassName="sm:justify-between"
+          footerClassName={cn('sm:justify-between', footerClassName)}
           leftButtons={
             isEditMode ? (
               <div className="flex items-center gap-2">
