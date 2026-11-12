@@ -87,10 +87,12 @@ export default function MCPConnections({ embedded = false }: { embedded?: boolea
         {!embedded && (
           <h1 className="text-2xl font-semibold">{localize('com_ui_mcp_connections')}</h1>
         )}
-        <p className="mcp-connections-description">
-          {localize('com_ui_mcp_connections_description')}
-        </p>
-        <MCPBuilderPanel />
+        <div className={embedded ? 'mcp-connections-content' : undefined}>
+          <p className="mcp-connections-description">
+            {localize('com_ui_mcp_connections_description')}
+          </p>
+          <MCPBuilderPanel />
+        </div>
       </main>
     </MCPAdministrationContext.Provider>
   );
