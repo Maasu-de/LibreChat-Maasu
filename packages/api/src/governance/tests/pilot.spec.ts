@@ -24,6 +24,7 @@ beforeEach(() => {
   process.env.GOVERNANCE_PILOT_ENABLED = 'true';
   process.env.GOVERNANCE_DLP_ENABLED = 'true';
   process.env.OPENID_REUSE_TOKENS = 'true';
+  delete process.env.KEYCLOAK_ADMIN_ROLE;
   process.env.OPENID_ADMIN_ROLE = 'governance-admin';
   process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'realm_access.roles';
   process.env.GOVERNANCE_API_BASE_URL = 'http://gateway.test/v1';
@@ -489,17 +490,32 @@ describe('pilot configuration', () => {
     expect(() => restrictGovernanceConfig({})).not.toThrow();
   });
   it.each(['OPENID_ADMIN_ROLE', 'OPENID_ADMIN_ROLE_PARAMETER_PATH'])(
-    'rejects pilot startup without %s',
+    'uses defaults at pilot startup without %s',
     (key) => {
       delete process.env[key];
 
-      expect(() => restrictGovernanceConfig({})).toThrow(key);
+      expect(() => restrictGovernanceConfig({})).not.toThrow();
     },
   );
-  it.each(['', '   '])('rejects blank administrator role %j at startup', (value) => {
-    process.env.OPENID_ADMIN_ROLE = value;
-
-    expect(() => restrictGovernanceConfig({})).toThrow('OPENID_ADMIN_ROLE');
+  it.each(['OPENID_ADMIN_ROLE', 'OPENID_ADMIN_ROLE_PARAMETER_PATH', 'KEYCLOAK_ADMIN_ROLE'])(
+    'rejects a blank %s at pilot startup',
+    (key) => {
+      for (const value of ['', '   ', String.fromCodePoint(0xfeff)]) {
+        process.env.OPENID_ADMIN_ROLE = 'governance-admin';
+        process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH = 'realm_access.roles';
+        process.env.KEYCLOAK_ADMIN_ROLE = 'governance-admin';
+        if (key === 'KEYCLOAK_ADMIN_ROLE') delete process.env.OPENID_ADMIN_ROLE;
+        process.env[key] = value;
+        expect(() => restrictGovernanceConfig({})).toThrow(key);
+      }
+    },
+  );
+  it('accepts omitted administrator settings and a legacy role at pilot startup', () => {
+    delete process.env.OPENID_ADMIN_ROLE;
+    delete process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH;
+    expect(() => restrictGovernanceConfig({})).not.toThrow();
+    process.env.KEYCLOAK_ADMIN_ROLE = ' legacy-admin ';
+    expect(() => restrictGovernanceConfig({})).not.toThrow();
   });
   it('does not change non-pilot configuration', () => {
     delete process.env.GOVERNANCE_PILOT_ENABLED;
