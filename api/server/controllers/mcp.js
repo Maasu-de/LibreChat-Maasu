@@ -362,9 +362,10 @@ const createMCPServerController = async (req, res) => {
     }
     if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(validation.data)) {
       await recordGovernanceMCPFailure(req, 'mcp.created');
-      return res
-        .status(400)
-        .json({ message: 'Only remote administrative MCP connections are supported' });
+      return res.status(400).json({
+        error: 'MCP_INVALID_ADMIN_CONNECTION',
+        message: 'Only remote administrative MCP connections are supported',
+      });
     }
     if (configHasObo(validation.data) && !(await callerCanConfigureObo(req))) {
       logger.warn(
@@ -470,7 +471,10 @@ const updateMCPServerController = async (req, res) => {
       return rejectGovernanceMCPUpdate(
         req,
         res,
-        { message: 'Only remote administrative MCP connections are supported' },
+        {
+          error: 'MCP_INVALID_ADMIN_CONNECTION',
+          message: 'Only remote administrative MCP connections are supported',
+        },
         connectionId,
       );
     }

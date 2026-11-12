@@ -513,6 +513,32 @@ describe('MCP Routes', () => {
         require('~/config').getFlowStateManager.mockReturnValue(manager);
       });
 
+      it.each(['api_token', '%61pi_token', 'provider_credential'])(
+        'rejects unsupported URL parameter %s before creation without echoing its value',
+        async (name) => {
+          const response = await request(app)
+            .post('/api/mcp/servers')
+            .send({
+              config: {
+                type: 'sse',
+                url: `https://mcp.test/server?tenant=acme&${name}=confidential-input`,
+              },
+            });
+
+          expect(response.status).toBe(400);
+          expect(response.body.error).toBe('MCP_INVALID_ADMIN_CONNECTION');
+          expect(response.text).not.toContain('confidential-input');
+          expect(mockRegistryInstance.addServer).not.toHaveBeenCalled();
+          const event = await outbox().findOne();
+          expect(event.payload).toMatchObject({
+            action: 'mcp.created',
+            outcome: 'failure',
+            actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+          });
+          expect(JSON.stringify(event)).not.toContain('confidential-input');
+        },
+      );
+
       it('audits a validated OAuth provider failure without logging provider details or state', async () => {
         const { MCPOAuthHandler, MCPTokenStorage } = require('@librechat/api');
         const { logger } = require('@librechat/data-schemas');
@@ -557,6 +583,9 @@ describe('MCP Routes', () => {
       it.each([
         { type: 'stdio', command: 'sh' },
         { type: 'sse', url: 'https://mcp.test/server?secret=confidential-input' },
+        { type: 'sse', url: 'https://mcp.test/server?api_token=confidential-input' },
+        { type: 'sse', url: 'https://mcp.test/server?%61pi_token=confidential-input' },
+        { type: 'sse', url: 'https://mcp.test/server?provider_credential=confidential-input' },
       ])(
         'audits invalid updates to a known connection without mutating its configuration',
         async (config) => {
@@ -564,6 +593,10 @@ describe('MCP Routes', () => {
             .patch('/api/mcp/servers/test-server')
             .send({ config });
           expect(response.status).toBe(400);
+          if (config.type === 'sse') {
+            expect(response.body.error).toBe('MCP_INVALID_ADMIN_CONNECTION');
+          }
+          expect(response.text).not.toContain('confidential-input');
           expect(mockRegistryInstance.updateServer).not.toHaveBeenCalled();
           expect((await outbox().findOne()).payload).toMatchObject({
             action: 'mcp.updated',

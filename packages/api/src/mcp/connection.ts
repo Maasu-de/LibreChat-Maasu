@@ -1132,6 +1132,7 @@ export class MCPConnection extends EventEmitter {
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
   public readonly serverName: string;
   private shouldStopReconnecting = false;
+  private disposed = false;
   private isReconnecting = false;
   private isInitializing = false;
   private reconnectAttempts = 0;
@@ -1898,6 +1899,7 @@ export class MCPConnection extends EventEmitter {
         }
 
         this.transport = await runOutsideTracing(() => this.constructTransport(this.options));
+        if (this.disposed) await this.rejectDisposedConnection();
         this.patchTransportSend();
 
         const connectTimeout = this.options.initTimeout ?? DEFAULT_INIT_TIMEOUT;
@@ -1908,6 +1910,7 @@ export class MCPConnection extends EventEmitter {
             `Connection timeout after ${connectTimeout}ms`,
           ),
         );
+        if (this.disposed) await this.rejectDisposedConnection();
 
         this.setupTransportOnMessageHandler();
         this.connectionState = 'connected';
@@ -2073,6 +2076,7 @@ export class MCPConnection extends EventEmitter {
   }
 
   async connect(): Promise<void> {
+    if (this.disposed) throw new Error('MCP connection was disposed');
     try {
       /**
        * Persistent connections preserve cycle tracking across reconnects so the
@@ -2212,6 +2216,18 @@ export class MCPConnection extends EventEmitter {
     );
     this.agents = [];
     await Promise.all(closing);
+  }
+
+  public async dispose(): Promise<void> {
+    this.disposed = true;
+    this.shouldStopReconnecting = true;
+    this.removeAllListeners();
+    await this.disconnect();
+  }
+
+  private async rejectDisposedConnection(): Promise<never> {
+    await this.disconnect();
+    throw new Error('MCP connection was disposed');
   }
 
   public async disconnect(resetCycleTracking = true): Promise<void> {

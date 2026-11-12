@@ -505,6 +505,73 @@ describe('tests for the new helper functions used by the MCP connection status e
     const mockServerName = 'test-server';
     const mockConfig = { updatedAt: Date.now() };
 
+    it.each([
+      { authorized: false, flowStatus: undefined, reconnecting: false, expected: 'disconnected' },
+      { authorized: true, flowStatus: undefined, reconnecting: false, expected: 'connected' },
+      { authorized: false, flowStatus: 'PENDING', reconnecting: false, expected: 'connecting' },
+      { authorized: false, flowStatus: undefined, reconnecting: true, expected: 'connecting' },
+    ])(
+      'reports $expected for a cached governed OAuth connection with authorization=$authorized, flow=$flowStatus, reconnecting=$reconnecting',
+      async ({ authorized, flowStatus, reconnecting, expected }) => {
+        const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        const { isGovernanceMCPOAuthAuthorized } = require('@librechat/api');
+        isGovernanceMCPOAuthAuthorized.mockResolvedValue(authorized);
+        const getFlowState = jest
+          .fn()
+          .mockResolvedValue(
+            flowStatus ? { status: flowStatus, createdAt: Date.now(), ttl: 180000 } : null,
+          );
+        mockGetFlowStateManager.mockReturnValue({ getFlowState });
+        mockGetOAuthReconnectionManager.mockReturnValue({ isReconnecting: () => reconnecting });
+        const config = {
+          ...mockConfig,
+          type: 'sse',
+          url: 'https://mcp.example/server',
+          dbId: '507f1f77bcf86cd799439011',
+        };
+        const userConnections = new Map([
+          [mockServerName, { connectionState: 'connected', isStale: () => false }],
+        ]);
+        try {
+          const result = await getServerConnectionStatus(
+            mockUserId,
+            mockServerName,
+            config,
+            new Map(),
+            userConnections,
+            new Set([mockServerName]),
+          );
+
+          expect(result).toEqual({
+            requiresOAuth: true,
+            connectionState: expected,
+            authorizationComplete: authorized,
+          });
+          expect(isGovernanceMCPOAuthAuthorized).toHaveBeenCalledWith(
+            mockUserId,
+            config.dbId,
+            getGovernanceMCPOAuthBinding(config),
+          );
+          expect(getFlowState).toHaveBeenCalledTimes(authorized || reconnecting ? 0 : 1);
+
+          const withoutOAuth = await getServerConnectionStatus(
+            mockUserId,
+            mockServerName,
+            config,
+            new Map(),
+            userConnections,
+            new Set(),
+          );
+          expect(withoutOAuth).toEqual({ requiresOAuth: false, connectionState: 'connected' });
+        } finally {
+          isGovernanceMCPOAuthAuthorized.mockResolvedValue(false);
+          if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+          else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        }
+      },
+    );
+
     it.each([true, false])(
       'reports durable governed authorization without a live connection: %s',
       async (authorized) => {

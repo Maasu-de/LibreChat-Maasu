@@ -29,16 +29,13 @@ import {
   advanceGovernanceMCPOAuthGeneration,
 } from './oauth';
 
-const credentialQueryParameter =
-  /^(authorization|proxyauthorization|auth|key|apikey|xapikey|accesskey|subscriptionkey|token|accesstoken|refreshtoken|idtoken|authtoken|secret|clientsecret|password|passwd|pwd|credential|credentials|signature|sig|jwt|session|sessionid|sessiontoken|assertion|code|xamzcredential|xamzsignature|xamzsecuritytoken|xgoogcredential|xgoogsignature)$/i;
+const routingQueryParameters = new Set(['tenant', 'api-version', 'toolset']);
 
 function isGovernanceMCPUrl(value: string, allowRoutingParameters = false): boolean {
   try {
     const url = new URL(value);
     const allowedQuery = allowRoutingParameters
-      ? !Array.from(url.searchParams.keys()).some((name) =>
-          credentialQueryParameter.test(name.replace(/[^a-z0-9]/gi, '')),
-        )
+      ? Array.from(url.searchParams.keys()).every((name) => routingQueryParameters.has(name))
       : !url.search;
     return (
       ['http:', 'https:'].includes(url.protocol) &&
@@ -365,7 +362,7 @@ export function createGovernanceMCPOAuthFailureHandler(
 export async function rejectGovernanceMCPUpdate(
   req: ServerRequest,
   res: Response,
-  error: { message: string; errors?: ZodIssue[] },
+  error: { error?: string; message: string; errors?: ZodIssue[] },
   connectionId?: string,
 ): Promise<void> {
   if (isGovernancePilotEnabled() && connectionId) {

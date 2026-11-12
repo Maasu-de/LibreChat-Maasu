@@ -197,6 +197,9 @@ describe('remote administrative connection input', () => {
   it.each([
     'api_key',
     'apiKey',
+    'api_token',
+    'api-token',
+    'apiToken',
     'X-API-Key',
     'access_token',
     'refreshToken',
@@ -212,6 +215,13 @@ describe('remote administrative connection input', () => {
     'X-Amz-Security-Token',
     'X-Goog-Credential',
     '%61pi_key',
+    '%61pi_token',
+    'provider_credential',
+    'custom_auth',
+    'config',
+    '',
+    'Tenant',
+    'api_version',
   ])('rejects credential parameter %s alongside non-secret routing parameters', (name) => {
     const config = MCPServerUserInputSchema.parse({
       type: 'streamable-http',

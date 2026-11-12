@@ -9,6 +9,7 @@ import {
   isUserSourced,
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
+  sanitizeMCPErrorForLogging,
 } from './utils';
 import { MCPServersRegistry } from '~/mcp/registry/MCPServersRegistry';
 import { detectOAuthRequirement, MCPOAuthHandler } from '~/mcp/oauth';
@@ -18,6 +19,7 @@ import { preProcessGraphTokens } from '~/utils/graph';
 import { isMCPDomainAllowed } from '~/auth/domain';
 import { PENDING_STALE_MS } from '~/flow/manager';
 import { getGovernanceMCPOAuthBinding } from '~/governance/authorization';
+import { GovernanceMCPOAuthStaleError } from '~/governance/oauth';
 import { MCPConnection } from './connection';
 import { processMCPEnv } from '~/utils/env';
 import { mcpConfig } from './mcpConfig';
@@ -37,6 +39,13 @@ type PendingOAuthState = {
 type PendingConnection = {
   promise: Promise<MCPConnection>;
   oauth: PendingOAuthState;
+  attempt?: GovernanceConnectionAttempt;
+};
+
+type GovernanceConnectionAttempt = {
+  userId: string;
+  serverName: string;
+  invalidated: boolean;
 };
 
 /**
@@ -55,6 +64,7 @@ export abstract class UserConnectionManager {
   protected userLastActivity: Map<string, number> = new Map();
   /** In-flight connection promises keyed by `userId:serverName` — coalesces concurrent attempts */
   protected pendingConnections: Map<string, PendingConnection> = new Map();
+  private readonly governanceAttempts = new Set<GovernanceConnectionAttempt>();
 
   /** Updates the last activity timestamp for a user */
   protected updateUserLastActivity(userId: string): void {
@@ -99,7 +109,7 @@ export abstract class UserConnectionManager {
           await existing.disconnect().catch((error) => {
             logger.warn(
               `[MCP][User: ${userId}][${serverName}] Failed to disconnect stale request-scoped connection`,
-              error,
+              sanitizeMCPErrorForLogging(error),
             );
           });
           requestScopedConnections.connections.delete(requestConnectionKey);
@@ -170,6 +180,10 @@ export abstract class UserConnectionManager {
     }
 
     const pendingOAuth = this.createPendingOAuthState(opts.oauthStart);
+    const attempt =
+      binding && config?.dbId && requiresOAuthMachinery(config)
+        ? { userId, serverName, invalidated: false }
+        : undefined;
     const connectionPromise = this.createUserConnectionInternal(
       {
         ...opts,
@@ -180,15 +194,21 @@ export abstract class UserConnectionManager {
       },
       userId,
       clearCooldown,
+      attempt,
     );
 
     if (!forceNewConnection) {
-      this.pendingConnections.set(lockKey, { promise: connectionPromise, oauth: pendingOAuth });
+      this.pendingConnections.set(lockKey, {
+        promise: connectionPromise,
+        oauth: pendingOAuth,
+        attempt,
+      });
     }
 
     try {
       return await connectionPromise;
     } finally {
+      if (attempt) this.governanceAttempts.delete(attempt);
       if (
         !forceNewConnection &&
         this.pendingConnections.get(lockKey)?.promise === connectionPromise
@@ -225,7 +245,7 @@ export abstract class UserConnectionManager {
           } else {
             logger.warn(
               `[MCP][User: ${userId}][${serverName}] Failed to notify joined OAuth listener`,
-              error,
+              sanitizeMCPErrorForLogging(error),
             );
           }
         }
@@ -268,7 +288,7 @@ export abstract class UserConnectionManager {
       } catch (error) {
         logger.warn(
           `[MCP][User: ${userId}][${serverName}] Failed to re-issue pending OAuth URL`,
-          error,
+          sanitizeMCPErrorForLogging(error),
         );
       }
       return;
@@ -367,7 +387,7 @@ export abstract class UserConnectionManager {
     } catch (error) {
       logger.warn(
         `[MCP][User: ${userId}][${serverName}] Failed to re-issue pending OAuth URL`,
-        error,
+        sanitizeMCPErrorForLogging(error),
       );
     }
   }
@@ -394,6 +414,7 @@ export abstract class UserConnectionManager {
     }: t.UserMCPConnectionOptions,
     userId: string,
     clearCooldown: boolean,
+    attempt?: GovernanceConnectionAttempt,
   ): Promise<MCPConnection> {
     if (await this.appConnections!.has(serverName)) {
       throw new McpError(
@@ -421,7 +442,10 @@ export abstract class UserConnectionManager {
       try {
         await this.disconnectUserConnections(userId);
       } catch (err) {
-        logger.error(`[MCP][User: ${userId}] Error disconnecting idle connections:`, err);
+        logger.error(
+          `[MCP][User: ${userId}] Error disconnecting idle connections:`,
+          sanitizeMCPErrorForLogging(err),
+        );
       }
       connection = undefined; // Force creation of a new connection
     } else if (connection) {
@@ -433,7 +457,11 @@ export abstract class UserConnectionManager {
         }
         await this.disconnectUserConnection(userId, serverName);
         connection = undefined;
-      } else if (await connection.isConnected()) {
+      } else if (await this.isReusableConnection(connection, Boolean(attempt))) {
+        if (attempt && this.userConnections.get(userId)?.get(serverName) !== connection) {
+          await connection.dispose();
+          throw new GovernanceMCPOAuthStaleError();
+        }
         logger.debug(`[MCP][User: ${userId}][${serverName}] Reusing active connection`);
         this.updateUserLastActivity(userId);
         return connection;
@@ -442,7 +470,8 @@ export abstract class UserConnectionManager {
         logger.warn(
           `[MCP][User: ${userId}][${serverName}] Found existing but disconnected connection object. Cleaning up.`,
         );
-        this.removeUserConnection(userId, serverName); // Clean up maps
+        if (attempt) await this.discardGovernanceConnection(userId, serverName, connection);
+        else this.removeUserConnection(userId, serverName);
         connection = undefined;
       }
     }
@@ -458,6 +487,7 @@ export abstract class UserConnectionManager {
     // If no valid connection exists, create a new one
     logger.info(`[MCP][User: ${userId}][${serverName}] Establishing new connection`);
 
+    if (attempt) this.governanceAttempts.add(attempt);
     try {
       const runtimeConfig = await this.applyRuntimeOAuthDetection({
         config,
@@ -531,11 +561,24 @@ export abstract class UserConnectionManager {
         throw new Error('Failed to establish connection after initialization attempt.');
       }
 
-      if (!ephemeralConnection) {
+      const connected = connection;
+      const publish = () => {
+        if (attempt?.invalidated) throw new GovernanceMCPOAuthStaleError();
+        if (ephemeralConnection) return;
         if (!this.userConnections.has(userId)) {
           this.userConnections.set(userId, new Map());
         }
-        this.userConnections.get(userId)?.set(serverName, connection);
+        this.userConnections.get(userId)?.set(serverName, connected);
+      };
+      if (attempt) await MCPConnectionFactory.publishConnectionAuthorization(connection, publish);
+      else publish();
+      if (
+        attempt &&
+        (attempt.invalidated ||
+          (!ephemeralConnection &&
+            this.userConnections.get(userId)?.get(serverName) !== connection))
+      ) {
+        throw new GovernanceMCPOAuthStaleError();
       }
 
       logger.info(`[MCP][User: ${userId}][${serverName}] Connection successfully established`);
@@ -543,17 +586,64 @@ export abstract class UserConnectionManager {
       this.updateUserLastActivity(userId);
       return connection;
     } catch (error) {
-      logger.error(`[MCP][User: ${userId}][${serverName}] Failed to establish connection`, error);
+      logger.error(
+        `[MCP][User: ${userId}][${serverName}] Failed to establish connection`,
+        sanitizeMCPErrorForLogging(error),
+      );
       // Ensure partial connection state is cleaned up if initialization fails
-      await connection?.disconnect().catch((disconnectError) => {
+      const cleanup = attempt ? connection?.dispose() : connection?.disconnect();
+      await cleanup?.catch((disconnectError) => {
         logger.error(
           `[MCP][User: ${userId}][${serverName}] Error during cleanup after failed connection`,
-          disconnectError,
+          sanitizeMCPErrorForLogging(disconnectError),
         );
       });
       // Ensure cleanup even if connection attempt fails
-      this.removeUserConnection(userId, serverName);
+      if (!attempt || this.userConnections.get(userId)?.get(serverName) === connection) {
+        this.removeUserConnection(userId, serverName);
+      }
       throw error; // Re-throw the error to the caller
+    }
+  }
+
+  private async hasCurrentGovernanceAuthorization(connection: MCPConnection): Promise<boolean> {
+    try {
+      await MCPConnectionFactory.assertConnectionAuthorization(connection);
+      return true;
+    } catch (error) {
+      if (error instanceof GovernanceMCPOAuthStaleError) return false;
+      throw error;
+    }
+  }
+
+  private async isReusableConnection(
+    connection: MCPConnection,
+    governed: boolean,
+  ): Promise<boolean> {
+    if (governed && !(await this.hasCurrentGovernanceAuthorization(connection))) return false;
+    if (!(await connection.isConnected())) return false;
+    return !governed || this.hasCurrentGovernanceAuthorization(connection);
+  }
+
+  private async discardGovernanceConnection(
+    userId: string,
+    serverName: string,
+    connection: MCPConnection,
+  ): Promise<void> {
+    await connection.dispose();
+    if (this.userConnections.get(userId)?.get(serverName) === connection) {
+      this.removeUserConnection(userId, serverName);
+    }
+  }
+
+  private invalidateGovernanceAttempts(userId: string, serverName?: string): void {
+    for (const attempt of this.governanceAttempts) {
+      if (attempt.userId === userId && (!serverName || attempt.serverName === serverName)) {
+        attempt.invalidated = true;
+      }
+    }
+    for (const [key, pending] of this.pendingConnections) {
+      if (pending.attempt?.invalidated) this.pendingConnections.delete(key);
     }
   }
 
@@ -726,18 +816,23 @@ export abstract class UserConnectionManager {
 
   /** Disconnects and removes a specific user connection */
   public async disconnectUserConnection(userId: string, serverName: string): Promise<void> {
+    this.invalidateGovernanceAttempts(userId, serverName);
     this.pendingConnections.delete(`${userId}:${serverName}`);
     const userMap = this.userConnections.get(userId);
     const connection = userMap?.get(serverName);
     if (connection) {
       logger.info(`[MCP][User: ${userId}][${serverName}] Disconnecting...`);
-      await connection.disconnect();
-      this.removeUserConnection(userId, serverName);
+      if (MCPConnectionFactory.isGovernedConnection(connection)) await connection.dispose();
+      else await connection.disconnect();
+      if (this.userConnections.get(userId)?.get(serverName) === connection) {
+        this.removeUserConnection(userId, serverName);
+      }
     }
   }
 
   /** Disconnects and removes all connections for a specific user */
   public async disconnectUserConnections(userId: string): Promise<void> {
+    this.invalidateGovernanceAttempts(userId);
     const userMap = this.userConnections.get(userId);
     const disconnectPromises: Promise<void>[] = [];
     if (userMap) {
@@ -748,7 +843,7 @@ export abstract class UserConnectionManager {
           this.disconnectUserConnection(userId, serverName).catch((error) => {
             logger.error(
               `[MCP][User: ${userId}][${serverName}] Error during disconnection:`,
-              error,
+              sanitizeMCPErrorForLogging(error),
             );
           }),
         );
@@ -787,7 +882,10 @@ export abstract class UserConnectionManager {
         );
         // Disconnect all user connections asynchronously (fire and forget)
         this.disconnectUserConnections(userId).catch((err) =>
-          logger.error(`[MCP][User: ${userId}] Error disconnecting idle connections:`, err),
+          logger.error(
+            `[MCP][User: ${userId}] Error disconnecting idle connections:`,
+            sanitizeMCPErrorForLogging(err),
+          ),
         );
       }
     }

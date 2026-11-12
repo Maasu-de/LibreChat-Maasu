@@ -171,6 +171,10 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
       );
     }
 
+    if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(config)) {
+      throw new Error('Invalid administrative MCP connection');
+    }
+
     const sanitizedConfig = sanitizeUserManagedOAuthConfig({
       ...config,
       headers: sanitizeCredentialPlaceholders(
@@ -221,6 +225,10 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
       throw new Error(
         '[ServerConfigsDB.update] User ID is required to update a database-stored MCP server.',
       );
+    }
+
+    if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(config)) {
+      throw new Error('Invalid administrative MCP connection');
     }
 
     const existingServer = await this._dbMethods.findMCPServerByServerName(serverName, session);

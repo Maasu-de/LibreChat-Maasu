@@ -1043,10 +1043,9 @@ async function getServerConnectionStatus(
   const connection = appConnections.get(serverName) || userConnections.get(serverName);
   const isStaleOrDoNotExist = connection ? connection?.isStale(config.updatedAt) : true;
 
-  const baseConnectionState = isStaleOrDoNotExist
+  let baseConnectionState = isStaleOrDoNotExist
     ? 'disconnected'
     : connection?.connectionState || 'disconnected';
-  let finalConnectionState = baseConnectionState;
   const authorizationComplete =
     isGovernancePilotEnabled() && oauthServers.has(serverName) && config.dbId
       ? await isGovernanceMCPOAuthAuthorized(
@@ -1055,6 +1054,8 @@ async function getServerConnectionStatus(
           getGovernanceMCPOAuthBinding(config),
         )
       : undefined;
+  if (authorizationComplete === false) baseConnectionState = 'disconnected';
+  let finalConnectionState = baseConnectionState;
 
   // connection state overrides specific to OAuth servers
   if (

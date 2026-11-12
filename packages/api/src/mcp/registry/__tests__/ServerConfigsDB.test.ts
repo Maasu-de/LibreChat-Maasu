@@ -121,6 +121,74 @@ describe('ServerConfigsDB', () => {
       },
     );
 
+    it('hides previously stored credential URLs from administrative lists and individual reads', async () => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const administrator = await mongoose.models.User.create({
+        email: 'mcp-legacy-query@example.test',
+        provider: 'openid',
+        role: 'GOVERNANCE_ADMIN',
+      });
+      await mongoose.models.MCPServer.collection.insertOne({
+        serverName: 'legacy-query-credential',
+        author: administrator._id,
+        config: {
+          type: 'sse',
+          url: 'https://example.com/mcp?tenant=acme&api_token=legacy-service-secret',
+        },
+      });
+      const safeUrl =
+        'https://example.com/mcp?tenant=acme&api-version=2&toolset=read&toolset=write';
+      const safe = await serverConfigsDB.add(
+        'safe-routing',
+        { type: 'sse', url: safeUrl },
+        administrator.id,
+      );
+
+      expect(
+        await serverConfigsDB.get('legacy-query-credential', administrator.id),
+      ).toBeUndefined();
+      const listed = await serverConfigsDB.getAll(administrator.id);
+      expect(Object.keys(listed)).toEqual([safe.serverName]);
+      const { redactServerSecrets } = await import('~/mcp/utils');
+      const visible = redactServerSecrets(listed[safe.serverName], { canEdit: true });
+      expect(visible.url).toBe(safeUrl);
+      expect(JSON.stringify(listed)).not.toContain('legacy-service-secret');
+    });
+
+    it('rejects credential URLs at the governed storage boundary without changing an existing connection', async () => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const administrator = await mongoose.models.User.create({
+        email: 'mcp-storage-query@example.test',
+        provider: 'openid',
+        role: 'GOVERNANCE_ADMIN',
+      });
+      const unsafeConfig: ParsedServerConfig = {
+        type: 'sse',
+        url: 'https://example.com/mcp?api_token=must-not-be-persisted',
+      };
+      await expect(
+        serverConfigsDB.add('unsafe-query', unsafeConfig, administrator.id),
+      ).rejects.toThrow();
+      expect(await mongoose.models.MCPServer.countDocuments()).toBe(0);
+      expect(await mongoose.models.AclEntry.countDocuments()).toBe(0);
+
+      const safeUrl = 'https://example.com/mcp?tenant=acme&api-version=2';
+      const safe = await serverConfigsDB.add(
+        'safe-routing',
+        { type: 'sse', url: safeUrl },
+        administrator.id,
+      );
+      await expect(
+        serverConfigsDB.update(safe.serverName, unsafeConfig, administrator.id),
+      ).rejects.toThrow();
+      const persisted = await mongoose.models.MCPServer.findOne({
+        serverName: safe.serverName,
+      }).lean();
+      expect(persisted.config.url).toBe(safeUrl);
+      expect(JSON.stringify(persisted)).not.toContain('must-not-be-persisted');
+      expect((await serverConfigsDB.get(safe.serverName, administrator.id))?.url).toBe(safeUrl);
+    });
+
     it('shares remote management between OIDC administrators, denies users, and keeps service credentials encrypted', async () => {
       process.env.GOVERNANCE_PILOT_ENABLED = 'true';
       const [owner, administrator, regular] = await mongoose.models.User.create([

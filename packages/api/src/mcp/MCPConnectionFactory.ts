@@ -76,6 +76,9 @@ export class MCPConnectionFactory {
   protected readonly tokenMethods?: TokenMethods;
   protected readonly oauthBinding?: string;
   protected readonly oauthConnectionId?: string;
+  private oauthGeneration?: number;
+  private readonly tokenGenerations = new WeakMap<MCPOAuthTokens, number>();
+  private static readonly governedConnections = new WeakMap<MCPConnection, MCPConnectionFactory>();
   protected signal?: AbortSignal;
   protected oauthStart?: t.OAuthStartHandler;
   protected oauthEnd?: () => Promise<void>;
@@ -123,6 +126,31 @@ export class MCPConnectionFactory {
   ): Promise<MCPConnection> {
     const factory = new this(await this.prepareBasicConnectionOptions(basic, oauth), oauth);
     return factory.createConnection();
+  }
+
+  static async assertConnectionAuthorization(connection: MCPConnection): Promise<void> {
+    const factory = this.governedConnections.get(connection);
+    const generation = factory?.oauthGeneration;
+    if (!factory || generation === undefined) throw new GovernanceMCPOAuthStaleError();
+    await factory.assertOAuthGeneration(generation);
+    if (factory.oauthGeneration !== generation) throw new GovernanceMCPOAuthStaleError();
+  }
+
+  static isGovernedConnection(connection: MCPConnection): boolean {
+    return this.governedConnections.has(connection);
+  }
+
+  static async publishConnectionAuthorization(
+    connection: MCPConnection,
+    publish: () => void,
+  ): Promise<void> {
+    const factory = this.governedConnections.get(connection);
+    const generation = factory?.oauthGeneration;
+    if (!factory || generation === undefined) throw new GovernanceMCPOAuthStaleError();
+    await factory.tokenCommit(generation)!(async () => {
+      if (factory.oauthGeneration !== generation) throw new GovernanceMCPOAuthStaleError();
+      publish();
+    });
   }
 
   static attachRequestOAuthHandler(
@@ -439,6 +467,8 @@ export class MCPConnectionFactory {
     });
 
     let cleanupOAuthHandlers: (() => void) | null = null;
+    const governedOAuth = Boolean(this.useOAuth && this.oauthBinding && this.oauthConnectionId);
+    if (governedOAuth) MCPConnectionFactory.governedConnections.set(connection, this);
     if (this.useOAuth && !this.usesObo) {
       cleanupOAuthHandlers = this.handleOAuthEvents(connection);
     } else {
@@ -459,6 +489,7 @@ export class MCPConnectionFactory {
         await this.initiateOAuthBeforeConnect(connection);
       }
       await this.attemptToConnect(connection);
+      if (governedOAuth) await MCPConnectionFactory.assertConnectionAuthorization(connection);
       this.connectionReady = true;
       // Keep the `oauthRequired` listener for cached-connection 401 recovery,
       // but drop response/tool-call callbacks from the completed request.
@@ -468,6 +499,7 @@ export class MCPConnectionFactory {
       if (cleanupOAuthHandlers) {
         cleanupOAuthHandlers();
       }
+      if (governedOAuth) await connection.dispose().catch(() => {});
       throw error;
     }
   }
@@ -661,6 +693,7 @@ export class MCPConnectionFactory {
       );
 
       await this.assertOAuthGeneration(generation);
+      if (tokens) this.oauthGeneration = generation;
       if (tokens) logger.info(`${this.logPrefix} Loaded OAuth tokens`);
       return tokens;
     } catch (error) {
@@ -748,6 +781,7 @@ export class MCPConnectionFactory {
       try {
         const tokens = await inflight;
         await this.assertOAuthGeneration(generation);
+        if (tokens && generation !== undefined) this.tokenGenerations.set(tokens, generation);
         return tokens;
       } catch {
         return null;
@@ -798,6 +832,7 @@ export class MCPConnectionFactory {
     try {
       const tokens = await promise;
       await this.assertOAuthGeneration(generation);
+      if (tokens && generation !== undefined) this.tokenGenerations.set(tokens, generation);
       return tokens;
     } catch {
       return null;
@@ -1020,6 +1055,7 @@ export class MCPConnectionFactory {
         const refreshedTokens = await this.attemptSilentTokenRefresh();
         if (refreshedTokens) {
           connection.setOAuthTokens(refreshedTokens);
+          if (this.oauthBinding) this.oauthGeneration = this.tokenGenerations.get(refreshedTokens);
           connection.emit('oauthHandled');
           return;
         }
