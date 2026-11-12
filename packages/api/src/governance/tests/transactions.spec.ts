@@ -153,6 +153,97 @@ it('commits create, update, and delete with matching success events and encrypte
   expect(JSON.stringify(events)).not.toContain('confidential-service-key');
 });
 
+it.each(['no authentication', 'API key'] as const)(
+  'keeps %s after switching from OAuth and saving another edit',
+  async (authentication) => {
+    const created = await request(app)
+      .post('/servers')
+      .send({
+        config: {
+          type: 'sse',
+          url: config.url,
+          title: config.title,
+          oauth: {
+            client_id: 'managed-client',
+            client_secret: 'previous-oauth-secret',
+            authorization_url: 'https://identity.example/authorize',
+            token_url: 'https://identity.example/token',
+          },
+        },
+      });
+    expect(created.status).toBe(201);
+    const serverName = created.body.serverName as string;
+    const apiKey =
+      authentication === 'API key'
+        ? { source: 'admin', authorization_type: 'bearer', key: 'replacement-service-key' }
+        : undefined;
+    const switched = await request(app)
+      .patch(`/servers/${serverName}`)
+      .send({
+        config: {
+          type: 'sse',
+          url: config.url,
+          title: config.title,
+          ...(apiKey && { apiKey }),
+        },
+      });
+    expect(switched.status).toBe(200);
+    expect(switched.body.oauth).toBeUndefined();
+    expect(switched.body.apiKey).toEqual(
+      apiKey ? { source: 'admin', authorization_type: 'bearer' } : undefined,
+    );
+
+    const renamed = await request(app)
+      .patch(`/servers/${serverName}`)
+      .send({
+        config: {
+          type: switched.body.type,
+          url: switched.body.url,
+          title: 'Renamed connection',
+          ...(switched.body.apiKey && { apiKey: switched.body.apiKey }),
+        },
+      });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.oauth).toBeUndefined();
+    const saved = await schemas.runAsSystem(() => models.MCPServer.findOne({ serverName }).lean());
+    expect(saved!.config.oauth).toBeUndefined();
+    if (apiKey) {
+      expect(await schemas.decryptV2(saved!.config.apiKey!.key!)).toBe(apiKey.key);
+    } else {
+      expect(saved!.config.apiKey).toBeUndefined();
+    }
+  },
+);
+
+it('preserves an omitted client secret when OAuth discovery remains selected', async () => {
+  const created = await request(app)
+    .post('/servers')
+    .send({
+      config: {
+        type: 'sse',
+        url: config.url,
+        title: config.title,
+        oauth: {
+          client_id: 'managed-client',
+          client_secret: 'existing-oauth-secret',
+          authorization_url: 'https://identity.example/authorize',
+          token_url: 'https://identity.example/token',
+        },
+      },
+    });
+  expect(created.status).toBe(201);
+  const serverName = created.body.serverName as string;
+  const updated = await request(app)
+    .patch(`/servers/${serverName}`)
+    .send({ config: { type: 'sse', url: config.url, title: config.title, oauth: {} } });
+  expect(updated.status).toBe(200);
+  expect(updated.body.oauth).toEqual({});
+  const saved = await schemas.runAsSystem(() => models.MCPServer.findOne({ serverName }).lean());
+  expect(await schemas.decryptV2(saved!.config.oauth!.client_secret!)).toBe(
+    'existing-oauth-secret',
+  );
+});
+
 describe.each(['API key', 'OAuth client secret'] as const)('%s preservation', (credential) => {
   function connectionConfig(secret?: string) {
     return {

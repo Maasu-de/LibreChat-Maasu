@@ -246,7 +246,11 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
     /** Encrypted config before storing in database */
     configToSave = await this.encryptConfig(configToSave);
 
-    if (!config.oauth?.client_secret && existingServer?.config?.oauth?.client_secret) {
+    if (
+      config.oauth &&
+      !config.oauth.client_secret &&
+      existingServer?.config?.oauth?.client_secret
+    ) {
       configToSave = {
         ...configToSave,
         oauth: {
