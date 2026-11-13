@@ -58,6 +58,10 @@ export interface IMessage extends Document {
   alwaysAppliedSkills?: string[];
   /** Verbatim excerpts the user quoted to reference on this turn. UI-only metadata for `MessageQuotes`. */
   quotes?: string[];
+  /** Where the gateway replaced a detected value in the text, with its category. */
+  governanceMasks?: { start: number; end: number; category: string; label?: string }[];
+  /** Attached files in which the gateway masked values. */
+  governanceMaskedFiles?: string[];
   expiredAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;

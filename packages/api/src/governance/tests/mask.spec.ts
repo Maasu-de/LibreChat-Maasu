@@ -31,12 +31,13 @@ describe('getGovernanceMasking', () => {
       category: 'CUSTOM_CODENAMES',
       label: 'Codenames',
       action: 'MASK',
-      replacement: '[REDACTED]',
+      replacement: '[Codenames]',
     };
 
     expect(getGovernanceMasking('Discuss Apollo today', [finding])).toEqual({
-      text: 'Discuss [REDACTED] today',
+      text: 'Discuss [Codenames] today',
       ranges: [{ start: 8, end: 14, finding: 0 }],
+      masks: [{ start: 8, end: 19, category: 'CUSTOM_CODENAMES', label: 'Codenames' }],
     });
   });
 
@@ -49,6 +50,10 @@ describe('getGovernanceMasking', () => {
         { start: 2, end: 17, finding: 1 },
         { start: 22, end: 37, finding: 0 },
       ],
+      masks: [
+        { start: 2, end: 9, category: 'EMAIL_ADDRESS' },
+        { start: 14, end: 21, category: 'EMAIL_ADDRESS' },
+      ],
     });
   });
 
@@ -60,6 +65,10 @@ describe('getGovernanceMasking', () => {
       ranges: [
         { start: 0, end: 15, finding: 1 },
         { start: 16, end: 22, finding: 0 },
+      ],
+      masks: [
+        { start: 0, end: 6, category: 'TENANT_TERM' },
+        { start: 7, end: 13, category: 'TENANT_TERM' },
       ],
     });
   });
@@ -79,6 +88,7 @@ describe('getGovernanceMasking', () => {
     expect(getGovernanceMasking('Project  ', findings)).toEqual({
       text: '[TERM]  ',
       ranges: [{ start: 0, end: 7, finding: 0 }],
+      masks: [{ start: 0, end: 6, category: 'TENANT_TERM' }],
     });
   });
 
@@ -88,15 +98,17 @@ describe('getGovernanceMasking', () => {
     expect(getGovernanceMasking('max@example.com', [warning])).toEqual({
       text: 'max@example.com',
       ranges: [],
+      masks: [],
     });
   });
 
-  it('gives an empty replacement its range of the original text', () => {
+  it('gives an empty replacement its range of the original text, but nothing to mark', () => {
     const removed = { ...emailFinding(5), replacement: '' };
 
     expect(getGovernanceMasking('Mail max@example.com now', [removed])).toEqual({
       text: 'Mail  now',
       ranges: [{ start: 5, end: 20, finding: 0 }],
+      masks: [],
     });
   });
 });

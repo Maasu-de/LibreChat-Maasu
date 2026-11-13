@@ -8,7 +8,7 @@ import type {
   GovernanceDlpReview,
   GovernanceModelRestriction,
 } from 'librechat-data-provider';
-import type { GatewayReview, ReviewStore, DlpFileContext } from './review';
+import type { GatewayReview, ReviewStore, StoredReview, DlpFileContext } from './review';
 import type { FileContext } from '~/files/context';
 import type { ServerRequest } from '~/types/http';
 import {
@@ -98,6 +98,8 @@ export interface GovernanceFetchParams {
   onSent?: () => void;
   /** Told after each send of the approved review whether a failure put it back for another try. */
   onApprovalKept?: (kept: boolean) => void;
+  /** Receives the approved review when its send starts, so the sent message can show its masks. */
+  onApproved?: (review: StoredReview) => void;
   reviews?: ReviewStore;
 }
 
@@ -359,6 +361,7 @@ interface ApprovalParams {
   fileContexts: () => DlpFileContext[];
   onReview: (review: GovernanceDlpReview, restriction?: GovernanceModelRestriction) => void;
   onApprovalKept?: (kept: boolean) => void;
+  onApproved?: (review: StoredReview) => void;
   fetch: GovernanceFetch;
   reviews: ReviewStore;
 }
@@ -434,6 +437,10 @@ async function handleReview(params: ApprovalParams, review: GatewayReview): Prom
       messages,
       dlpToken,
       expiresAt: review.expires_at,
+      masks: masking.masks,
+      maskedFileIds: fileFindings.flatMap(({ fileId, action }) =>
+        fileId !== undefined && action === 'MASK' ? [fileId] : [],
+      ),
     },
     reviewTtl(review.expires_at),
   );
@@ -465,6 +472,7 @@ async function sendApproved(params: ApprovalParams, reviewId: string): Promise<R
   }
 
   onApprovalKept?.(false);
+  params.onApproved?.(stored);
   const restore = async () => {
     await reviews.set(reviewId, stored, reviewTtl(stored.expiresAt));
     onApprovalKept?.(true);
@@ -518,6 +526,7 @@ export function createGovernanceDlpFetch({
   onReview,
   onSent,
   onApprovalKept,
+  onApproved,
   reviews,
 }: GovernanceFetchParams): GovernanceFetch {
   return async (input, init) => {
@@ -556,6 +565,7 @@ export function createGovernanceDlpFetch({
           fileContexts,
           onReview,
           onApprovalKept,
+          onApproved,
           fetch,
           reviews: reviews ?? getReviewStore(),
         })
@@ -776,9 +786,50 @@ function claimComparisonApproval(req: ServerRequest): Promise<boolean> {
     }
     const reviews = getReviewStore();
     const stored = await reviews.get(dlpReviewId);
-    return stored?.userId === req.user?.id && stored?.text === text && reviews.delete(dlpReviewId);
+    if (!stored || stored.userId !== req.user?.id || stored.text !== text) {
+      return false;
+    }
+    const claimed = await reviews.delete(dlpReviewId);
+    if (claimed) {
+      setDlpMasked(req, stored);
+    }
+    return claimed;
   })();
   return req.governanceComparisonApproval;
+}
+
+/** The approved review's masks a comparison turn looks up, once for both models. */
+const comparisonMasks = new WeakMap<ServerRequest, Promise<void>>();
+
+/**
+ * Keeps where the review the user approved masks the message, before either compared model can
+ * mark the turn as sent. The approved text often has nothing left to review, so both models then
+ * answer without the review being claimed, and the sent message would lose its highlights. The
+ * review is only read here; claiming it stays with `claimComparisonApproval`.
+ */
+function loadComparisonMasks(req: ServerRequest): Promise<void> {
+  let loaded = comparisonMasks.get(req);
+  if (!loaded) {
+    loaded = (async () => {
+      const { text, dlpReviewId } = req.body ?? {};
+      if (typeof dlpReviewId !== 'string' || dlpReviewId === '') {
+        return;
+      }
+      const stored = await getReviewStore()
+        .get(dlpReviewId)
+        .catch(() => undefined);
+      if (stored && stored.userId === req.user?.id && stored.text === text) {
+        setDlpMasked(req, stored);
+      }
+    })();
+    comparisonMasks.set(req, loaded);
+  }
+  return loaded;
+}
+
+/** Keeps where the approved review masks the message, which is stored with the sent message. */
+function setDlpMasked(req: ServerRequest, { masks, maskedFileIds }: StoredReview): void {
+  req.governanceDlpMasked = { masks: masks ?? [], maskedFileIds: maskedFileIds ?? [] };
 }
 
 /** The models of a comparison, whose first gateway calls a turn-ending review waits for. */
@@ -912,6 +963,7 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
         },
       })(input, init);
     try {
+      await loadComparisonMasks(req);
       const response = await send();
       if (response.ok) {
         settle();
@@ -987,6 +1039,7 @@ export function createRequestDlpFetch(
     onApprovalKept: (kept) => {
       req.governanceDlpApprovalKept = kept;
     },
+    onApproved: (review) => setDlpMasked(req, review),
   });
   sideCallFetches.set(governedFetch, createRequestDlpFetch(req, fetch, false));
   return governedFetch;

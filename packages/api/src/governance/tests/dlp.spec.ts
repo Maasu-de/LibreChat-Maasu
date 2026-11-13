@@ -640,6 +640,8 @@ describe('two-model comparison', () => {
         text,
         messages: [{ role: 'user', content: text }],
         dlpToken: 'earlier-token',
+        masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }],
+        maskedFileIds: ['file-report'],
       },
       60_000,
     );
@@ -663,6 +665,66 @@ describe('two-model comparison', () => {
     expect(await getReviewStore().get('approved-review')).toBeUndefined();
     expect(isDlpUnsent(req)).toBe(false);
     expect(req.governanceDlpReview).toBeUndefined();
+    expect(req.governanceDlpMasked).toEqual({
+      masks: [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }],
+      maskedFileIds: ['file-report'],
+    });
+  });
+
+  it('keeps the approved masks when both models answer the approved text directly', async () => {
+    const masks = [{ start: 13, end: 20, category: 'EMAIL_ADDRESS' }];
+    await getReviewStore().set(
+      'approved-review',
+      {
+        userId: 'user-123',
+        model: 'first-model',
+        text,
+        messages: [{ role: 'user', content: text }],
+        dlpToken: 'earlier-token',
+        masks,
+        maskedFileIds: [],
+      },
+      60_000,
+    );
+    const req = comparisonRequest({ dlpReviewId: 'approved-review' });
+    let maskedWhenSent: unknown;
+    const upstreamFetch = jest.fn(async (): Promise<Response> => {
+      maskedWhenSent ??= req.governanceDlpMasked;
+      return completion();
+    });
+
+    const responses = await Promise.all([
+      send(createRequestDlpFetch(req, upstreamFetch)),
+      send(createRequestDlpFetch(req, upstreamFetch)),
+    ]);
+
+    expect(await Promise.all(responses.map(responseText))).toEqual(['Hi', 'Hi']);
+    expect(isDlpUnsent(req)).toBe(false);
+    expect(maskedWhenSent).toEqual({ masks, maskedFileIds: [] });
+    expect(req.governanceDlpMasked).toEqual({ masks, maskedFileIds: [] });
+  });
+
+  it('keeps no masks from an approved review of another text', async () => {
+    await getReviewStore().set(
+      'other-review',
+      {
+        userId: 'user-123',
+        model: 'first-model',
+        text: 'A different message',
+        messages: [{ role: 'user', content: 'A different message' }],
+        dlpToken: 'earlier-token',
+        masks: [{ start: 0, end: 3, category: 'EMAIL_ADDRESS' }],
+      },
+      60_000,
+    );
+    const req = comparisonRequest({ dlpReviewId: 'other-review' });
+
+    await Promise.all([
+      send(createRequestDlpFetch(req, async () => completion())),
+      send(createRequestDlpFetch(req, async () => completion())),
+    ]);
+
+    expect(req.governanceDlpMasked).toBeUndefined();
   });
 
   it('asks again when the approval is no longer valid', async () => {
