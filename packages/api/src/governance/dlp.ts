@@ -798,6 +798,35 @@ function claimComparisonApproval(req: ServerRequest): Promise<boolean> {
   return req.governanceComparisonApproval;
 }
 
+/** The approved review's masks a comparison turn looks up, once for both models. */
+const comparisonMasks = new WeakMap<ServerRequest, Promise<void>>();
+
+/**
+ * Keeps where the review the user approved masks the message, before either compared model can
+ * mark the turn as sent. The approved text often has nothing left to review, so both models then
+ * answer without the review being claimed, and the sent message would lose its highlights. The
+ * review is only read here; claiming it stays with `claimComparisonApproval`.
+ */
+function loadComparisonMasks(req: ServerRequest): Promise<void> {
+  let loaded = comparisonMasks.get(req);
+  if (!loaded) {
+    loaded = (async () => {
+      const { text, dlpReviewId } = req.body ?? {};
+      if (typeof dlpReviewId !== 'string' || dlpReviewId === '') {
+        return;
+      }
+      const stored = await getReviewStore()
+        .get(dlpReviewId)
+        .catch(() => undefined);
+      if (stored && stored.userId === req.user?.id && stored.text === text) {
+        setDlpMasked(req, stored);
+      }
+    })();
+    comparisonMasks.set(req, loaded);
+  }
+  return loaded;
+}
+
 /** Keeps where the approved review masks the message, which is stored with the sent message. */
 function setDlpMasked(req: ServerRequest, { masks, maskedFileIds }: StoredReview): void {
   req.governanceDlpMasked = { masks: masks ?? [], maskedFileIds: maskedFileIds ?? [] };
@@ -934,6 +963,7 @@ function createComparisonDlpFetch(req: ServerRequest, fetch?: GovernanceFetch): 
         },
       })(input, init);
     try {
+      await loadComparisonMasks(req);
       const response = await send();
       if (response.ok) {
         settle();
