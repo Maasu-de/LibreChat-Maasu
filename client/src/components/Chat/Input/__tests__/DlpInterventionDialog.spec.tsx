@@ -33,6 +33,7 @@ const EMAIL_MASK = `${EMAIL_LABEL} · com_ui_dlp_decision_mask`;
 const PROJECT_LABEL = 'com_ui_dlp_category_project_name';
 const PROJECT_MASK = `${PROJECT_LABEL} · com_ui_dlp_decision_mask`;
 const PROJECT_WARN = `${PROJECT_LABEL} · com_ui_dlp_decision_warn`;
+const IBAN_MASK = 'com_ui_dlp_category_iban_code · com_ui_dlp_decision_mask';
 
 const finding = (overrides: Partial<GovernanceFinding> = {}): GovernanceFinding => ({
   location: '/messages/0/content',
@@ -97,6 +98,9 @@ function renderDialog(result: GovernanceDlpResult, originalText = 'Discuss Proje
 
 const promptRegion = (name = 'com_ui_dlp_original_prompt') => screen.getByRole('region', { name });
 const markOf = (text: string) => screen.getByText(text, { selector: 'mark' });
+/** Switches the dialog, which opens on the masked values, to the values as entered. */
+const showOriginal = () =>
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_original' }));
 
 describe('DLP intervention text segmentation', () => {
   it('splits the text at each finding in it', () => {
@@ -241,7 +245,7 @@ describe('DLP intervention text segmentation', () => {
 });
 
 describe('DlpInterventionDialog', () => {
-  it('shows the prompt as entered, each value on the color of its action', () => {
+  it('opens on the masked prompt, and shows it as entered on the color of each action', () => {
     const { onCancel, onConfirm } = renderDialog({
       decision: 'MASK',
       findings: [finding()],
@@ -252,6 +256,11 @@ describe('DlpInterventionDialog', () => {
     expect(screen.getByRole('dialog', { name: 'com_ui_dlp_title' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'com_ui_dlp_your_prompt' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'com_ui_dlp_attachments' })).toBeNull();
+    expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent(
+      `Discuss [CONFIDENTIAL] (${PROJECT_MASK}) now`,
+    );
+
+    showOriginal();
     expect(promptRegion()).toHaveTextContent(`Discuss Project Acme (${PROJECT_MASK}) now`);
     expect(markOf('Project Acme')).toHaveClass(MASK_HIGHLIGHT);
     expect(within(promptRegion()).getByRole('button', { name: PROJECT_MASK })).toBeVisible();
@@ -263,7 +272,7 @@ describe('DlpInterventionDialog', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('shows masked values only where the gateway replaces them, and badges keep the originals', () => {
+  it('switches the prompt between masked and original values, and badges keep the originals', () => {
     const { onConfirm } = renderDialog(
       {
         decision: 'MASK',
@@ -275,24 +284,31 @@ describe('DlpInterventionDialog', () => {
       },
       'Mail jane@example.com about Project Acme',
     );
-
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
+    const emailValues = () => {
+      fireEvent.mouseEnter(screen.getByRole('button', { name: EMAIL_MASK }));
+      const values = screen.getByRole('dialog', { name: EMAIL_MASK }).textContent;
+      fireEvent.mouseLeave(screen.getByRole('button', { name: EMAIL_MASK }));
+      return values;
+    };
 
     expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent(
       `Mail [EMAIL] (${EMAIL_MASK}) about Project Acme (${PROJECT_WARN})`,
     );
     expect(markOf('Project Acme')).toHaveClass(WARN_HIGHLIGHT);
-    fireEvent.mouseEnter(screen.getByRole('button', { name: EMAIL_MASK }));
-    expect(screen.getByRole('dialog', { name: EMAIL_MASK })).toHaveTextContent('jane@example.com');
+    expect(emailValues()).toBe('jane@example.com');
 
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_original' }));
+    showOriginal();
     expect(promptRegion()).toHaveTextContent('Mail jane@example.com');
+    expect(emailValues()).toBe('jane@example.com');
+
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
+    expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent('Mail [EMAIL]');
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('offers no masked view when the gateway replaces nothing in the prompt', () => {
+  it('lists the original values of a masked attachment, with no masked view for it', () => {
     renderDialog({
-      decision: 'WARN',
+      decision: 'MASK',
       findings: [finding({ action: 'WARN', replacement: undefined })],
       fileFindings: [
         {
@@ -301,11 +317,27 @@ describe('DlpInterventionDialog', () => {
           action: 'MASK',
           replacement: '[IBAN]',
           count: 1,
+          terms: [IBAN],
         },
       ],
     });
 
+    fireEvent.mouseEnter(screen.getByRole('button', { name: IBAN_MASK }));
+    expect(screen.getByRole('dialog', { name: IBAN_MASK })).toHaveTextContent(IBAN);
+    expect(screen.queryByText('[IBAN]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'com_ui_dlp_show_original' })).toBeNull();
+  });
+
+  it('offers no masked view when the gateway replaces nothing', () => {
+    renderDialog({
+      decision: 'WARN',
+      findings: [finding({ action: 'WARN', replacement: undefined })],
+      fileFindings: [{ filename: 'report.pdf', category: 'IBAN_CODE', action: 'WARN', count: 1 }],
+    });
+
     expect(screen.queryByRole('button', { name: 'com_ui_dlp_show_masked' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'com_ui_dlp_show_original' })).toBeNull();
+    expect(promptRegion()).toHaveTextContent('Discuss Project Acme');
   });
 
   it('highlights the words two terms share more strongly, and masks each term once', () => {
@@ -314,15 +346,15 @@ describe('DlpInterventionDialog', () => {
       SHARED,
     );
 
-    expect(markOf('Bijela')).toHaveClass(MASK_HIGHLIGHT);
-    expect(markOf('Solja')).toHaveClass(MASK_OVERLAP);
-    expect(markOf('Dva')).toHaveClass(MASK_HIGHLIGHT);
-
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
     expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent(
       '[Clients] (Clients · com_ui_dlp_decision_mask) [Projects] (Projects · com_ui_dlp_decision_mask)',
       { normalizeWhitespace: false },
     );
+
+    showOriginal();
+    expect(markOf('Bijela')).toHaveClass(MASK_HIGHLIGHT);
+    expect(markOf('Solja')).toHaveClass(MASK_OVERLAP);
+    expect(markOf('Dva')).toHaveClass(MASK_HIGHLIGHT);
   });
 
   it('shows warned values on their color, more strongly where they overlap', () => {
@@ -348,11 +380,10 @@ describe('DlpInterventionDialog', () => {
       OVERLAP,
     );
 
-    expect(markOf('@example.com')).toHaveClass(WARN_HIGHLIGHT);
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
     expect(promptRegion('com_ui_dlp_masked_prompt').textContent).toMatch(
       /^\[overlap test\].*@example\.com/,
     );
+    expect(markOf('@example.com')).toHaveClass(WARN_HIGHLIGHT);
   });
 
   it.each([
@@ -413,6 +444,7 @@ describe('DlpInterventionDialog', () => {
       `Discuss Project Acme, pay ${IBAN}`,
     );
 
+    showOriginal();
     expect(markOf('Project Acme')).toHaveClass(BLOCK_HIGHLIGHT);
     expect(markOf(IBAN)).toHaveClass(MASK_HIGHLIGHT);
     expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
@@ -657,11 +689,11 @@ describe('DlpInterventionDialog', () => {
       const { onCancel, onConfirm } = renderDecision('MASK');
 
       fireEvent.keyDown(dialog(), { key: 'Enter' });
-      fireEvent.keyDown(markOf('Project Acme'), { key: 'Enter' });
+      fireEvent.keyDown(markOf('[CONFIDENTIAL]'), { key: 'Enter' });
       expect(onConfirm).toHaveBeenCalledTimes(2);
 
       fireEvent.keyDown(screen.getByRole('button', { name: 'com_ui_cancel' }), { key: 'Enter' });
-      fireEvent.keyDown(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }), {
+      fireEvent.keyDown(screen.getByRole('button', { name: 'com_ui_dlp_show_original' }), {
         key: 'Enter',
       });
       expect(onConfirm).toHaveBeenCalledTimes(2);
@@ -883,7 +915,6 @@ describe('DlpInterventionDialog', () => {
       'Phoenix for Contoso',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
     expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent(
       '[Project Names] (Project Names · com_ui_dlp_decision_mask) for ' +
         '[Client Names] (Client Names · com_ui_dlp_decision_mask)',

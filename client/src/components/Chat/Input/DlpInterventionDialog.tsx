@@ -488,7 +488,8 @@ export default function DlpInterventionDialog({
   const description = modelRestriction
     ? undefined
     : localize(copy.description, modelNotAllowed && { 0: modelNotAllowed.model });
-  const [showMasked, setShowMasked] = useState(false);
+  /** The dialog opens on the values as the model will receive them. */
+  const [showMasked, setShowMasked] = useState(true);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const categoryLabel = useCategoryLabel();
@@ -521,10 +522,12 @@ export default function DlpInterventionDialog({
     ...files.flatMap(({ groups }) => groups.map(({ category }) => category)),
   ]).size;
   const DecisionIcon = ACTION_STYLE[decision].icon;
-  const toggleLabel = localize(showMasked ? 'com_ui_dlp_show_original' : 'com_ui_dlp_show_masked');
+  /** Whether the gateway replaces a value in the prompt; badges always list the originals. */
   const hasMasked = promptSegments.some(
     (segment) => 'finding' in segment && segment.finding.replacement !== undefined,
   );
+  const masked = hasMasked && showMasked;
+  const toggleLabel = localize(masked ? 'com_ui_dlp_show_original' : 'com_ui_dlp_show_masked');
 
   /**
    * Enter sends, unless another control has focus, which keeps its own action. A held Enter never
@@ -554,9 +557,9 @@ export default function DlpInterventionDialog({
       return <span key={index}>{segment.text}</span>;
     }
     const { text, finding, overlap } = segment;
-    const masked = showMasked && finding.replacement !== undefined;
+    const replaced = masked && finding.replacement !== undefined;
     const previous = promptSegments[index - 1];
-    if (masked && previous && 'finding' in previous && previous.finding === finding) {
+    if (replaced && previous && 'finding' in previous && previous.finding === finding) {
       return null;
     }
     const style = ACTION_STYLE[finding.action];
@@ -564,15 +567,18 @@ export default function DlpInterventionDialog({
       <mark
         key={index}
         title={categoryLabel(finding)}
-        className={masked ? MASKED_VALUE : cn(FLAGGED, overlap ? style.overlap : style.highlight)}
+        className={replaced ? MASKED_VALUE : cn(FLAGGED, overlap ? style.overlap : style.highlight)}
       >
-        {masked ? finding.replacement : text}
+        {replaced ? finding.replacement : text}
         <span className="sr-only">{` (${findingLabel(finding)})`}</span>
       </mark>
     );
   };
 
-  /** A badge per finding group, whose popup lists its original values. */
+  /**
+   * A badge per finding group, whose popup lists its original values, whichever view the
+   * prompt shows.
+   */
   const renderGroup = ({ category, label: displayName, action, count, terms }: FindingGroup) => {
     const id = `${category}\n${action}`;
     const caption = findingLabel({ category, label: displayName, action });
@@ -774,7 +780,7 @@ export default function DlpInterventionDialog({
                       aria-label={toggleLabel}
                       onClick={() => setShowMasked((current) => !current)}
                     >
-                      {showMasked ? (
+                      {masked ? (
                         <Eye className="size-5" aria-hidden="true" />
                       ) : (
                         <EyeOff className="size-5" aria-hidden="true" />
@@ -785,7 +791,7 @@ export default function DlpInterventionDialog({
                 <section
                   className={PROMPT_BOX}
                   aria-label={localize(
-                    showMasked ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
+                    masked ? 'com_ui_dlp_masked_prompt' : 'com_ui_dlp_original_prompt',
                   )}
                 >
                   <p className={PROMPT_TEXT}>{promptSegments.map(renderSegment)}</p>
