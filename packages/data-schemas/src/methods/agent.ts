@@ -864,6 +864,7 @@ export function createAgentMethods(
       id: 1,
       _id: 1,
       name: 1,
+      model: 1,
       avatar: 1,
       author: 1,
       description: 1,

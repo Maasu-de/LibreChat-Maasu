@@ -3512,6 +3512,7 @@ describe('Support Contact Field', () => {
       expect(result.data).toHaveLength(1);
       expect(result.data[0].id).toBe(agentA1.id);
       expect(result.data[0].name).toBe('Agent A1');
+      expect(result.data[0].model).toBe('gpt-4');
     });
 
     test('should omit skill configuration from the default list projection', async () => {
