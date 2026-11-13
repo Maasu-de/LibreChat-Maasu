@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { Model, RootFilterQuery, Types } from 'mongoose';
+import type { ClientSession, Model, RootFilterQuery, Types } from 'mongoose';
 import type { MCPOptions } from 'librechat-data-provider';
 import type { MCPServerDocument } from '../types';
 import logger from '~/config/winston';
@@ -45,12 +45,18 @@ function generateServerNameFromTitle(title: string): string {
 }
 
 export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
-  createMCPServer: (data: {
-    config: MCPOptions;
-    author: string | Types.ObjectId;
-    reservedServerNames?: Iterable<string>;
-  }) => Promise<MCPServerDocument>;
-  findMCPServerByServerName: (serverName: string) => Promise<MCPServerDocument | null>;
+  createMCPServer: (
+    data: {
+      config: MCPOptions;
+      author: string | Types.ObjectId;
+      reservedServerNames?: Iterable<string>;
+    },
+    session?: ClientSession,
+  ) => Promise<MCPServerDocument>;
+  findMCPServerByServerName: (
+    serverName: string,
+    session?: ClientSession,
+  ) => Promise<MCPServerDocument | null>;
   findMCPServerByObjectId: (_id: string | Types.ObjectId) => Promise<MCPServerDocument | null>;
   findMCPServersByAuthor: (authorId: string | Types.ObjectId) => Promise<MCPServerDocument[]>;
   getListMCPServersByIds: ({
@@ -74,8 +80,12 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
   updateMCPServer: (
     serverName: string,
     updateData: { config?: MCPOptions },
+    session?: ClientSession,
   ) => Promise<MCPServerDocument | null>;
-  deleteMCPServer: (serverName: string) => Promise<MCPServerDocument | null>;
+  deleteMCPServer: (
+    serverName: string,
+    session?: ClientSession,
+  ) => Promise<MCPServerDocument | null>;
 } {
   /**
    * Finds the next available server name by checking DB and reserved-name collisions.
@@ -84,6 +94,7 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
   async function findNextAvailableServerName(
     baseName: string,
     reservedServerNames: Set<string> = new Set(),
+    session?: ClientSession,
   ): Promise<string> {
     const MCPServer = mongoose.models.MCPServer as Model<MCPServerDocument>;
 
@@ -93,6 +104,7 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
     const existing = await MCPServer.find({
       serverName: { $regex: matchingNamePattern },
     })
+      .session(session ?? null)
       .select('serverName')
       .lean<Array<{ serverName: string }>>();
 
@@ -126,11 +138,14 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
    * @param data - Object containing config (with title, description, url, etc.) and author
    * @returns The created MCP server document
    */
-  async function createMCPServer(data: {
-    config: MCPOptions;
-    author: string | Types.ObjectId;
-    reservedServerNames?: Iterable<string>;
-  }): Promise<MCPServerDocument> {
+  async function createMCPServer(
+    data: {
+      config: MCPOptions;
+      author: string | Types.ObjectId;
+      reservedServerNames?: Iterable<string>;
+    },
+    session?: ClientSession,
+  ): Promise<MCPServerDocument> {
     const MCPServer = mongoose.models.MCPServer as Model<MCPServerDocument>;
     let lastError: unknown;
     const reservedServerNames = new Set(data.reservedServerNames ?? []);
@@ -142,23 +157,20 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
         let serverName: string;
         if (data.config.title) {
           const baseSlug = generateServerNameFromTitle(data.config.title);
-          serverName = await findNextAvailableServerName(baseSlug, reservedServerNames);
+          serverName = await findNextAvailableServerName(baseSlug, reservedServerNames, session);
         } else {
           serverName = `mcp-${nanoid(16)}`;
         }
 
-        const newServer = await MCPServer.create({
-          serverName,
-          config: data.config,
-          author: data.author,
-        });
+        const newServer = new MCPServer({ serverName, config: data.config, author: data.author });
+        await newServer.save({ session });
 
         return newServer.toObject() as MCPServerDocument;
       } catch (error) {
         lastError = error;
 
         // Only retry on duplicate key errors (serverName collision)
-        if (isDuplicateKeyError(error) && attempt < MAX_CREATE_RETRIES - 1) {
+        if (!session && isDuplicateKeyError(error) && attempt < MAX_CREATE_RETRIES - 1) {
           // Exponential backoff: 10ms, 20ms, 40ms
           const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
           logger.debug(
@@ -182,9 +194,14 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
    * @param serverName - The unique server name identifier
    * @returns The MCP server document or null
    */
-  async function findMCPServerByServerName(serverName: string): Promise<MCPServerDocument | null> {
+  async function findMCPServerByServerName(
+    serverName: string,
+    session?: ClientSession,
+  ): Promise<MCPServerDocument | null> {
     const MCPServer = mongoose.models.MCPServer as Model<MCPServerDocument>;
-    return await MCPServer.findOne({ serverName }).lean<MCPServerDocument>();
+    return await MCPServer.findOne({ serverName })
+      .session(session ?? null)
+      .lean<MCPServerDocument>();
   }
 
   /**
@@ -323,12 +340,13 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
   async function updateMCPServer(
     serverName: string,
     updateData: { config?: MCPOptions },
+    session?: ClientSession,
   ): Promise<MCPServerDocument | null> {
     const MCPServer = mongoose.models.MCPServer as Model<MCPServerDocument>;
     return await MCPServer.findOneAndUpdate(
       { serverName },
       { $set: updateData },
-      { new: true, runValidators: true },
+      { new: true, runValidators: true, session },
     ).lean<MCPServerDocument>();
   }
 
@@ -337,9 +355,12 @@ export function createMCPServerMethods(mongoose: typeof import('mongoose')): {
    * @param serverName - The MCP server ID
    * @returns The deleted MCP server document or null
    */
-  async function deleteMCPServer(serverName: string): Promise<MCPServerDocument | null> {
+  async function deleteMCPServer(
+    serverName: string,
+    session?: ClientSession,
+  ): Promise<MCPServerDocument | null> {
     const MCPServer = mongoose.models.MCPServer as Model<MCPServerDocument>;
-    return await MCPServer.findOneAndDelete({ serverName }).lean<MCPServerDocument>();
+    return await MCPServer.findOneAndDelete({ serverName }, { session }).lean<MCPServerDocument>();
   }
 
   /**

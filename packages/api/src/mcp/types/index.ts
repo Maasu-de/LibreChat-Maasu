@@ -258,6 +258,8 @@ export interface ToolDiscoveryOptions {
   requestBody?: RequestBody;
   graphTokenResolver?: GraphTokenResolver;
   connectionTimeout?: number;
+  /** Use a fresh connection and distinguish failed tool listing from a valid empty list. */
+  throwOnError?: boolean;
   /** Pre-resolved config-source servers for tenant-scoped lookup */
   configServers?: Record<string, ParsedServerConfig>;
   oboTokenResolver?: OboTokenResolver;

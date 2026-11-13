@@ -1,6 +1,8 @@
 import { Keyv } from 'keyv';
 import { createHash } from 'crypto';
 import { logger } from '@librechat/data-schemas';
+import type { ClientSession } from 'mongoose';
+import type { GovernanceMCPMutation } from '~/governance/audit';
 import type { IServerConfigsRepositoryInterface } from './ServerConfigsRepositoryInterface';
 import type * as t from '~/mcp/types';
 import {
@@ -9,6 +11,8 @@ import {
   CONFIG_CACHE_NAMESPACE,
 } from './cache/ServerConfigsCacheFactory';
 import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/errors';
+import { preserveGovernanceMCPSecrets } from '~/governance/mcp';
+import { sanitizeMCPErrorForLogging } from '~/mcp/utils';
 import { MCPServerInspector } from './MCPServerInspector';
 import { ServerConfigsDB } from './db/ServerConfigsDB';
 import { cacheConfig } from '~/cache/cacheConfig';
@@ -405,6 +409,7 @@ export class MCPServersRegistry {
     storageLocation: 'CACHE' | 'DB',
     userId?: string,
     reservedServerNames?: Iterable<string>,
+    mutation?: GovernanceMCPMutation,
   ): Promise<t.AddServerResult> {
     const configRepo = this.getConfigRepository(storageLocation);
     const source = (storageLocation === 'CACHE' ? 'yaml' : 'user') as t.MCPServerSource;
@@ -420,7 +425,10 @@ export class MCPServersRegistry {
         allowedAddresses,
       );
     } catch (error) {
-      logger.error(`[MCPServersRegistry] Failed to inspect server "${serverName}":`, error);
+      logger.error(
+        `[MCPServersRegistry] Failed to inspect server "${serverName}":`,
+        sanitizeMCPErrorForLogging(error),
+      );
       if (isMCPDomainNotAllowedError(error)) {
         throw error;
       }
@@ -430,16 +438,16 @@ export class MCPServersRegistry {
       ...parsedConfig,
       source,
     };
-    const result =
+    const reservedNames =
+      storageLocation === 'DB' ? await this.getOperatorManagedServerNames(reservedServerNames) : [];
+    const persist = (session?: ClientSession) =>
       storageLocation === 'DB'
-        ? await this.dbConfigsRepo.add(
-            serverName,
-            tagged,
-            userId,
-            await this.getOperatorManagedServerNames(reservedServerNames),
-          )
-        : await configRepo.add(serverName, tagged, userId);
-    await this.invalidateServerReadCaches(result.serverName, userId);
+        ? this.dbConfigsRepo.add(serverName, tagged, userId, reservedNames, session)
+        : configRepo.add(serverName, tagged, userId);
+    const result = mutation
+      ? await mutation(persist, (created) => created.config.dbId!)
+      : await persist();
+    await this.invalidateMutationCaches(result.serverName, userId, mutation);
     if (storageLocation === 'CACHE') {
       this.resetYamlServerNamesMemo();
     }
@@ -478,7 +486,10 @@ export class MCPServersRegistry {
         allowedAddresses,
       );
     } catch (error) {
-      logger.error(`[MCPServersRegistry] Reinspection failed for server "${serverName}":`, error);
+      logger.error(
+        `[MCPServersRegistry] Reinspection failed for server "${serverName}":`,
+        sanitizeMCPErrorForLogging(error),
+      );
       if (isMCPDomainNotAllowedError(error)) {
         throw error;
       }
@@ -496,13 +507,16 @@ export class MCPServersRegistry {
     config: t.MCPOptions,
     storageLocation: 'CACHE' | 'DB',
     userId?: string,
+    mutation?: GovernanceMCPMutation,
   ): Promise<t.ParsedServerConfig> {
     const configRepo = this.getConfigRepository(storageLocation);
     const source = (storageLocation === 'CACHE' ? 'yaml' : 'user') as t.MCPServerSource;
 
-    // Merge existing admin API key if not provided in update (needed for inspection)
     let configForInspection = { ...config };
-    if (config.apiKey?.source === 'admin' && !config.apiKey?.key) {
+    if (mutation) {
+      const existingConfig = await configRepo.get(serverName, userId);
+      configForInspection = preserveGovernanceMCPSecrets(configForInspection, existingConfig);
+    } else if (config.apiKey?.source === 'admin' && !config.apiKey?.key) {
       const existingConfig = await configRepo.get(serverName, userId);
       if (existingConfig?.apiKey?.key) {
         configForInspection = {
@@ -526,15 +540,39 @@ export class MCPServersRegistry {
         allowedAddresses,
       );
     } catch (error) {
-      logger.error(`[MCPServersRegistry] Failed to inspect server "${serverName}":`, error);
+      logger.error(
+        `[MCPServersRegistry] Failed to inspect server "${serverName}":`,
+        sanitizeMCPErrorForLogging(error),
+      );
       if (isMCPDomainNotAllowedError(error)) {
         throw error;
       }
       throw new MCPInspectionFailedError(serverName, error as Error);
     }
-    await configRepo.update(serverName, parsedConfig, userId);
-    await this.invalidateServerReadCaches(serverName, userId);
-    return parsedConfig;
+    /** Retain omitted secrets from the transaction's current record, including concurrent rotations. */
+    if (
+      mutation &&
+      config.apiKey?.source === 'admin' &&
+      !config.apiKey.key &&
+      parsedConfig.apiKey
+    ) {
+      const { key: _inspectionKey, ...apiKey } = parsedConfig.apiKey;
+      parsedConfig = { ...parsedConfig, apiKey };
+    }
+    if (mutation && config.oauth && !config.oauth.client_secret && parsedConfig.oauth) {
+      const { client_secret: _inspectionSecret, ...oauth } = parsedConfig.oauth;
+      parsedConfig = { ...parsedConfig, oauth };
+    }
+    const persist = async (session?: ClientSession) => {
+      await configRepo.update(serverName, parsedConfig, userId, session);
+      if (!mutation) return parsedConfig;
+      const updated = await configRepo.get(serverName, userId, session);
+      if (!updated?.dbId) throw new Error('MCP connection not found');
+      return updated;
+    };
+    const result = mutation ? await mutation(persist, (updated) => updated.dbId!) : await persist();
+    await this.invalidateMutationCaches(serverName, userId, mutation);
+    return result;
   }
 
   /**
@@ -765,10 +803,23 @@ export class MCPServersRegistry {
     serverName: string,
     storageLocation: 'CACHE' | 'DB',
     userId?: string,
+    mutation?: GovernanceMCPMutation,
   ): Promise<void> {
     const configRepo = this.getConfigRepository(storageLocation);
-    await configRepo.remove(serverName, userId);
-    await this.invalidateServerReadCaches(serverName, userId);
+    if (mutation) {
+      await mutation(
+        async (session) => {
+          const existing = await configRepo.get(serverName, userId, session);
+          if (!existing?.dbId) throw new Error('MCP connection not found');
+          await configRepo.remove(serverName, userId, session);
+          return existing.dbId;
+        },
+        (id) => id,
+      );
+    } else {
+      await configRepo.remove(serverName, userId);
+    }
+    await this.invalidateMutationCaches(serverName, userId, mutation);
     if (storageLocation === 'CACHE') {
       this.resetYamlServerNamesMemo();
     }
@@ -802,6 +853,19 @@ export class MCPServersRegistry {
     }
 
     await Promise.all(deletes);
+  }
+
+  private async invalidateMutationCaches(
+    serverName: string,
+    userId?: string,
+    mutation?: GovernanceMCPMutation,
+  ): Promise<void> {
+    if (!mutation) return this.invalidateServerReadCaches(serverName, userId);
+    try {
+      await this.invalidateServerReadCaches(serverName, userId);
+    } catch {
+      logger.warn('[Governance MCP] Committed connection cache invalidation failed');
+    }
   }
 
   private async getOperatorManagedServerNames(

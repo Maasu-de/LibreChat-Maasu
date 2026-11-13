@@ -10,6 +10,7 @@ import { useToastContext } from '@librechat/client';
 import { useLocalize } from '~/hooks';
 import { extractServerNameFromUrl, isValidUrl, normalizeUrl } from '../utils/urlUtils';
 import type { MCPServerDefinition } from '~/hooks';
+import { useMCPAdministration } from '../../administration';
 
 // Auth type enum
 export enum AuthTypeEnum {
@@ -61,6 +62,7 @@ interface UseMCPServerFormProps {
 
 export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFormProps) {
   const localize = useLocalize();
+  const administration = useMCPAdministration();
   const { showToast } = useToastContext();
 
   // Mutations
@@ -98,7 +100,9 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
         auth: {
           auth_type: authType,
           api_key: '', // Never pre-fill secrets
-          api_key_source: (apiKeyConfig?.source as 'admin' | 'user') || 'admin',
+          api_key_source: administration
+            ? 'admin'
+            : (apiKeyConfig?.source as 'admin' | 'user') || 'admin',
           api_key_authorization_type:
             (apiKeyConfig?.authorization_type as AuthorizationTypeEnum) ||
             AuthorizationTypeEnum.Bearer,
@@ -136,7 +140,7 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
       },
       trust: false,
     };
-  }, [server]);
+  }, [server, administration]);
 
   // Form instance
   const methods = useForm<MCPServerFormData>({
@@ -191,7 +195,8 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
       // Add OAuth configuration
       if (
         formData.auth.auth_type === AuthTypeEnum.OAuth &&
-        (formData.auth.oauth_client_id ||
+        (administration ||
+          formData.auth.oauth_client_id ||
           formData.auth.oauth_client_secret ||
           formData.auth.oauth_authorization_url ||
           formData.auth.oauth_token_url ||
@@ -212,7 +217,7 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
 
       // Add API Key configuration
       if (formData.auth.auth_type === AuthTypeEnum.ServiceHttp) {
-        const source = formData.auth.api_key_source || 'admin';
+        const source = administration ? 'admin' : formData.auth.api_key_source || 'admin';
         const authorizationType = formData.auth.api_key_authorization_type || 'bearer';
 
         config.apiKey = {
@@ -254,6 +259,8 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
           errorMessage = localize('com_ui_mcp_server_connection_failed');
         } else if (axiosError.response?.data?.error === 'MCP_DOMAIN_NOT_ALLOWED') {
           errorMessage = localize('com_ui_mcp_domain_not_allowed');
+        } else if (axiosError.response?.data?.error === 'MCP_INVALID_ADMIN_CONNECTION') {
+          errorMessage = localize('com_ui_mcp_invalid_admin_connection');
         } else if (axiosError.response?.data?.error) {
           errorMessage = axiosError.response.data.error;
         }

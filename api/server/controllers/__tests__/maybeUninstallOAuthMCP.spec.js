@@ -14,24 +14,37 @@ const mockLoggerInfo = jest.fn();
 const mockLoggerWarn = jest.fn();
 const mockLoggerError = jest.fn();
 const mockGetTenantId = jest.fn();
+const mockGetGovernanceMCPOAuthBinding = jest.fn();
 
-jest.mock('@librechat/data-schemas', () => ({
-  logger: { info: mockLoggerInfo, warn: mockLoggerWarn, error: mockLoggerError },
-  getTenantId: (...args) => mockGetTenantId(...args),
-  webSearchKeys: [],
-}));
+jest.mock('@librechat/data-schemas', () => {
+  process.env.CREDS_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  process.env.CREDS_IV = '0123456789abcdef0123456789abcdef';
+  return {
+    ...jest.requireActual('@librechat/data-schemas'),
+    logger: {
+      debug: jest.fn(),
+      info: mockLoggerInfo,
+      warn: mockLoggerWarn,
+      error: mockLoggerError,
+    },
+    getTenantId: (...args) => mockGetTenantId(...args),
+    webSearchKeys: [],
+  };
+});
 
 jest.mock('@librechat/api', () => {
   return {
     MCPOAuthHandler: {
       revokeOAuthToken: (...args) => mockRevokeOAuthToken(...args),
-      generateFlowId: (userId, serverName, tenantId) => {
+      generateFlowId: (userId, serverName, tenantId, binding) => {
         const flowId = `${userId}:${serverName}`;
-        return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        const tenantFlowId = tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        return binding ? `bound:${binding}:${tenantFlowId}` : tenantFlowId;
       },
-      generateTokenFlowId: (userId, serverName, tenantId) => {
+      generateTokenFlowId: (userId, serverName, tenantId, binding) => {
         const flowId = `${userId}:${serverName}`;
-        return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        const tenantFlowId = tenantId ? `tenant:${encodeURIComponent(tenantId)}:${flowId}` : flowId;
+        return binding ? `bound:${binding}:${tenantFlowId}` : tenantFlowId;
       },
     },
     MCPTokenStorage: {
@@ -39,20 +52,16 @@ jest.mock('@librechat/api', () => {
       getClientInfoAndMetadata: (...args) => mockGetClientInfoAndMetadata(...args),
       deleteUserTokens: (...args) => mockDeleteUserTokens(...args),
     },
+    isGovernancePilotEnabled: () => process.env.GOVERNANCE_PILOT_ENABLED === 'true',
+    getGovernanceMCPOAuthBinding: (...args) => mockGetGovernanceMCPOAuthBinding(...args),
+    sanitizeMCPErrorForLogging: (error) =>
+      process.env.GOVERNANCE_PILOT_ENABLED === 'true' ? 'MCP operation failed' : error,
     normalizeHttpError: jest.fn(),
     extractWebSearchEnvVars: jest.fn(),
     needsRefresh: jest.fn(),
     getNewS3URL: jest.fn(),
   };
 });
-
-jest.mock('librechat-data-provider', () => ({
-  Tools: {},
-  CacheKeys: { FLOWS: 'flows' },
-  Constants: { mcp_delimiter: '::', mcp_prefix: 'mcp_' },
-  FileSources: {},
-  ResourceType: {},
-}));
 
 jest.mock('~/config', () => ({
   getMCPManager: jest.fn(),
@@ -161,6 +170,164 @@ describe('maybeUninstallOAuthMCP', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetTenantId.mockReturnValue(undefined);
+    mockGetGovernanceMCPOAuthBinding.mockReturnValue(undefined);
+  });
+
+  test('uses the current connection binding for revocation and cached token cleanup', async () => {
+    setupOAuthServerFound();
+    const binding = 'current-connection-binding';
+    mockGetGovernanceMCPOAuthBinding.mockReturnValue(binding);
+    mockGetTokens.mockResolvedValue({ access_token: 'access', refresh_token: 'refresh' });
+    mockDeleteUserTokens.mockResolvedValue(undefined);
+    mockDeleteFlow.mockResolvedValue(true);
+    mockRevokeOAuthToken.mockResolvedValue(undefined);
+
+    await maybeUninstallOAuthMCP(userId, pluginKey, appConfig);
+
+    expect(mockGetGovernanceMCPOAuthBinding).toHaveBeenCalledWith(serverConfig);
+    expect(mockGetClientInfoAndMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, serverName, binding }),
+    );
+    expect(mockGetTokens).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, serverName, binding }),
+    );
+    expect(mockDeleteUserTokens).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, serverName, binding }),
+    );
+    expect(mockDeleteFlow).toHaveBeenCalledWith(
+      `bound:${binding}:${userId}:${serverName}`,
+      'mcp_get_tokens',
+    );
+    expect(mockDeleteFlow).toHaveBeenCalledWith(
+      `bound:${binding}:${userId}:${serverName}`,
+      'mcp_oauth',
+    );
+  });
+
+  test.each([false, true])(
+    'commits governed local revocation before provider calls; commit failure: %s',
+    async (failCommit) => {
+      setupOAuthServerFound();
+      mockGetTokens.mockResolvedValue({ access_token: 'access', refresh_token: 'refresh' });
+      mockDeleteUserTokens.mockResolvedValue(undefined);
+      mockDeleteFlow.mockResolvedValue(undefined);
+      let committed = false;
+      const session = { id: 'transaction-session' };
+      mockRevokeOAuthToken.mockImplementation(async () => {
+        expect(committed).toBe(true);
+      });
+      const commit = jest.fn(async (deleteStoredTokens) => {
+        expect(mockDeleteFlow).not.toHaveBeenCalled();
+        expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
+        if (failCommit) throw new Error('audit unavailable');
+        mockDeleteUserTokens.mockImplementationOnce(async ({ deleteToken }) => {
+          await deleteToken({ userId, type: 'mcp_oauth', identifier: `mcp:${serverName}` });
+        });
+        await deleteStoredTokens(session);
+        expect(mockDeleteFlow).toHaveBeenCalled();
+        committed = true;
+      });
+      const result = maybeUninstallOAuthMCP(userId, pluginKey, appConfig, commit);
+      if (failCommit) {
+        await expect(result).rejects.toThrow('audit unavailable');
+        expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
+        expect(mockDeleteUserTokens).not.toHaveBeenCalled();
+      } else {
+        await expect(result).resolves.toBeUndefined();
+        expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(2);
+        expect(mockDeleteTokens).toHaveBeenCalledWith(expect.objectContaining({ userId }), session);
+      }
+    },
+  );
+
+  test.each(['tokens', 'flow'])(
+    'does not report governed revocation success when %s cleanup fails',
+    async (failure) => {
+      const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      setupOAuthServerFound();
+      mockGetTokens.mockResolvedValue(null);
+      mockDeleteUserTokens.mockResolvedValue(undefined);
+      mockDeleteFlow.mockResolvedValue(undefined);
+      if (failure === 'tokens')
+        mockDeleteUserTokens.mockRejectedValueOnce(new Error('token failure containing secret'));
+      else mockDeleteFlow.mockRejectedValueOnce(new Error('flow failure containing secret'));
+      try {
+        await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).rejects.toThrow(
+          'Failed to clear MCP OAuth authorization',
+        );
+        expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain('containing secret');
+      } finally {
+        if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+        else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        mockDeleteUserTokens.mockResolvedValue(undefined);
+        mockDeleteFlow.mockResolvedValue(undefined);
+      }
+    },
+  );
+
+  test('does not commit governed revocation when the flow cache cannot delete authorization', async () => {
+    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+    const { Keyv } = require('keyv');
+    const { FlowStateManager } = jest.requireActual('@librechat/api');
+    const store = new Keyv();
+    const flowManager = new FlowStateManager(store, { ttl: 180000, ci: true });
+    const tokens = { access_token: 'cached-access-token' };
+    const flowId = `${userId}:${serverName}`;
+    await flowManager.initFlow(flowId, 'mcp_get_tokens', {});
+    await flowManager.completeFlow(flowId, 'mcp_get_tokens', tokens);
+    const deletion = jest.spyOn(store, 'delete').mockRejectedValue(new Error('cache unavailable'));
+    setupOAuthServerFound();
+    mockGetTokens.mockResolvedValue(tokens);
+    mockDeleteUserTokens.mockResolvedValue(undefined);
+    mockDeleteFlow.mockImplementation((...args) => flowManager.deleteFlow(...args));
+    mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
+    const commit = jest.fn(async (deleteStoredTokens) => deleteStoredTokens());
+
+    try {
+      await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig, commit)).rejects.toThrow(
+        'Failed to clear MCP OAuth authorization',
+      );
+      expect(deletion).toHaveBeenCalled();
+      expect(mockDeleteFlow).toHaveBeenCalledWith(flowId, 'mcp_get_tokens');
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(mockDeleteUserTokens).not.toHaveBeenCalled();
+      expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
+      expect(await flowManager.getFlowState(flowId, 'mcp_get_tokens')).toMatchObject({
+        status: 'COMPLETED',
+        result: tokens,
+      });
+    } finally {
+      deletion.mockRestore();
+      await store.clear();
+      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      mockDeleteFlow.mockResolvedValue(undefined);
+      mockRevokeOAuthToken.mockResolvedValue(undefined);
+    }
+  });
+
+  test('preserves non-governed cleanup when flow deletion returns false', async () => {
+    const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+    process.env.GOVERNANCE_PILOT_ENABLED = 'false';
+    setupOAuthServerFound();
+    mockGetTokens.mockResolvedValue({ access_token: 'cached-access-token' });
+    mockDeleteUserTokens.mockResolvedValue(undefined);
+    mockDeleteFlow.mockResolvedValue(false);
+    mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
+
+    try {
+      await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toBeUndefined();
+      expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(1);
+      expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
+      expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+      else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+      mockDeleteFlow.mockResolvedValue(undefined);
+      mockRevokeOAuthToken.mockResolvedValue(undefined);
+    }
   });
 
   test('is a no-op when pluginKey is not an MCP key', async () => {

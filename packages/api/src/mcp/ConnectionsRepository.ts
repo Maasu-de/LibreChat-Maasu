@@ -1,7 +1,7 @@
 import { logger } from '@librechat/data-schemas';
 import type * as t from './types';
 import { MCPServersRegistry } from '~/mcp/registry/MCPServersRegistry';
-import { isUserSourced, requiresUserScopedConnection } from './utils';
+import { isUserSourced, requiresUserScopedConnection, sanitizeMCPErrorForLogging } from './utils';
 import { MCPConnectionFactory } from '~/mcp/MCPConnectionFactory';
 import { MCPConnection } from './connection';
 
@@ -130,7 +130,10 @@ export class ConnectionsRepository {
     if (!connection) return Promise.resolve();
     this.connections.delete(serverName);
     return connection.disconnect().catch((err) => {
-      logger.error(`${this.prefix(serverName)} Error disconnecting`, err);
+      logger.error(
+        `${this.prefix(serverName)} Error disconnecting`,
+        sanitizeMCPErrorForLogging(err),
+      );
     });
   }
 

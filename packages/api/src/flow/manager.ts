@@ -3,6 +3,7 @@ import { logger } from '@librechat/data-schemas';
 import type { StoredDataNoRaw } from 'keyv';
 import type { FlowState, FlowMetadata, FlowManagerOptions } from './types';
 import { registerShutdownTask } from '../app/shutdown';
+import { FlowStateStorage } from './storage';
 import { math } from '~/utils/math';
 
 /**
@@ -27,6 +28,7 @@ export function normalizeExpiresAt(timestamp: number): number {
 
 export class FlowStateManager<T = unknown> {
   private keyv: Keyv;
+  private storage: FlowStateStorage<T>;
   private ttl: number;
   private intervals: Set<NodeJS.Timeout>;
 
@@ -42,6 +44,7 @@ export class FlowStateManager<T = unknown> {
 
     this.ttl = ttl;
     this.keyv = store;
+    this.storage = new FlowStateStorage<T>(store, ttl);
     this.intervals = new Set();
 
     if (!ci) {
@@ -63,8 +66,8 @@ export class FlowStateManager<T = unknown> {
   /**
    * Flow keys are intentionally NOT tenant-scoped. OAuth callbacks arrive
    * without tenant ALS context (the provider redirect doesn't carry
-   * X-Tenant-Id). Flow IDs are random UUIDs with no collision risk, and
-   * flow data is ephemeral (TTL-bounded, no sensitive user content).
+   * X-Tenant-Id). MCP flow IDs carry their tenant scope; governed MCP
+   * metadata and results are encrypted before entering the shared cache.
    */
   private getFlowKey(flowId: string, type: string): string {
     return `${type}:${flowId}`;
@@ -95,14 +98,14 @@ export class FlowStateManager<T = unknown> {
    */
   async initFlow(flowId: string, type: string, metadata: FlowMetadata = {}): Promise<void> {
     const flowKey = this.getFlowKey(flowId, type);
-    const initialState: FlowState = {
+    const initialState: FlowState<T> = {
       type,
       status: 'PENDING',
       metadata,
       createdAt: Date.now(),
     };
     logger.debug(`[${flowKey}] Storing initial flow state`);
-    await this.keyv.set(flowKey, initialState, this.ttl);
+    await this.storage.set(flowKey, initialState);
   }
 
   /**
@@ -116,7 +119,7 @@ export class FlowStateManager<T = unknown> {
   ): Promise<T> {
     const flowKey = this.getFlowKey(flowId, type);
 
-    let existingState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+    let existingState = await this.storage.get(flowKey);
     if (existingState) {
       logger.debug(`[${flowKey}] Flow already exists`);
       return this.monitorFlow(flowKey, type, signal);
@@ -124,13 +127,13 @@ export class FlowStateManager<T = unknown> {
 
     await new Promise((resolve) => setTimeout(resolve, 250));
 
-    existingState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+    existingState = await this.storage.get(flowKey);
     if (existingState) {
       logger.debug(`[${flowKey}] Flow exists on 2nd check`);
       return this.monitorFlow(flowKey, type, signal);
     }
 
-    const initialState: FlowState = {
+    const initialState: FlowState<T> = {
       type,
       status: 'PENDING',
       metadata,
@@ -138,7 +141,7 @@ export class FlowStateManager<T = unknown> {
     };
 
     logger.debug(`[${flowKey}] Creating initial flow state`);
-    await this.keyv.set(flowKey, initialState, this.ttl);
+    await this.storage.set(flowKey, initialState);
     return this.monitorFlow(flowKey, type, signal);
   }
 
@@ -192,7 +195,7 @@ export class FlowStateManager<T = unknown> {
         if (isCleanedUp || isRetrying) return;
 
         try {
-          let flowState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+          let flowState = await this.storage.get(flowKey);
 
           if (!flowState) {
             if (!missingStateRetried) {
@@ -202,7 +205,7 @@ export class FlowStateManager<T = unknown> {
                 `[${flowKey}] Flow state not found, retrying once after 500ms (race recovery)`,
               );
               await new Promise((r) => setTimeout(r, 500));
-              flowState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+              flowState = await this.storage.get(flowKey);
               isRetrying = false;
             }
 
@@ -262,7 +265,7 @@ export class FlowStateManager<T = unknown> {
    */
   async completeFlow(flowId: string, type: string, result: T): Promise<boolean> {
     const flowKey = this.getFlowKey(flowId, type);
-    const flowState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+    const flowState = await this.storage.get(flowKey);
 
     if (!flowState) {
       logger.warn(
@@ -293,7 +296,7 @@ export class FlowStateManager<T = unknown> {
       completedAt: Date.now(),
     };
 
-    await this.keyv.set(flowKey, updatedState, this.ttl);
+    await this.storage.set(flowKey, updatedState);
 
     logger.debug('[FlowStateManager] Flow completed successfully', {
       flowId,
@@ -316,7 +319,7 @@ export class FlowStateManager<T = unknown> {
     staleThresholdMs: number = PENDING_STALE_MS,
   ): Promise<{ isStale: boolean; age: number; status?: string }> {
     const flowKey = this.getFlowKey(flowId, type);
-    const flowState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+    const flowState = await this.storage.get(flowKey);
 
     if (!flowState) {
       return { isStale: false, age: 0 };
@@ -348,7 +351,7 @@ export class FlowStateManager<T = unknown> {
    */
   async failFlow(flowId: string, type: string, error: Error | string): Promise<boolean> {
     const flowKey = this.getFlowKey(flowId, type);
-    const flowState = (await this.keyv.get(flowKey)) as FlowState | undefined;
+    const flowState = await this.storage.get(flowKey);
 
     if (!flowState) {
       return false;
@@ -365,14 +368,14 @@ export class FlowStateManager<T = unknown> {
       return true;
     }
 
-    const updatedState: FlowState = {
+    const updatedState: FlowState<T> = {
       ...flowState,
       status: 'FAILED',
       error: error instanceof Error ? error.message : error,
       failedAt: Date.now(),
     };
 
-    await this.keyv.set(flowKey, updatedState, this.ttl);
+    await this.storage.set(flowKey, updatedState);
     return true;
   }
 
@@ -381,7 +384,7 @@ export class FlowStateManager<T = unknown> {
    */
   async getFlowState(flowId: string, type: string): Promise<StoredDataNoRaw<FlowState<T>> | null> {
     const flowKey = this.getFlowKey(flowId, type);
-    return this.keyv.get(flowKey);
+    return this.storage.get(flowKey);
   }
 
   /**
@@ -398,7 +401,7 @@ export class FlowStateManager<T = unknown> {
     signal?: AbortSignal,
   ): Promise<T> {
     const flowKey = this.getFlowKey(flowId, type);
-    let existingState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+    let existingState = await this.storage.get(flowKey);
     if (existingState && !this.isTokenExpired(existingState)) {
       logger.debug(`[${flowKey}] Flow already exists with valid token`);
       return this.monitorFlow(flowKey, type, signal);
@@ -406,25 +409,25 @@ export class FlowStateManager<T = unknown> {
 
     await new Promise((resolve) => setTimeout(resolve, 250));
 
-    existingState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+    existingState = await this.storage.get(flowKey);
     if (existingState && !this.isTokenExpired(existingState)) {
       logger.debug(`[${flowKey}] Flow exists on 2nd check with valid token`);
       return this.monitorFlow(flowKey, type, signal);
     }
 
-    const initialState: FlowState = {
+    const initialState: FlowState<T> = {
       type,
       status: 'PENDING',
       metadata: {},
       createdAt: Date.now(),
     };
     logger.debug(`[${flowKey}] Creating initial flow state`);
-    await this.keyv.set(flowKey, initialState, this.ttl);
+    await this.storage.set(flowKey, initialState);
 
     try {
       const result = await handler();
       await this.completeFlow(flowId, type, result);
-      const completedState = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
+      const completedState = await this.storage.get(flowKey);
       if (completedState?.status === 'COMPLETED' && completedState.result !== undefined) {
         return completedState.result;
       }

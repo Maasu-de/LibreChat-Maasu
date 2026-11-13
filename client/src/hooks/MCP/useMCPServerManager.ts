@@ -7,6 +7,7 @@ import {
   QueryKeys,
   MCPOptions,
   Permissions,
+  PermissionBits,
   ResourceType,
   PermissionTypes,
 } from 'librechat-data-provider';
@@ -26,11 +27,13 @@ import type { MCPServerInitState } from '~/store/mcp';
 import type { ConfigFieldDetail } from '~/common';
 import { useLocalize, useHasAccess, useMCPSelect, useMCPConnectionStatus } from '~/hooks';
 import { useGetStartupConfig, useMCPServersQuery } from '~/data-provider';
+import { useMCPAdministration } from '~/components/SidePanel/MCPBuilder/administration';
+import { useRevokeMCPAuthorizationMutation } from '~/data-provider/MCP';
 import { mcpServerInitStatesAtom, getServerInitState } from '~/store/mcp';
 
 export interface MCPServerDefinition {
   serverName: string;
-  config: MCPOptions;
+  config: MCPOptions & { updatedAt?: number };
   dbId?: string; // MongoDB ObjectId for database servers (used for permissions)
   effectivePermissions: number; // Permission bits (VIEW=1, EDIT=2, DELETE=4, SHARE=8)
   consumeOnly?: boolean;
@@ -45,6 +48,7 @@ export function useMCPServerManager({
   storageContextKey,
 }: { conversationId?: string | null; storageContextKey?: string } = {}) {
   const localize = useLocalize();
+  const administration = useMCPAdministration();
   const queryClient = useQueryClient();
   const { showToast } = useToastContext();
   /** Retained for `interface.mcpServers.placeholder` used by `placeholderText` below */
@@ -54,11 +58,19 @@ export function useMCPServerManager({
     permission: Permissions.USE,
   });
 
-  const { data: loadedServers, isLoading } = useMCPServersQuery({ enabled: canUseMcp });
+  const governedChat = startupConfig?.governancePilotEnabled === true && !administration;
+  const mcpEnabled = administration || (canUseMcp && startupConfig != null && !governedChat);
+  const {
+    data: loadedServers,
+    isLoading,
+    isError,
+  } = useMCPServersQuery({
+    enabled: mcpEnabled,
+  });
 
   // Fetch effective permissions for all MCP servers
   const { data: permissionsMap } = useGetAllEffectivePermissionsQuery(ResourceType.MCPSERVER, {
-    enabled: canUseMcp,
+    enabled: mcpEnabled && !administration,
   });
 
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
@@ -67,13 +79,22 @@ export function useMCPServerManager({
 
   const availableMCPServers: MCPServerDefinition[] = useMemo<MCPServerDefinition[]>(() => {
     const definitions: MCPServerDefinition[] = [];
-    if (loadedServers) {
+    if (loadedServers && mcpEnabled) {
       for (const [serverName, metadata] of Object.entries(loadedServers)) {
         const { dbId, consumeOnly, ...config } = metadata;
+        if (
+          administration &&
+          (!dbId || !['http', 'streamable-http', 'sse'].includes(config.type ?? ''))
+        ) {
+          continue;
+        }
 
         // Get effective permissions from the permissions map using _id
         // Fall back to 1 (VIEW) for YAML-based servers without _id
-        const effectivePermissions = dbId && permissionsMap?.[dbId] ? permissionsMap[dbId] : 1;
+        const resourcePermissions = dbId && permissionsMap?.[dbId] ? permissionsMap[dbId] : 1;
+        const effectivePermissions = administration
+          ? PermissionBits.VIEW | PermissionBits.EDIT | PermissionBits.DELETE
+          : resourcePermissions;
 
         definitions.push({
           serverName,
@@ -85,7 +106,7 @@ export function useMCPServerManager({
       }
     }
     return definitions;
-  }, [loadedServers, permissionsMap]);
+  }, [loadedServers, permissionsMap, administration, mcpEnabled]);
 
   // Memoize filtered servers for useMCPSelect to prevent infinite loops
   const selectableServers = useMemo(
@@ -97,6 +118,7 @@ export function useMCPServerManager({
     conversationId,
     storageContextKey,
     servers: selectableServers,
+    enabled: !administration && startupConfig != null && !governedChat,
   });
   const mcpValuesRef = useRef(mcpValues);
 
@@ -114,6 +136,7 @@ export function useMCPServerManager({
   );
 
   const reinitializeMutation = useReinitializeMCPServerMutation();
+  const revokeAuthorizationMutation = useRevokeMCPAuthorizationMutation();
   const cancelOAuthMutation = useCancelMCPOAuthMutation();
 
   const updateUserPluginsMutation = useUpdateUserPluginsMutation({
@@ -264,7 +287,10 @@ export function useMCPServerManager({
 
           const serverStatus = freshConnectionStatus[serverName];
 
-          if (serverStatus?.connectionState === 'connected') {
+          if (
+            serverStatus?.connectionState === 'connected' ||
+            (administration && serverStatus?.authorizationComplete)
+          ) {
             if (timeoutId) {
               clearTimeout(timeoutId);
             }
@@ -340,7 +366,15 @@ export function useMCPServerManager({
       timeoutId = setTimeout(pollOnce, getPollInterval(0));
       pollIntervalsRef.current[serverName] = timeoutId;
     },
-    [queryClient, serverInitStates, showToast, localize, setMCPValues, cleanupServerState],
+    [
+      administration,
+      queryClient,
+      serverInitStates,
+      showToast,
+      localize,
+      setMCPValues,
+      cleanupServerState,
+    ],
   );
 
   const initializeServer = useCallback(
@@ -519,6 +553,15 @@ export function useMCPServerManager({
   /** Standalone revoke function for OAuth servers - doesn't require selectedToolForConfig */
   const revokeOAuthForServer = useCallback(
     (serverName: string) => {
+      if (administration) {
+        revokeAuthorizationMutation.mutate(serverName, {
+          onSuccess: () =>
+            showToast({ message: localize('com_nav_mcp_access_revoked'), status: 'success' }),
+          onError: () =>
+            showToast({ message: localize('com_nav_mcp_vars_update_error'), status: 'error' }),
+        });
+        return;
+      }
       const payload: TUpdateUserPlugins = {
         pluginKey: `${Constants.mcp_prefix}${serverName}`,
         action: 'uninstall',
@@ -526,7 +569,7 @@ export function useMCPServerManager({
       };
       updateUserPluginsMutation.mutate(payload);
     },
-    [updateUserPluginsMutation],
+    [administration, revokeAuthorizationMutation, updateUserPluginsMutation, showToast, localize],
   );
 
   const handleSave = useCallback(
@@ -671,9 +714,10 @@ export function useMCPServerManager({
     availableMCPServers,
     /** MCP servers filtered for chat menu selection (chatMenu !== false && !consumeOnly) */
     selectableServers,
-    availableMCPServersMap: loadedServers,
+    availableMCPServersMap: mcpEnabled ? loadedServers : undefined,
     isLoading,
-    connectionStatus,
+    isError,
+    connectionStatus: mcpEnabled ? connectionStatus : undefined,
     initializeServer,
     cancelOAuthFlow,
     isInitializing,

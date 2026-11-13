@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { isEnabled } from '~/utils/common';
+import { getBasePath } from '~/utils/path';
 
 export const OAUTH_CSRF_COOKIE = 'oauth_csrf';
 export const OAUTH_CSRF_MAX_AGE: number = 10 * 60 * 1000;
@@ -63,7 +64,7 @@ export function setOAuthCsrfCookie(res: Response, flowId: string, cookiePath: st
     secure: shouldUseSecureCookie(),
     sameSite: 'lax',
     maxAge: OAUTH_CSRF_MAX_AGE,
-    path: cookiePath,
+    path: `${getBasePath()}${cookiePath}`,
   });
 }
 
@@ -78,7 +79,7 @@ export function validateOAuthCsrf(
   cookiePath: string,
 ): boolean {
   const cookie = (req.cookies as Record<string, string> | undefined)?.[OAUTH_CSRF_COOKIE];
-  res.clearCookie(OAUTH_CSRF_COOKIE, { path: cookiePath });
+  res.clearCookie(OAUTH_CSRF_COOKIE, { path: `${getBasePath()}${cookiePath}` });
   if (!cookie) {
     return false;
   }
@@ -108,7 +109,7 @@ export function setOAuthSessionCookie(res: Response, userId: string): void {
     secure: shouldUseSecureCookie(),
     sameSite: 'lax',
     maxAge: OAUTH_SESSION_MAX_AGE,
-    path: OAUTH_SESSION_COOKIE_PATH,
+    path: `${getBasePath()}${OAUTH_SESSION_COOKIE_PATH}`,
   });
 }
 

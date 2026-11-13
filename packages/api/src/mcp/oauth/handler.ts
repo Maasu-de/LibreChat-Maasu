@@ -33,7 +33,8 @@ import {
 import { isSSRFTarget, resolveHostnameSSRF, isOAuthUrlAllowed } from '~/auth';
 import { probeResourceMetadataHint } from './resourceHint';
 import { createHardenedOAuthFetch } from './hardenedFetch';
-import { sanitizeUrlForLogging } from '~/mcp/utils';
+import { sanitizeUrlForLogging, sanitizeMCPErrorForLogging } from '~/mcp/utils';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { MCPTokenStorage } from './tokens';
 import { getOAuthUrlPort } from './url';
 
@@ -195,7 +196,7 @@ export class MCPOAuthHandler {
       } catch (error) {
         logger.warn(
           `[MCPOAuth] Rejecting untrusted resource_metadata hint from ${sanitizeUrlForLogging(serverUrl)}; falling back to path-aware discovery`,
-          { error },
+          { error: sanitizeMCPErrorForLogging(error) },
         );
       }
     }
@@ -211,7 +212,7 @@ export class MCPOAuthHandler {
       );
     } catch (error) {
       logger.debug('[MCPOAuth] Resource metadata discovery failed, continuing with server URL', {
-        error,
+        error: sanitizeMCPErrorForLogging(error),
       });
     }
 
@@ -339,7 +340,7 @@ export class MCPOAuthHandler {
       const baseUrl = new URL(serverUrl.origin);
       logger.debug(
         `[MCPOAuth] Discovery threw for path URL, trying base URL: ${sanitizeUrlForLogging(baseUrl)}`,
-        { error: err },
+        { error: sanitizeMCPErrorForLogging(err) },
       );
       return discoverAuthorizationServerMetadata(baseUrl, { fetchFn });
     }
@@ -504,12 +505,13 @@ export class MCPOAuthHandler {
     findToken?: TokenMethods['findToken'],
     allowedAddresses?: string[] | null,
     tenantId?: string,
+    binding?: string,
   ): Promise<{ authorizationUrl: string; flowId: string; flowMetadata: MCPOAuthFlowMetadata }> {
     logger.debug(
       `[MCPOAuth] initiateOAuthFlow called for ${serverName} with URL: ${sanitizeUrlForLogging(serverUrl)}`,
     );
 
-    const flowId = this.generateFlowId(userId, serverName, tenantId);
+    const flowId = this.generateFlowId(userId, serverName, tenantId, binding);
     const state = this.generateState();
 
     logger.debug(`[MCPOAuth] Generated flowId: ${flowId}, state: ${state}`);
@@ -624,6 +626,7 @@ export class MCPOAuthHandler {
           ...(allowedAddresses !== undefined && { allowedAddresses }),
           ...(Object.keys(oauthHeaders).length > 0 && { oauthHeaders }),
           ...(tenantId && { tenantId }),
+          ...(binding && { binding }),
         };
 
         logger.debug(
@@ -671,6 +674,7 @@ export class MCPOAuthHandler {
             userId,
             serverName,
             findToken,
+            ...(binding && { binding }),
           });
           if (existing?.clientInfo?.client_id) {
             const storedRedirectUri = (existing.clientInfo as OAuthClientInformation)
@@ -700,7 +704,7 @@ export class MCPOAuthHandler {
         } catch (error) {
           logger.warn(
             `[MCPOAuth] Failed to look up existing client registration, falling back to new registration`,
-            { error, serverName, userId },
+            { error: sanitizeMCPErrorForLogging(error), serverName, userId },
           );
         }
       }
@@ -788,7 +792,7 @@ export class MCPOAuthHandler {
           logger.debug(`[MCPOAuth] Added audience parameter (discovered flow): ${config.audience}`);
         }
       } catch (error) {
-        logger.error(`[MCPOAuth] startAuthorization failed:`, error);
+        logger.error(`[MCPOAuth] startAuthorization failed:`, sanitizeMCPErrorForLogging(error));
         throw error;
       }
 
@@ -806,6 +810,7 @@ export class MCPOAuthHandler {
         ...(Object.keys(oauthHeaders).length > 0 && { oauthHeaders }),
         ...(reusedStoredClient && { reusedStoredClient }),
         ...(tenantId && { tenantId }),
+        ...(binding && { binding }),
       };
 
       logger.debug(
@@ -820,11 +825,15 @@ export class MCPOAuthHandler {
 
       logger.debug(
         `[MCPOAuth] Returning from initiateOAuthFlow with result ${flowId} for ${serverName}`,
-        result,
+        isGovernancePilotEnabled() ? { flowId, serverName } : result,
       );
       return result;
     } catch (error) {
-      logger.error('[MCPOAuth] Failed to initiate OAuth flow', { error, serverName, userId });
+      logger.error('[MCPOAuth] Failed to initiate OAuth flow', {
+        error: sanitizeMCPErrorForLogging(error),
+        serverName,
+        userId,
+      });
       throw error;
     }
   }
@@ -841,6 +850,7 @@ export class MCPOAuthHandler {
     authorizationCode: string,
     flowManager: FlowStateManager<MCPOAuthTokens>,
     oauthHeaders: Record<string, string>,
+    completeFlow = true,
   ): Promise<MCPOAuthTokens> {
     try {
       /** Flow state which contains our metadata */
@@ -906,11 +916,14 @@ export class MCPOAuthHandler {
       };
 
       /** Now complete the flow with the tokens */
-      await flowManager.completeFlow(flowId, this.FLOW_TYPE, mcpTokens);
+      if (completeFlow) await flowManager.completeFlow(flowId, this.FLOW_TYPE, mcpTokens);
 
       return mcpTokens;
     } catch (error) {
-      logger.error('[MCPOAuth] Failed to complete OAuth flow', { error, flowId });
+      logger.error('[MCPOAuth] Failed to complete OAuth flow', {
+        error: sanitizeMCPErrorForLogging(error),
+        flowId,
+      });
       await flowManager.failFlow(flowId, this.FLOW_TYPE, error as Error);
       throw error;
     }
@@ -934,17 +947,27 @@ export class MCPOAuthHandler {
    * Generates a flow ID for the OAuth flow
    * @returns Consistent ID so concurrent requests share the same flow
    */
-  public static generateFlowId(userId: string, serverName: string, tenantId?: string): string {
-    const flowId = `${userId}:${serverName}`;
-    if (!tenantId) {
-      return flowId;
-    }
-    return `tenant:${encodeURIComponent(tenantId)}:${flowId}`;
+  public static generateFlowId(
+    userId: string,
+    serverName: string,
+    tenantId?: string,
+    binding?: string,
+  ): string {
+    const flowId = tenantId
+      ? `tenant:${encodeURIComponent(tenantId)}:${userId}:${serverName}`
+      : `${userId}:${serverName}`;
+    return binding ? `bound:${binding}:${flowId}` : flowId;
   }
 
   public static parseFlowId(
     flowId: string,
-  ): { userId: string; serverName: string; tenantId?: string } | null {
+  ): { userId: string; serverName: string; tenantId?: string; binding?: string } | null {
+    if (flowId.startsWith('bound:')) {
+      const match = /^bound:([a-f0-9]{64}):(.+)$/.exec(flowId);
+      if (!match || match[2].startsWith('bound:')) return null;
+      const parsed = this.parseFlowId(match[2]);
+      return parsed ? { ...parsed, binding: match[1] } : null;
+    }
     const parts = flowId.split(':');
     if (parts[0] === 'tenant') {
       if (parts.length < 4 || !parts[1] || !parts[2]) {
@@ -981,8 +1004,13 @@ export class MCPOAuthHandler {
   }
 
   /** Same shape as `generateFlowId`; kept distinct so token-fetch flows can diverge from OAuth flows */
-  public static generateTokenFlowId(userId: string, serverName: string, tenantId?: string): string {
-    return this.generateFlowId(userId, serverName, tenantId);
+  public static generateTokenFlowId(
+    userId: string,
+    serverName: string,
+    tenantId?: string,
+    binding?: string,
+  ): string {
+    return this.generateFlowId(userId, serverName, tenantId, binding);
   }
 
   /**
@@ -1565,7 +1593,10 @@ export class MCPOAuthHandler {
       const tokens = await response.json();
       return this.processRefreshResponse(tokens, metadata.serverName, 'auto-discovered OAuth');
     } catch (error) {
-      logger.error(`[MCPOAuth] Failed to refresh tokens for ${metadata.serverName}`, error);
+      logger.error(
+        `[MCPOAuth] Failed to refresh tokens for ${metadata.serverName}`,
+        sanitizeMCPErrorForLogging(error),
+      );
       throw error;
     }
   }

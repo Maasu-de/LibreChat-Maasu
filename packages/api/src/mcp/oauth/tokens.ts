@@ -2,8 +2,9 @@ import jwt from 'jsonwebtoken';
 import { logger, encryptV2, decryptV2 } from '@librechat/data-schemas';
 import type { OAuthTokens, OAuthClientInformation } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { TokenMethods, IToken } from '@librechat/data-schemas';
+import type { ClientSession } from 'mongoose';
 import type { MCPOAuthTokens, ExtendedOAuthTokens, OAuthStoredClientMetadata } from './types';
-import { isInvalidClientMessage } from '~/mcp/utils';
+import { isInvalidClientMessage, sanitizeMCPErrorForLogging } from '~/mcp/utils';
 import { isSystemUserId } from '~/mcp/enum';
 
 export class ReauthenticationRequiredError extends Error {
@@ -20,6 +21,7 @@ export class ReauthenticationRequiredError extends Error {
 interface StoreTokensParams {
   userId: string;
   serverName: string;
+  binding?: string;
   tokens: OAuthTokens | ExtendedOAuthTokens | MCPOAuthTokens;
   createToken: TokenMethods['createToken'];
   updateToken?: TokenMethods['updateToken'];
@@ -37,6 +39,7 @@ interface StoreTokensParams {
 interface GetTokensParams {
   userId: string;
   serverName: string;
+  binding?: string;
   findToken: TokenMethods['findToken'];
   refreshTokens?: (
     refreshToken: string,
@@ -56,6 +59,7 @@ interface GetTokensParams {
   /** Enables cleanup of stale client registration and refresh token on invalid_client errors during refresh. */
   deleteTokens?: TokenMethods['deleteTokens'];
   signal?: AbortSignal;
+  commitTokens?: (operation: (session?: ClientSession) => Promise<void>) => Promise<void>;
 }
 
 /**
@@ -85,6 +89,10 @@ function getJwtAccessTokenExpiry(accessToken?: string): number | null {
   return null;
 }
 
+function getTokenIdentifier(serverName: string, binding?: string): string {
+  return binding ? `mcp:${serverName}:${binding}` : `mcp:${serverName}`;
+}
+
 export class MCPTokenStorage {
   static getLogPrefix(userId: string, serverName: string): string {
     return isSystemUserId(userId)
@@ -101,6 +109,7 @@ export class MCPTokenStorage {
   static async storeTokens({
     userId,
     serverName,
+    binding,
     tokens,
     createToken,
     updateToken,
@@ -112,7 +121,7 @@ export class MCPTokenStorage {
     const logPrefix = this.getLogPrefix(userId, serverName);
 
     try {
-      const identifier = `mcp:${serverName}`;
+      const identifier = getTokenIdentifier(serverName, binding);
 
       // Encrypt and store access token
       const encryptedAccessToken = await encryptV2(tokens.access_token);
@@ -290,7 +299,7 @@ export class MCPTokenStorage {
       });
     } catch (error) {
       const logPrefix = this.getLogPrefix(userId, serverName);
-      logger.error(`${logPrefix} Failed to store tokens`, error);
+      logger.error(`${logPrefix} Failed to store tokens`, sanitizeMCPErrorForLogging(error));
       throw error;
     }
   }
@@ -308,6 +317,7 @@ export class MCPTokenStorage {
   static async forceRefreshTokens({
     userId,
     serverName,
+    binding,
     findToken,
     createToken,
     updateToken,
@@ -316,12 +326,13 @@ export class MCPTokenStorage {
     existingAccessToken,
     existingRefreshToken,
     signal,
+    commitTokens,
   }: GetTokensParams & {
     existingAccessToken?: IToken | null;
     existingRefreshToken?: IToken | null;
   }): Promise<MCPOAuthTokens | null> {
     const logPrefix = this.getLogPrefix(userId, serverName);
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
 
     const refreshTokenData =
       existingRefreshToken !== undefined
@@ -351,8 +362,8 @@ export class MCPTokenStorage {
       logger.info(`${logPrefix} Attempting to refresh token`);
       const decryptedRefreshToken = await decryptV2(refreshTokenData.token);
 
-      let clientInfo;
-      let clientInfoData;
+      let clientInfo: OAuthClientInformation | undefined;
+      let clientInfoData: IToken | null | undefined;
       let storedClientMetadata: Partial<OAuthStoredClientMetadata> | undefined;
       let storedTokenEndpoint: string | undefined;
       let storedAuthMethods: string[] | undefined;
@@ -365,7 +376,7 @@ export class MCPTokenStorage {
         });
         if (clientInfoData) {
           const decryptedClientInfo = await decryptV2(clientInfoData.token);
-          clientInfo = JSON.parse(decryptedClientInfo);
+          clientInfo = JSON.parse(decryptedClientInfo) as OAuthClientInformation;
           logger.debug(`${logPrefix} Retrieved client info:`, {
             client_id: clientInfo.client_id,
             has_client_secret: !!clientInfo.client_secret,
@@ -417,26 +428,38 @@ export class MCPTokenStorage {
 
       // Store the refreshed tokens (handles both create and update)
       // Pass existing token state to avoid duplicate DB calls
-      await this.storeTokens({
-        userId,
-        serverName,
-        tokens: newTokens,
-        createToken,
-        updateToken,
-        findToken,
-        clientInfo,
-        existingTokens: {
-          accessToken: existingAccessToken,
-          refreshToken: refreshTokenData,
-          clientInfoToken: clientInfoData,
-        },
-        metadata: storedClientMetadata,
-      });
+      const persistTokens = async (session?: ClientSession) =>
+        this.storeTokens({
+          userId,
+          serverName,
+          binding,
+          tokens: newTokens,
+          createToken: session ? (token) => createToken(token, session) : createToken,
+          updateToken:
+            session && updateToken
+              ? (query, token) => updateToken(query, token, session)
+              : updateToken,
+          findToken: session
+            ? (query, options) => findToken(query, { ...options, session })
+            : findToken,
+          clientInfo,
+          existingTokens: {
+            accessToken: existingAccessToken,
+            refreshToken: refreshTokenData,
+            clientInfoToken: clientInfoData,
+          },
+          metadata: storedClientMetadata,
+        });
+      if (commitTokens) await commitTokens(persistTokens);
+      else await persistTokens();
 
       logger.info(`${logPrefix} Successfully refreshed and stored OAuth tokens`);
       return newTokens;
     } catch (refreshError) {
-      logger.error(`${logPrefix} Failed to refresh tokens`, refreshError);
+      logger.error(
+        `${logPrefix} Failed to refresh tokens`,
+        sanitizeMCPErrorForLogging(refreshError),
+      );
       // Check if it's an unauthorized_client error (refresh not supported)
       const errorMessage =
         refreshError instanceof Error ? refreshError.message : String(refreshError);
@@ -449,8 +472,27 @@ export class MCPTokenStorage {
           logger.info(
             `${logPrefix} Client registration rejected during token refresh, attempting to clear stale registration and refresh token`,
           );
+          if (commitTokens) {
+            await commitTokens(async (session) => {
+              await MCPTokenStorage.deleteClientRegistration({
+                userId,
+                serverName,
+                binding,
+                deleteTokens: (query) => deleteTokens(query, session),
+              });
+              await deleteTokens(
+                {
+                  userId,
+                  type: 'mcp_oauth_refresh',
+                  identifier: `${identifier}:refresh`,
+                },
+                session,
+              );
+            });
+            throw new ReauthenticationRequiredError(serverName, 'invalid_client');
+          }
           const results = await Promise.allSettled([
-            MCPTokenStorage.deleteClientRegistration({ userId, serverName, deleteTokens }),
+            MCPTokenStorage.deleteClientRegistration({ userId, serverName, binding, deleteTokens }),
             deleteTokens({
               userId,
               type: 'mcp_oauth_refresh',
@@ -459,7 +501,10 @@ export class MCPTokenStorage {
           ]);
           for (const r of results) {
             if (r.status === 'rejected') {
-              logger.warn(`${logPrefix} Failed to clear stale token data`, r.reason);
+              logger.warn(
+                `${logPrefix} Failed to clear stale token data`,
+                sanitizeMCPErrorForLogging(r.reason),
+              );
             }
           }
           throw new ReauthenticationRequiredError(serverName, 'invalid_client');
@@ -478,16 +523,18 @@ export class MCPTokenStorage {
   static async getTokens({
     userId,
     serverName,
+    binding,
     findToken,
     createToken,
     updateToken,
     deleteTokens,
     refreshTokens,
+    commitTokens,
   }: GetTokensParams): Promise<MCPOAuthTokens | null> {
     const logPrefix = this.getLogPrefix(userId, serverName);
 
     try {
-      const identifier = `mcp:${serverName}`;
+      const identifier = getTokenIdentifier(serverName, binding);
 
       // Get access token
       const accessTokenData = await findToken({
@@ -522,6 +569,7 @@ export class MCPTokenStorage {
         return await this.forceRefreshTokens({
           userId,
           serverName,
+          binding,
           findToken,
           createToken,
           updateToken,
@@ -529,6 +577,7 @@ export class MCPTokenStorage {
           refreshTokens,
           existingAccessToken: accessTokenData,
           existingRefreshToken: refreshTokenData,
+          commitTokens,
         });
       }
 
@@ -563,7 +612,7 @@ export class MCPTokenStorage {
       if (error instanceof ReauthenticationRequiredError) {
         throw error;
       }
-      logger.error(`${logPrefix} Failed to retrieve tokens`, error);
+      logger.error(`${logPrefix} Failed to retrieve tokens`, sanitizeMCPErrorForLogging(error));
       return null;
     }
   }
@@ -571,16 +620,18 @@ export class MCPTokenStorage {
   static async getClientInfoAndMetadata({
     userId,
     serverName,
+    binding,
     findToken,
   }: {
     userId: string;
     serverName: string;
+    binding?: string;
     findToken: TokenMethods['findToken'];
   }): Promise<{
     clientInfo: OAuthClientInformation;
     clientMetadata: Record<string, unknown>;
   } | null> {
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
 
     const clientInfoData: IToken | null = await findToken({
       userId,
@@ -618,13 +669,15 @@ export class MCPTokenStorage {
   static async deleteClientRegistration({
     userId,
     serverName,
+    binding,
     deleteTokens,
   }: {
     userId: string;
     serverName: string;
+    binding?: string;
     deleteTokens: TokenMethods['deleteTokens'];
   }): Promise<void> {
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
     await deleteTokens({
       userId,
       type: 'mcp_oauth_client',
@@ -640,13 +693,15 @@ export class MCPTokenStorage {
   static async deleteUserTokens({
     userId,
     serverName,
+    binding,
     deleteToken,
   }: {
     userId: string;
     serverName: string;
+    binding?: string;
     deleteToken: (filter: { userId: string; type: string; identifier: string }) => Promise<void>;
   }): Promise<void> {
-    const identifier = `mcp:${serverName}`;
+    const identifier = getTokenIdentifier(serverName, binding);
 
     // delete client info token
     await deleteToken({

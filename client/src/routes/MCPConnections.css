@@ -1,0 +1,133 @@
+.mcp-connections {
+  --border-medium: #e0e0e0;
+  background: #f5f5f7;
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.47;
+  letter-spacing: -0.022em;
+}
+
+.dark .mcp-connections {
+  --border-medium: #38383a;
+  background: #000;
+}
+
+.mcp-connections-content {
+  max-width: 1200px;
+  margin-inline: auto;
+  padding: clamp(16px, 3vw, 32px) clamp(16px, 3vw, 32px) 64px;
+}
+
+.mcp-connections-description {
+  margin: 0 0 24px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  letter-spacing: -0.016em;
+}
+
+.mcp-connections .mcp-connections-filter {
+  height: auto;
+  min-height: 38px;
+  padding: 9px 16px;
+  border: 1px solid var(--border-medium);
+  border-radius: 9999px;
+  background: var(--aimo-surface);
+  font-size: 14px;
+  line-height: 1.43;
+}
+
+.mcp-connections .mcp-connections-add,
+.mcp-connections .mcp-inspection > button,
+.mcp-connections-dialog-footer > button {
+  height: auto;
+  padding: 11px 22px;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.18;
+}
+
+.mcp-connections .mcp-inspection > button {
+  max-width: 100%;
+  border-color: var(--aimo-blue);
+  color: var(--aimo-blue);
+  white-space: normal;
+}
+
+.dark .mcp-connections .mcp-inspection > button {
+  border-color: #2997ff;
+  color: #2997ff;
+}
+
+.mcp-connections .mcp-server-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.mcp-connections .mcp-server-list > [role='listitem'] {
+  margin: 0;
+  border: 1px solid var(--border-medium);
+  border-radius: 18px;
+  background: var(--aimo-surface);
+}
+
+.mcp-connections .mcp-server-card {
+  gap: 16px;
+  padding: 24px;
+  border: 0;
+  border-radius: 18px 18px 0 0;
+}
+
+.mcp-connections .mcp-server-info > div {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: 0.011em;
+}
+
+.mcp-connections .mcp-server-card p {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.mcp-connections .mcp-inspection {
+  padding: 16px 24px 24px;
+  border: 0;
+  border-top: 1px solid var(--border-light);
+  font-size: 14px;
+}
+
+.mcp-connections .mcp-inspection details {
+  padding: 16px;
+  border-color: var(--border-medium);
+  border-radius: 12px;
+  background: var(--surface-secondary);
+}
+
+.mcp-connections .mcp-inspection summary {
+  overflow-wrap: anywhere;
+}
+
+.mcp-connections .mcp-server-empty {
+  padding: 48px 24px;
+  border-color: var(--border-medium);
+  border-radius: 18px;
+  background: var(--aimo-surface);
+}
+
+.mcp-connections-dialog[role='dialog'] {
+  gap: 24px;
+  border: 1px solid #e0e0e0;
+  background: var(--aimo-surface);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.47;
+  letter-spacing: -0.022em;
+}
+
+.dark .mcp-connections-dialog {
+  border-color: #38383a;
+}
+
+.mcp-connections-dialog h2 {
+  font-size: 21px;
+}

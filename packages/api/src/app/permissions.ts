@@ -7,6 +7,7 @@ import {
   getConfigDefaults,
 } from 'librechat-data-provider';
 import type { IRole, AppConfig } from '@librechat/data-schemas';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { isMemoryEnabled } from '~/memory/config';
 
 /**
@@ -116,11 +117,7 @@ export async function updateInterfacePermissions({
   // 1. Explicit user configuration (from librechat.yaml)
   // 2. Role-specific defaults (from roleDefaults)
   // 3. Interface schema defaults (from interfaceSchema.default())
-  for (const roleName of [
-    SystemRoles.USER,
-    SystemRoles.ADMIN,
-    SystemRoles.GOVERNANCE_ADMIN,
-  ]) {
+  for (const roleName of [SystemRoles.USER, SystemRoles.ADMIN, SystemRoles.GOVERNANCE_ADMIN]) {
     const defaultPerms = roleDefaults[roleName]?.permissions;
 
     const existingRole = await getRoleByName(roleName);
@@ -727,6 +724,16 @@ export async function updateInterfacePermissions({
           };
         }
       }
+    }
+
+    if (isGovernancePilotEnabled()) {
+      permissionsToUpdate[PermissionTypes.MCP_SERVERS] = {
+        [Permissions.USE]: roleName === SystemRoles.GOVERNANCE_ADMIN,
+        [Permissions.CREATE]: roleName === SystemRoles.GOVERNANCE_ADMIN,
+        [Permissions.SHARE]: false,
+        [Permissions.SHARE_PUBLIC]: false,
+        [Permissions.CONFIGURE_OBO]: false,
+      };
     }
 
     // Update permissions if any need updating

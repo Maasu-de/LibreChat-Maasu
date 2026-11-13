@@ -7,6 +7,7 @@ import {
   PermissionBits,
   PrincipalModel,
 } from 'librechat-data-provider';
+import type { MCPServerDocument } from '@librechat/data-schemas';
 import type { ParsedServerConfig } from '~/mcp/types';
 
 type ServerConfigsDBType = import('../db/ServerConfigsDB').ServerConfigsDB;
@@ -88,6 +89,212 @@ beforeEach(async () => {
 describe('ServerConfigsDB', () => {
   const userId = new mongoose.Types.ObjectId().toString();
   const userId2 = new mongoose.Types.ObjectId().toString();
+
+  describe('governed administration', () => {
+    const environment = { ...process.env };
+    afterEach(() => {
+      process.env = { ...environment };
+    });
+
+    it.each(['streamable-http', 'http', 'sse'] as const)(
+      'keeps queried %s connections visible and editable for OIDC administrators',
+      async (type) => {
+        process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+        const administrator = await mongoose.models.User.create({
+          email: `mcp-query-${type}@example.test`,
+          provider: 'openid',
+          role: 'GOVERNANCE_ADMIN',
+        });
+        const url = 'https://example.com/mcp?tenant=acme&api-version=2';
+        const created = await serverConfigsDB.add('queried', { type, url }, administrator.id);
+        expect((await serverConfigsDB.get(created.serverName, administrator.id))?.url).toBe(url);
+        expect((await serverConfigsDB.getAll(administrator.id))[created.serverName]?.url).toBe(url);
+
+        const updatedUrl = 'https://example.com/mcp?tenant=another&api-version=3';
+        await serverConfigsDB.update(
+          created.serverName,
+          { type, url: updatedUrl },
+          administrator.id,
+        );
+        expect((await serverConfigsDB.get(created.serverName, administrator.id))?.url).toBe(
+          updatedUrl,
+        );
+      },
+    );
+
+    it('hides previously stored credential URLs from administrative lists and individual reads', async () => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const administrator = await mongoose.models.User.create({
+        email: 'mcp-legacy-query@example.test',
+        provider: 'openid',
+        role: 'GOVERNANCE_ADMIN',
+      });
+      await mongoose.models.MCPServer.collection.insertOne({
+        serverName: 'legacy-query-credential',
+        author: administrator._id,
+        config: {
+          type: 'sse',
+          url: 'https://example.com/mcp?tenant=acme&api_token=legacy-service-secret',
+        },
+      });
+      const safeUrl =
+        'https://example.com/mcp?tenant=acme&api-version=2&toolset=read&toolset=write';
+      const safe = await serverConfigsDB.add(
+        'safe-routing',
+        { type: 'sse', url: safeUrl },
+        administrator.id,
+      );
+
+      expect(
+        await serverConfigsDB.get('legacy-query-credential', administrator.id),
+      ).toBeUndefined();
+      const listed = await serverConfigsDB.getAll(administrator.id);
+      expect(Object.keys(listed)).toEqual([safe.serverName]);
+      const { redactServerSecrets } = await import('~/mcp/utils');
+      const visible = redactServerSecrets(listed[safe.serverName], { canEdit: true });
+      expect(visible.url).toBe(safeUrl);
+      expect(JSON.stringify(listed)).not.toContain('legacy-service-secret');
+    });
+
+    it('rejects credential URLs at the governed storage boundary without changing an existing connection', async () => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const administrator = await mongoose.models.User.create({
+        email: 'mcp-storage-query@example.test',
+        provider: 'openid',
+        role: 'GOVERNANCE_ADMIN',
+      });
+      const unsafeConfig: ParsedServerConfig = {
+        type: 'sse',
+        url: 'https://example.com/mcp?api_token=must-not-be-persisted',
+      };
+      await expect(
+        serverConfigsDB.add('unsafe-query', unsafeConfig, administrator.id),
+      ).rejects.toThrow();
+      expect(await mongoose.models.MCPServer.countDocuments()).toBe(0);
+      expect(await mongoose.models.AclEntry.countDocuments()).toBe(0);
+
+      const safeUrl = 'https://example.com/mcp?tenant=acme&api-version=2';
+      const safe = await serverConfigsDB.add(
+        'safe-routing',
+        { type: 'sse', url: safeUrl },
+        administrator.id,
+      );
+      await expect(
+        serverConfigsDB.update(safe.serverName, unsafeConfig, administrator.id),
+      ).rejects.toThrow();
+      const persisted = await mongoose.models.MCPServer.findOne({
+        serverName: safe.serverName,
+      }).lean<MCPServerDocument | null>();
+      if (!persisted) throw new Error('Expected the existing MCP connection to remain stored');
+      expect(persisted.config).toMatchObject({ type: 'sse', url: safeUrl });
+      expect(JSON.stringify(persisted)).not.toContain('must-not-be-persisted');
+      expect((await serverConfigsDB.get(safe.serverName, administrator.id))?.url).toBe(safeUrl);
+    });
+
+    it('shares remote management between OIDC administrators, denies users, and keeps service credentials encrypted', async () => {
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      const [owner, administrator, regular] = await mongoose.models.User.create([
+        { email: 'mcp-owner@example.test', provider: 'openid', role: 'GOVERNANCE_ADMIN' },
+        { email: 'mcp-administrator@example.test', provider: 'openid', role: 'GOVERNANCE_ADMIN' },
+        { email: 'mcp-regular@example.test', provider: 'openid', role: 'USER' },
+      ]);
+      const first = await serverConfigsDB.add(
+        'remote',
+        {
+          ...createSSEConfig('Managed remote'),
+          apiKey: { source: 'admin', key: 'service-secret', authorization_type: 'bearer' },
+          oauth: { client_id: 'client', client_secret: 'client-secret' },
+        },
+        owner.id,
+      );
+      const stored = await mongoose.models.MCPServer.findOne({
+        serverName: first.serverName,
+      }).lean();
+      expect(JSON.stringify(stored)).not.toContain('service-secret');
+      expect(JSON.stringify(stored)).not.toContain('client-secret');
+      const otherAdminConfig = await serverConfigsDB.get(first.serverName, administrator.id);
+      expect(otherAdminConfig?.apiKey?.key).toBe('service-secret');
+      expect(
+        Object.keys(await serverConfigsDB.getAll(administrator.id, 'GOVERNANCE_ADMIN')),
+      ).toEqual([first.serverName]);
+      expect(await serverConfigsDB.get(first.serverName, regular.id)).toBeUndefined();
+      expect(await serverConfigsDB.getAll(regular.id, 'USER')).toEqual({});
+      expect(await serverConfigsDB.getAll()).toEqual({});
+      const { redactServerSecrets } = await import('~/mcp/utils');
+      const publicConfig = redactServerSecrets(otherAdminConfig!, { canEdit: true });
+      expect(JSON.stringify(publicConfig)).not.toContain('service-secret');
+      expect(JSON.stringify(publicConfig)).not.toContain('client-secret');
+      await serverConfigsDB.update(
+        first.serverName,
+        {
+          ...createSSEConfig('Updated managed remote'),
+          apiKey: { source: 'admin', authorization_type: 'bearer' },
+          oauth: { client_id: 'client' },
+        },
+        administrator.id,
+      );
+      expect((await serverConfigsDB.get(first.serverName, administrator.id))?.apiKey?.key).toBe(
+        'service-secret',
+      );
+      await serverConfigsDB.remove(first.serverName, administrator.id);
+      expect(await serverConfigsDB.get(first.serverName, owner.id)).toBeUndefined();
+    });
+
+    it('stores OAuth authorization for its actor and revokes only that actor', async () => {
+      const { MCPTokenStorage } = await import('~/mcp/oauth');
+      const administrator = new mongoose.Types.ObjectId().toString();
+      const otherAdministrator = new mongoose.Types.ObjectId().toString();
+      const regularUser = new mongoose.Types.ObjectId().toString();
+      for (const userId of [administrator, otherAdministrator]) {
+        await MCPTokenStorage.storeTokens({
+          userId,
+          serverName: 'remote',
+          tokens: {
+            access_token: `${userId}-access-secret`,
+            refresh_token: `${userId}-refresh-secret`,
+            token_type: 'Bearer',
+            expires_in: 3600,
+          },
+          createToken: dbMethods.createToken,
+          updateToken: dbMethods.updateToken,
+          findToken: dbMethods.findToken,
+        });
+      }
+      const stored = await mongoose.models.Token.find({ userId: administrator }).lean();
+      expect(JSON.stringify(stored)).not.toContain(`${administrator}-access-secret`);
+      expect(JSON.stringify(stored)).not.toContain(`${administrator}-refresh-secret`);
+      await expect(
+        MCPTokenStorage.getTokens({
+          userId: regularUser,
+          serverName: 'remote',
+          findToken: dbMethods.findToken,
+        }),
+      ).rejects.toThrow('Re-authentication required');
+      await MCPTokenStorage.deleteUserTokens({
+        userId: administrator,
+        serverName: 'remote',
+        deleteToken: async (filter) => {
+          await dbMethods.deleteTokens(filter);
+        },
+      });
+      await expect(
+        MCPTokenStorage.getTokens({
+          userId: administrator,
+          serverName: 'remote',
+          findToken: dbMethods.findToken,
+        }),
+      ).rejects.toThrow('Re-authentication required');
+      expect(
+        (
+          await MCPTokenStorage.getTokens({
+            userId: otherAdministrator,
+            serverName: 'remote',
+            findToken: dbMethods.findToken,
+          })
+        )?.access_token,
+      ).toBe(`${otherAdministrator}-access-secret`);
+    });
+  });
 
   describe('constructor', () => {
     it('should throw error when mongoose is not provided', () => {
