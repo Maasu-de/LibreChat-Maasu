@@ -53,6 +53,7 @@ import {
 import { filterFilesByEndpointConfig } from '~/files';
 import { generateArtifactsPrompt } from '~/prompts';
 import { getProviderConfig } from '~/endpoints';
+import { assertGovernanceAgent } from '~/governance/agents';
 import { primeResources } from './resources';
 
 /**
@@ -572,6 +573,7 @@ export async function initializeAgent(
     allowedProviders,
     isInitialAgent = false,
   } = params;
+  assertGovernanceAgent(agent);
   const requestFileOwnerId = req.user?.id;
   const requestFileOwnerScope: FileOwnerScope | undefined = requestFileOwnerId
     ? { userId: requestFileOwnerId, tenantId: req.user?.tenantId }

@@ -2,6 +2,7 @@ import { isGovernanceMCPApi } from './mcp';
 import { Constants, isEphemeralAgentId } from 'librechat-data-provider';
 import type { IUser, IMessage } from '@librechat/data-schemas';
 import type { RequestHandler, Response } from 'express';
+import { isGovernanceAgentConfiguration } from './agents';
 import {
   GOVERNANCE_ENDPOINT,
   isGovernancePilotEnabled,
@@ -45,6 +46,7 @@ const restrictedFields = new Set([
   'content',
   'messages',
 ]);
+const agentFields = new Set(['tool_options', 'capabilities', 'agent_ids', 'edges', 'actions']);
 
 function populated(value: JsonValue): boolean {
   return (
@@ -52,10 +54,13 @@ function populated(value: JsonValue): boolean {
   );
 }
 
-function hasUnsupportedSettings(body: Submission): boolean {
+function hasUnsupportedSettings(body: Submission, agentChat = false): boolean {
   return Object.entries(body).some(([key, value]) => {
     if (key === 'files' && isGovernanceAttachmentsEnabled()) {
       return false;
+    }
+    if (key === 'addedConvo' && agentChat && value != null) {
+      return true;
     }
     if (
       key === 'addedConvo' &&
@@ -70,20 +75,23 @@ function hasUnsupportedSettings(body: Submission): boolean {
     if (restrictedFields.has(key) && populated(value)) {
       return true;
     }
+    if (agentChat && agentFields.has(key) && populated(value)) {
+      return typeof value !== 'object' || value == null || Object.keys(value).length > 0;
+    }
     if (
-      (key === 'endpoint' || key === 'provider') &&
+      (key === 'provider' || (key === 'endpoint' && !(agentChat && value === 'agents'))) &&
       value != null &&
       value !== GOVERNANCE_ENDPOINT
     ) {
       return true;
     }
-    if (key === 'endpointType' && value != null && value !== 'custom') {
+    if (key === 'endpointType' && value != null && value !== (agentChat ? 'agents' : 'custom')) {
       return true;
     }
     if (
       key === 'agent_id' &&
       value != null &&
-      (typeof value !== 'string' || !isEphemeralAgentId(value))
+      (typeof value !== 'string' || (!agentChat && !isEphemeralAgentId(value)))
     ) {
       return true;
     }
@@ -91,7 +99,7 @@ function hasUnsupportedSettings(body: Submission): boolean {
       value != null &&
       typeof value === 'object' &&
       !Array.isArray(value) &&
-      hasUnsupportedSettings(value)
+      hasUnsupportedSettings(value, agentChat)
     );
   });
 }
@@ -132,6 +140,26 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     return;
   }
   const readOnly = req.method === 'GET' || req.method === 'HEAD';
+  if (readOnly && path === '/agents/categories') {
+    next();
+    return;
+  }
+  if (req.method === 'POST' && /^\/agents\/agent_[\w-]+\/revert$/.test(path)) {
+    const body: Submission = req.body;
+    if (
+      body &&
+      !Array.isArray(body) &&
+      Object.keys(body).length === 1 &&
+      typeof body.version_index === 'number' &&
+      Number.isSafeInteger(body.version_index) &&
+      body.version_index >= 0
+    ) {
+      next();
+      return;
+    }
+    deny(res);
+    return;
+  }
   const chat = '/agents/chat';
   if (path.startsWith(`${chat}/`) || path === chat) {
     if (
@@ -142,20 +170,51 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
       return;
     }
     const body: Submission = req.body;
+    const agentChat =
+      (path === chat || path === `${chat}/agents`) &&
+      body?.endpoint === 'agents' &&
+      typeof body.agent_id === 'string' &&
+      /^agent_[\w-]+$/.test(body.agent_id);
     if (
       req.method !== 'POST' ||
-      path !== `${chat}/${GOVERNANCE_ENDPOINT.toLowerCase()}` ||
+      (!agentChat && path !== `${chat}/${GOVERNANCE_ENDPOINT.toLowerCase()}`) ||
       !body ||
       Array.isArray(body) ||
-      body.endpoint !== GOVERNANCE_ENDPOINT ||
+      (!agentChat && body.endpoint !== GOVERNANCE_ENDPOINT) ||
       typeof body.text !== 'string' ||
       !body.text.trim() ||
-      hasUnsupportedSettings(body)
+      hasUnsupportedSettings(body, agentChat)
     ) {
       deny(res);
       return;
     }
     next();
+    return;
+  }
+  if (path === '/agents' || /^\/agents\/agent_[\w-]+(?:\/expanded)?$/.test(path)) {
+    if (
+      readOnly ||
+      (req.method === 'DELETE' && path !== '/agents' && !path.endsWith('/expanded'))
+    ) {
+      next();
+      return;
+    }
+    const body: Submission = req.body;
+    if (
+      ((req.method === 'POST' &&
+        path === '/agents' &&
+        body?.provider === GOVERNANCE_ENDPOINT &&
+        typeof body.model === 'string' &&
+        body.model) ||
+        (req.method === 'PATCH' && path !== '/agents' && !path.endsWith('/expanded'))) &&
+      body &&
+      !Array.isArray(body) &&
+      isGovernanceAgentConfiguration(body)
+    ) {
+      next();
+      return;
+    }
+    deny(res);
     return;
   }
   if (

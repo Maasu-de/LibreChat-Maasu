@@ -72,6 +72,40 @@ describe('isActiveVersion', () => {
     expect(isActiveVersion(version, currentAgent, versions)).toBe(false);
   });
 
+  test.each([
+    ['provider', 'AI Governance Gateway', 'other-provider'],
+    ['model', 'current-model', 'historical-model'],
+    ['model_parameters', { temperature: 0.7 }, { temperature: 0.2 }],
+    ['recursion_limit', 10, 5],
+  ] as const)(
+    'keeps a version differing only in %s restorable',
+    (field, currentValue, historicalValue) => {
+      const version = createVersion({ [field]: historicalValue });
+      const currentAgent = createAgentState({ [field]: currentValue });
+
+      expect(isActiveVersion(version, currentAgent, [version])).toBe(false);
+    },
+  );
+
+  test('matches model settings independently of object key order', () => {
+    const version = createVersion({ model_parameters: { temperature: 0.7, top_p: 0.9 } });
+    const currentAgent = createAgentState({
+      model_parameters: { top_p: 0.9, temperature: 0.7 },
+    });
+
+    expect(isActiveVersion(version, currentAgent, [version])).toBe(true);
+  });
+
+  test.each([undefined, null])(
+    'matches absent model settings (%s) with empty settings',
+    (parameters) => {
+      const version = createVersion({ model_parameters: parameters });
+      const currentAgent = createAgentState({ model_parameters: {} });
+
+      expect(isActiveVersion(version, currentAgent, [version])).toBe(true);
+    },
+  );
+
   test('matches tools regardless of order', () => {
     const version = createVersion({ tools: ['tool1', 'tool2'] });
     const currentAgent = createAgentState({ tools: ['tool2', 'tool1'] });

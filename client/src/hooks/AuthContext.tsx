@@ -54,11 +54,11 @@ const AuthContextProvider = ({
 
   const userRoleName = user?.role ?? '';
   /** Any role besides USER and ADMIN, such as GOVERNANCE_ADMIN, is fetched by its own name. */
-  const isCustomRole =
+  const loadActiveRole =
     isAuthenticated &&
-    !!user?.role &&
-    user.role !== SystemRoles.USER &&
-    user.role !== SystemRoles.ADMIN;
+    !!userRoleName &&
+    userRoleName !== SystemRoles.USER &&
+    userRoleName !== SystemRoles.ADMIN;
 
   const { data: userRole = null } = useGetRole(SystemRoles.USER, {
     enabled: !!(isAuthenticated && (user?.role ?? '')),
@@ -66,8 +66,8 @@ const AuthContextProvider = ({
   const { data: adminRole = null } = useGetRole(SystemRoles.ADMIN, {
     enabled: !!(isAuthenticated && user?.role === SystemRoles.ADMIN),
   });
-  const { data: customRole = null } = useGetRole(isCustomRole ? userRoleName : '_', {
-    enabled: isCustomRole,
+  const { data: activeRole = null } = useGetRole(loadActiveRole ? userRoleName : '_', {
+    enabled: loadActiveRole,
   });
 
   const navigate = useNavigate();
@@ -298,7 +298,7 @@ const AuthContextProvider = ({
       roles: {
         [SystemRoles.USER]: userRole,
         [SystemRoles.ADMIN]: adminRole,
-        ...(isCustomRole && customRole ? { [userRoleName]: customRole } : {}),
+        ...(loadActiveRole && activeRole ? { [userRoleName]: activeRole } : {}),
       },
       isAuthenticated,
     }),
@@ -310,9 +310,9 @@ const AuthContextProvider = ({
       token,
       userRole,
       adminRole,
-      isCustomRole,
+      loadActiveRole,
       userRoleName,
-      customRole,
+      activeRole,
     ],
   );
 

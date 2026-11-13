@@ -25,6 +25,7 @@ type ModelSelectorContextType = {
   // LibreChat
   modelSpecs: t.TModelSpec[];
   mappedEndpoints: Endpoint[];
+  agents: t.Agent[] | null;
   agentsMap: t.TAgentsMap | undefined;
   assistantsMap: t.TAssistantsMap | undefined;
   endpointsConfig: t.TEndpointsConfig;
@@ -246,6 +247,7 @@ export function ModelSelectorProvider({ children, startupConfig }: ModelSelector
       searchResults,
       selectedValues,
       endpointSearchValues,
+      agents,
       agentsMap,
       modelSpecs,
       assistantsMap,
@@ -265,6 +267,7 @@ export function ModelSelectorProvider({ children, startupConfig }: ModelSelector
       searchResults,
       selectedValues,
       endpointSearchValues,
+      agents,
       agentsMap,
       modelSpecs,
       assistantsMap,

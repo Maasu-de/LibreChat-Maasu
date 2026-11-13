@@ -68,6 +68,7 @@ export {
   createGovernanceMCPMutation,
   recordGovernanceMCPFailure,
 } from './governance/audit';
+export { getGovernanceAgentRestoreError } from './governance/agents';
 export * from './governance/groups';
 export {
   getGovernanceGroupCapabilities,

@@ -6,10 +6,12 @@ import { render, act } from '@testing-library/react';
 import { RecoilRoot } from 'recoil';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import { Permissions, PermissionTypes, SystemRoles } from 'librechat-data-provider';
 
 import type { TAuthConfig } from '~/common';
 
 import { AuthContextProvider, useAuthContext } from '../AuthContext';
+import useHasAccess from '../Roles/useHasAccess';
 import { SESSION_KEY } from '~/utils';
 
 const mockNavigate = jest.fn();
@@ -73,11 +75,21 @@ const authConfig: TAuthConfig = { loginRedirect: '/login', test: true };
 
 function TestConsumer() {
   const ctx = useAuthContext();
+  const canUseAgents = useHasAccess({
+    permissionType: PermissionTypes.AGENTS,
+    permission: Permissions.USE,
+  });
+  const canCreateAgents = useHasAccess({
+    permissionType: PermissionTypes.AGENTS,
+    permission: Permissions.CREATE,
+  });
   return (
     <div
       data-testid="consumer"
       data-authenticated={ctx.isAuthenticated}
       data-roles={JSON.stringify(ctx.roles ?? {})}
+      data-agent-use={canUseAgents}
+      data-agent-create={canCreateAgents}
     />
   );
 }
@@ -452,6 +464,91 @@ describe('AuthContextProvider — logout error handling', () => {
     expect(replaceSpy).not.toHaveBeenCalled();
     expect(getByTestId('consumer').getAttribute('data-authenticated')).toBe('false');
     jest.useRealTimers();
+  });
+});
+
+describe('AuthContextProvider — active role permissions', () => {
+  const mockUseGetRole = jest.requireMock('~/data-provider').useGetRole;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    mockUseGetRole.mockReturnValue({ data: null });
+    jest.useRealTimers();
+    sessionStorage.clear();
+    window.history.replaceState({}, '', '/');
+  });
+
+  it.each([SystemRoles.USER, SystemRoles.ADMIN, SystemRoles.GOVERNANCE_ADMIN, 'STAFF'])(
+    'loads %s permissions and enables the authorized agent controls',
+    (role) => {
+      const activeRole = {
+        name: role,
+        permissions: { AGENTS: { USE: true, CREATE: true } },
+      };
+      mockUseGetRole.mockImplementation((name: string, opts?: { enabled?: boolean }) => ({
+        data: name === role && opts?.enabled ? activeRole : null,
+      }));
+
+      const { getByTestId } = renderProviderLive();
+      const [, refreshOptions] = mockRefreshMutate.mock.calls[0] as [
+        unknown,
+        { onSuccess: (data: unknown) => void },
+      ];
+
+      act(() => {
+        refreshOptions.onSuccess({ user: { id: '1', role }, token: 'tok' });
+      });
+      act(() => {
+        jest.advanceTimersByTime(100);
+      });
+
+      expect(mockUseGetRole).toHaveBeenCalledWith(role, { enabled: true });
+      const consumer = getByTestId('consumer');
+      expect(JSON.parse(consumer.getAttribute('data-roles') ?? '{}')[role]).toEqual(activeRole);
+      expect(consumer).toHaveAttribute('data-agent-use', 'true');
+      expect(consumer).toHaveAttribute('data-agent-create', 'true');
+    },
+  );
+
+  it('uses governance administrator permissions instead of inheriting the USER grants', () => {
+    const governanceRole = {
+      name: SystemRoles.GOVERNANCE_ADMIN,
+      permissions: { AGENTS: { USE: true, CREATE: false } },
+    };
+    mockUseGetRole.mockImplementation((name: string, opts?: { enabled?: boolean }) => {
+      if (!opts?.enabled) {
+        return { data: null };
+      }
+      if (name === SystemRoles.GOVERNANCE_ADMIN) {
+        return { data: governanceRole };
+      }
+      return { data: { name, permissions: { AGENTS: { USE: true, CREATE: true } } } };
+    });
+
+    const { getByTestId } = renderProviderLive();
+    const [, refreshOptions] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onSuccess: (data: unknown) => void },
+    ];
+
+    act(() => {
+      refreshOptions.onSuccess({
+        user: { id: '1', role: SystemRoles.GOVERNANCE_ADMIN },
+        token: 'tok',
+      });
+    });
+    act(() => {
+      jest.advanceTimersByTime(100);
+    });
+
+    const consumer = getByTestId('consumer');
+    expect(consumer).toHaveAttribute('data-agent-use', 'true');
+    expect(consumer).toHaveAttribute('data-agent-create', 'false');
   });
 });
 

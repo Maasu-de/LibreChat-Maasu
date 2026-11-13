@@ -12,11 +12,32 @@ import {
   inferMimeType,
   excelMimeTypes,
   EToolResources,
+  AgentCapabilities,
+  EModelEndpoint,
+  GOVERNANCE_ENDPOINT,
+  defaultAgentCapabilities,
   fileConfig as defaultFileConfig,
 } from 'librechat-data-provider';
 import type { TFile, EndpointFileConfig, FileConfig } from 'librechat-data-provider';
 import type { QueryClient } from '@tanstack/react-query';
 import type { ExtendedFile } from '~/common';
+
+const governedAttachmentCapabilities = [AgentCapabilities.context];
+
+export function getAttachmentCapabilities({
+  endpoint,
+  governancePilot,
+  agentCapabilities,
+}: {
+  endpoint?: string | null;
+  governancePilot?: boolean;
+  agentCapabilities?: AgentCapabilities[];
+}): AgentCapabilities[] {
+  if (governancePilot && (endpoint === GOVERNANCE_ENDPOINT || endpoint === EModelEndpoint.agents)) {
+    return governedAttachmentCapabilities;
+  }
+  return agentCapabilities ?? defaultAgentCapabilities;
+}
 
 export const partialTypes = ['text/x-'];
 
