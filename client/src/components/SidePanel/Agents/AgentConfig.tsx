@@ -22,7 +22,7 @@ import {
 } from '~/utils';
 import { ToolSelectDialog, MCPToolSelectDialog } from '~/components/Tools';
 import useAgentCapabilities from '~/hooks/Agents/useAgentCapabilities';
-import { useListSkillsQuery, useGetAgentFiles } from '~/data-provider';
+import { useListSkillsQuery, useGetAgentFiles, useGetStartupConfig } from '~/data-provider';
 import { useFileMapContext, useAgentPanelContext } from '~/Providers';
 import { useLocalize, useVisibleTools, useHasAccess } from '~/hooks';
 import { SkillSelectDialog } from '~/components/Skills/dialogs';
@@ -58,6 +58,8 @@ const inputClass = cn(
 export default function AgentConfig() {
   const localize = useLocalize();
   const fileMap = useFileMapContext();
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
   const { showToast } = useToastContext();
   const methods = useFormContext<AgentForm>();
   const [showToolDialog, setShowToolDialog] = useState(false);
@@ -260,7 +262,7 @@ export default function AgentConfig() {
       <div className="h-auto pt-1">
         {/* Avatar & Name */}
         <div className="mb-4">
-          <AgentAvatar avatar={agent?.['avatar'] ?? null} />
+          {!governancePilot && <AgentAvatar avatar={agent?.['avatar'] ?? null} />}
           <label className={labelClass} htmlFor="name">
             {localize('com_ui_name')}
             <span className="text-red-500">*</span>
@@ -295,15 +297,17 @@ export default function AgentConfig() {
               </>
             )}
           />
-          <Controller
-            name="id"
-            control={control}
-            render={({ field }) => (
-              <p className="h-3 text-xs italic text-text-secondary" aria-live="polite">
-                {field.value}
-              </p>
-            )}
-          />
+          {!governancePilot && (
+            <Controller
+              name="id"
+              control={control}
+              render={({ field }) => (
+                <p className="h-3 text-xs italic text-text-secondary" aria-live="polite">
+                  {field.value}
+                </p>
+              )}
+            />
+          )}
         </div>
         {/* Description */}
         <div className="mb-4">
@@ -328,12 +332,14 @@ export default function AgentConfig() {
           />
         </div>
         {/* Category */}
-        <div className="mb-4">
-          <label className={labelClass} htmlFor="category-selector">
-            {localize('com_ui_category')} <span className="text-red-500">*</span>
-          </label>
-          <AgentCategorySelector className="w-full" />
-        </div>
+        {!governancePilot && (
+          <div className="mb-4">
+            <label className={labelClass} htmlFor="category-selector">
+              {localize('com_ui_category')} <span className="text-red-500">*</span>
+            </label>
+            <AgentCategorySelector className="w-full" />
+          </div>
+        )}
         {/* Instructions */}
         <Instructions />
         {/* Model and Provider */}
@@ -561,103 +567,105 @@ export default function AgentConfig() {
           </div>
         </div>
         {/* Support Contact (Optional) */}
-        <div className="mb-4">
-          <div className="mb-1.5 flex items-center gap-2">
-            <span>
-              <label className="text-token-text-primary block text-sm font-medium">
-                {localize('com_ui_support_contact')}
-              </label>
-            </span>
-          </div>
-          <div className="space-y-3">
-            {/* Support Contact Name */}
-            <div className="flex flex-col">
-              <label
-                className="mb-1 flex items-center justify-between"
-                htmlFor="support-contact-name"
-              >
-                <span className="text-sm">{localize('com_ui_support_contact_name')}</span>
-              </label>
-              <Controller
-                name="support_contact.name"
-                control={control}
-                rules={{
-                  minLength: {
-                    value: 3,
-                    message: localize('com_ui_support_contact_name_min_length', { minLength: 3 }),
-                  },
-                }}
-                render={({ field, fieldState: { error } }) => (
-                  <>
-                    <input
-                      {...field}
-                      value={field.value ?? ''}
-                      className={cn(inputClass, error ? 'border-2 border-red-500' : '')}
-                      id="support-contact-name"
-                      type="text"
-                      placeholder={localize('com_ui_support_contact_name_placeholder')}
-                      aria-label={localize('com_ui_support_contact_name')}
-                      aria-invalid={error ? 'true' : 'false'}
-                      aria-describedby={error ? 'support-contact-name-error' : undefined}
-                    />
-                    {error && (
-                      <span
-                        id="support-contact-name-error"
-                        className="text-sm text-red-500 transition duration-300 ease-in-out"
-                        role="alert"
-                        aria-live="polite"
-                      >
-                        {error.message}
-                      </span>
-                    )}
-                  </>
-                )}
-              />
+        {!governancePilot && (
+          <div className="mb-4">
+            <div className="mb-1.5 flex items-center gap-2">
+              <span>
+                <label className="text-token-text-primary block text-sm font-medium">
+                  {localize('com_ui_support_contact')}
+                </label>
+              </span>
             </div>
-            {/* Support Contact Email */}
-            <div className="flex flex-col">
-              <label
-                className="mb-1 flex items-center justify-between"
-                htmlFor="support-contact-email"
-              >
-                <span className="text-sm">{localize('com_ui_support_contact_email')}</span>
-              </label>
-              <Controller
-                name="support_contact.email"
-                control={control}
-                rules={{
-                  validate: (value) =>
-                    validateEmail(value ?? '', localize('com_ui_support_contact_email_invalid')),
-                }}
-                render={({ field, fieldState: { error } }) => (
-                  <>
-                    <input
-                      {...field}
-                      value={field.value ?? ''}
-                      className={cn(inputClass, error ? 'border-2 border-red-500' : '')}
-                      id="support-contact-email"
-                      type="email"
-                      placeholder={localize('com_ui_support_contact_email_placeholder')}
-                      aria-label={localize('com_ui_support_contact_email')}
-                      aria-invalid={error ? 'true' : 'false'}
-                      aria-describedby={error ? 'support-contact-email-error' : undefined}
-                    />
-                    {error && (
-                      <span
-                        id="support-contact-email-error"
-                        className="text-sm text-red-500 transition duration-300 ease-in-out"
-                        role="alert"
-                        aria-live="polite"
-                      >
-                        {error.message}
-                      </span>
-                    )}
-                  </>
-                )}
-              />
+            <div className="space-y-3">
+              {/* Support Contact Name */}
+              <div className="flex flex-col">
+                <label
+                  className="mb-1 flex items-center justify-between"
+                  htmlFor="support-contact-name"
+                >
+                  <span className="text-sm">{localize('com_ui_support_contact_name')}</span>
+                </label>
+                <Controller
+                  name="support_contact.name"
+                  control={control}
+                  rules={{
+                    minLength: {
+                      value: 3,
+                      message: localize('com_ui_support_contact_name_min_length', { minLength: 3 }),
+                    },
+                  }}
+                  render={({ field, fieldState: { error } }) => (
+                    <>
+                      <input
+                        {...field}
+                        value={field.value ?? ''}
+                        className={cn(inputClass, error ? 'border-2 border-red-500' : '')}
+                        id="support-contact-name"
+                        type="text"
+                        placeholder={localize('com_ui_support_contact_name_placeholder')}
+                        aria-label={localize('com_ui_support_contact_name')}
+                        aria-invalid={error ? 'true' : 'false'}
+                        aria-describedby={error ? 'support-contact-name-error' : undefined}
+                      />
+                      {error && (
+                        <span
+                          id="support-contact-name-error"
+                          className="text-sm text-red-500 transition duration-300 ease-in-out"
+                          role="alert"
+                          aria-live="polite"
+                        >
+                          {error.message}
+                        </span>
+                      )}
+                    </>
+                  )}
+                />
+              </div>
+              {/* Support Contact Email */}
+              <div className="flex flex-col">
+                <label
+                  className="mb-1 flex items-center justify-between"
+                  htmlFor="support-contact-email"
+                >
+                  <span className="text-sm">{localize('com_ui_support_contact_email')}</span>
+                </label>
+                <Controller
+                  name="support_contact.email"
+                  control={control}
+                  rules={{
+                    validate: (value) =>
+                      validateEmail(value ?? '', localize('com_ui_support_contact_email_invalid')),
+                  }}
+                  render={({ field, fieldState: { error } }) => (
+                    <>
+                      <input
+                        {...field}
+                        value={field.value ?? ''}
+                        className={cn(inputClass, error ? 'border-2 border-red-500' : '')}
+                        id="support-contact-email"
+                        type="email"
+                        placeholder={localize('com_ui_support_contact_email_placeholder')}
+                        aria-label={localize('com_ui_support_contact_email')}
+                        aria-invalid={error ? 'true' : 'false'}
+                        aria-describedby={error ? 'support-contact-email-error' : undefined}
+                      />
+                      {error && (
+                        <span
+                          id="support-contact-email-error"
+                          className="text-sm text-red-500 transition duration-300 ease-in-out"
+                          role="alert"
+                          aria-live="polite"
+                        >
+                          {error.message}
+                        </span>
+                      )}
+                    </>
+                  )}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
       <ToolSelectDialog
         isOpen={showToolDialog}

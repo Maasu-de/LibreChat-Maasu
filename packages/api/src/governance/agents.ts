@@ -125,7 +125,6 @@ export interface GovernanceAgentRun {
 
 export interface GovernanceAgentRequest extends GovernanceAgentRun {
   stepId: string;
-  requestId: string;
 }
 
 export function agentRequestHeaders(context: GovernanceAgentRequest): Record<string, string> {
@@ -133,7 +132,6 @@ export function agentRequestHeaders(context: GovernanceAgentRequest): Record<str
     'X-LibreChat-Agent-ID': context.agentId,
     'X-LibreChat-Run-ID': context.runId,
     'X-LibreChat-Step-ID': context.stepId,
-    'X-LibreChat-Request-ID': context.requestId,
   };
 }
 
@@ -175,7 +173,6 @@ export function createGovernanceAgentFetch(
     const context: GovernanceAgentRequest = {
       ...run,
       stepId: randomUUID(),
-      requestId: randomUUID(),
     };
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(init?.headers).forEach((value, key) => headers.set(key, value));

@@ -1110,7 +1110,6 @@ export function createRequestDlpFetch(
       ...context,
       runId: headers.get('X-LibreChat-Run-ID') ?? context.runId,
       stepId: headers.get('X-LibreChat-Step-ID') ?? context.stepId,
-      requestId: headers.get('X-LibreChat-Request-ID') ?? context.requestId,
     };
   };
   if (!approval) {

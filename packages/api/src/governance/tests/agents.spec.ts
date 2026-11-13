@@ -199,10 +199,11 @@ it('completes the native multi-step agent/tool loop with correlated governed mod
   for (const name of ['X-LibreChat-Agent-ID', 'X-LibreChat-Run-ID']) {
     expect(calls[0].headers.get(name)).toBe(calls[1].headers.get(name));
   }
-  for (const name of ['X-LibreChat-Step-ID', 'X-LibreChat-Request-ID']) {
-    expect(calls[0].headers.get(name)).toMatch(/^[\da-f-]{36}$/);
-    expect(calls[0].headers.get(name)).not.toBe(calls[1].headers.get(name));
-  }
+  expect(calls[0].headers.get('X-LibreChat-Step-ID')).toMatch(/^[\da-f-]{36}$/);
+  expect(calls[0].headers.get('X-LibreChat-Step-ID')).not.toBe(
+    calls[1].headers.get('X-LibreChat-Step-ID'),
+  );
+  expect(calls.every(({ headers }) => !headers.has('X-LibreChat-Request-ID'))).toBe(true);
   expect(calls[1].messages).toContainEqual({ role: 'assistant', content: 'Checking' });
 });
 
@@ -233,16 +234,16 @@ it('cancels the native loop before the next model request', async () => {
 });
 
 it('restores approval correlation before graph creation and consumes it before the next step', async () => {
+  const reviewId = randomUUID();
   const context = {
     agentId: 'agent_test',
     runId: randomUUID(),
     stepId: randomUUID(),
-    requestId: randomUUID(),
     steps: 1,
   };
   const store = getReviewStore();
   await store.set(
-    context.requestId,
+    reviewId,
     {
       userId: 'user-1',
       model: 'logical-model',
@@ -258,7 +259,7 @@ it('restores approval correlation before graph creation and consumes it before t
       endpoint: 'agents',
       agent_id: 'agent_test',
       text: 'approved text',
-      dlpReviewId: context.requestId,
+      dlpReviewId: reviewId,
     },
     user: { id: 'user-1' },
   } as ServerRequest;
@@ -281,8 +282,9 @@ it('restores approval correlation before graph creation and consumes it before t
   expect((await fetch(url, init)).ok).toBe(true);
   expect(calls[0].token).toBe('test-token');
   expect(calls[1].token).toBeUndefined();
-  expect(calls[0].headers.get('X-LibreChat-Request-ID')).toBe(context.requestId);
-  expect(calls[1].headers.get('X-LibreChat-Request-ID')).not.toBe(context.requestId);
+  expect(calls[0].headers.get('X-LibreChat-Step-ID')).toBe(context.stepId);
+  expect(calls[1].headers.get('X-LibreChat-Step-ID')).not.toBe(context.stepId);
+  expect(calls.every(({ headers }) => !headers.has('X-LibreChat-Request-ID'))).toBe(true);
   expect(calls[1].headers.get('X-LibreChat-Run-ID')).toBe(context.runId);
 });
 

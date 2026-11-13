@@ -26,6 +26,7 @@ function ModelSelectorContent({ governancePilot }: { governancePilot: boolean })
 
   const {
     // LibreChat
+    agents,
     agentsMap,
     modelSpecs,
     mappedEndpoints,
@@ -89,10 +90,15 @@ function ModelSelectorContent({ governancePilot }: { governancePilot: boolean })
   );
 
   if (governancePilot) {
+    const agentEndpoint = mappedEndpoints?.find((endpoint) => isAgentsEndpoint(endpoint.value));
+    const isAgentSelected = isAgentsEndpoint(selectedValues.endpoint);
     return (
       <GovernanceModelSelector
         endpoint={GOVERNANCE_ENDPOINT}
-        value={selectedValues.model}
+        value={isAgentSelected ? null : selectedValues.model}
+        agents={agentEndpoint ? (agents ?? []) : []}
+        selectedAgentId={isAgentSelected ? selectedValues.model : null}
+        onSelectAgent={(agentId) => agentEndpoint && handleSelectModel(agentEndpoint, agentId)}
         trigger={trigger}
         onSelect={(model) =>
           handleSelectModel(
@@ -105,11 +111,7 @@ function ModelSelectorContent({ governancePilot }: { governancePilot: boolean })
             model,
           )
         }
-      >
-        {renderEndpoints(
-          (mappedEndpoints ?? []).filter((endpoint) => isAgentsEndpoint(endpoint.value)),
-        )}
-      </GovernanceModelSelector>
+      />
     );
   }
 

@@ -5,7 +5,6 @@ import { GOVERNANCE_ENDPOINT, QueryKeys } from 'librechat-data-provider';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
 import type { GovernanceModel } from 'librechat-data-provider';
 import GovernanceModelSelector from '../GovernanceModelSelector';
-import { CustomMenuItem } from '../CustomMenu';
 import { groupGovernanceModels } from '../governance';
 
 jest.mock('../../../../../../../packages/data-provider/src/data-service', () => ({
@@ -83,18 +82,71 @@ describe('governance model grouping', () => {
 });
 
 describe('GovernanceModelSelector', () => {
-  it('keeps an authorized agent selectable alongside the governed models', async () => {
+  it('lists saved agents directly with their configured model and separate model tiers', async () => {
     const onSelectAgent = jest.fn();
-    const agent = { id: 'agent_governed', name: 'Governed agent' };
+    const agent = { id: 'agent_governed', name: 'Research assistant', model: 'sovereign-model' };
     renderSelector(
-      <GovernanceModelSelector endpoint={GOVERNANCE_ENDPOINT} value={null} onSelect={jest.fn()}>
-        <CustomMenuItem onClick={() => onSelectAgent(agent.id)}>{agent.name}</CustomMenuItem>
-      </GovernanceModelSelector>,
+      <GovernanceModelSelector
+        endpoint={GOVERNANCE_ENDPOINT}
+        value={null}
+        agents={[agent]}
+        selectedAgentId={agent.id}
+        onSelectAgent={onSelectAgent}
+        onSelect={jest.fn()}
+      />,
     );
     await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
-    expect(screen.getByRole('option', { name: 'sovereign-model' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('option', { name: agent.name }));
+    const agentSection = screen.getByRole('group', { name: 'My Agents' });
+    const agentOption = within(agentSection).getByRole('option', {
+      name: 'Research assistant sovereign-model',
+    });
+    expect(within(agentOption).getByText(agent.model)).toHaveClass('text-xs');
+    expect(agentOption).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByText(agent.id)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('combobox')).toHaveLength(1);
+    const modelSection = screen.getByRole('group', { name: 'Models' });
+    expect(within(modelSection).getByRole('group', { name: 'EU Sovereign' })).toBeInTheDocument();
+    expect(within(modelSection).getByRole('option', { name: agent.model })).not.toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await userEvent.click(agentOption);
     expect(onSelectAgent).toHaveBeenCalledWith(agent.id);
+  });
+
+  it('searches both sections by agent name and configured model in the same picker', async () => {
+    const onSelect = jest.fn();
+    renderSelector(
+      <GovernanceModelSelector
+        endpoint={GOVERNANCE_ENDPOINT}
+        value={null}
+        agents={[
+          { id: 'agent_research', name: 'Research assistant', model: 'sovereign-model' },
+          { id: 'agent_writer', name: 'Writer', model: 'hosted-model' },
+        ]}
+        onSelectAgent={jest.fn()}
+        onSelect={onSelect}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Select a model' }));
+    const search = screen.getByRole('combobox', { name: 'Search agents and models...' });
+    await userEvent.type(search, 'hosted');
+    expect(screen.getByRole('option', { name: 'Writer hosted-model' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'hosted-model' })).toBeInTheDocument();
+    expect(screen.queryByText('Research assistant')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'EU Sovereign' })).not.toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, 'research');
+    expect(
+      screen.getByRole('option', { name: 'Research assistant sovereign-model' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Writer')).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'sovereign-model' })).not.toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, 'S2');
+    expect(screen.queryByText('Research assistant')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: 'hosted-model' }));
+    expect(onSelect).toHaveBeenCalledWith('hosted-model');
   });
 
   it.each(models)('renders both canonical tiers and selects $id unchanged', async ({ id }) => {

@@ -1491,12 +1491,7 @@ describe('saved-agent instruction reviews', () => {
       expect((await send(fetch, messages(instruction, role))).ok).toBe(true);
       expect(sent[1].body.messages).toEqual(messages(maskedInstruction));
       expect(sent[1].body.dlp_token).toBe('instruction-approval-token');
-      for (const name of [
-        'X-LibreChat-Agent-ID',
-        'X-LibreChat-Run-ID',
-        'X-LibreChat-Step-ID',
-        'X-LibreChat-Request-ID',
-      ]) {
+      for (const name of ['X-LibreChat-Agent-ID', 'X-LibreChat-Run-ID', 'X-LibreChat-Step-ID']) {
         expect(sent[1].headers.get(name)).toBe(sent[0].headers.get(name));
       }
 

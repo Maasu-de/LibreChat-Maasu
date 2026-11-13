@@ -285,12 +285,7 @@ it('keeps the normalized agent token limit and correlation when a DLP review is 
     require_user_approval: true,
   });
   expect(sent[1].request).toEqual({ ...sent[0].request, dlp_token: 'approval-token' });
-  for (const header of [
-    'X-LibreChat-Agent-ID',
-    'X-LibreChat-Run-ID',
-    'X-LibreChat-Step-ID',
-    'X-LibreChat-Request-ID',
-  ]) {
+  for (const header of ['X-LibreChat-Agent-ID', 'X-LibreChat-Run-ID', 'X-LibreChat-Step-ID']) {
     expect(sent[1].headers.get(header)).toBe(sent[0].headers.get(header));
   }
 });
