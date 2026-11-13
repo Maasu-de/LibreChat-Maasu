@@ -1489,6 +1489,7 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
           'description',
           'id',
           'is_promoted',
+          'model',
           'name',
           'support_contact',
           'updatedAt',
@@ -1498,6 +1499,7 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
         expect.objectContaining({
           id: agentA1.id,
           name: 'Agent A1',
+          model: agentA1.model,
           description: 'User A agent 1',
           author: userA.toString(),
           category: 'general',
