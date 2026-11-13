@@ -184,6 +184,155 @@ describe('DLP intervention text segmentation', () => {
 });
 
 describe('DlpInterventionDialog', () => {
+  it('shows warned agent instructions separately from the clean composer prompt', () => {
+    const onConfirm = jest.fn();
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'WARN',
+          findings: [],
+          instructions: [
+            {
+              text: 'Discuss Project Acme now',
+              findings: [finding({ action: 'WARN', replacement: undefined })],
+            },
+          ],
+        }}
+        originalText="Hello"
+        onCancel={jest.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(within(instructions).getByRole('heading')).toHaveTextContent(
+      'com_ui_agent_instructions',
+    );
+    expect(within(instructions).getByText('Project Acme', { selector: 'mark' })).toHaveClass(
+      WARN_HIGHLIGHT,
+    );
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_original_prompt' });
+    expect(prompt).toHaveTextContent(/^Hello$/);
+    expect(prompt.querySelector('mark')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_continue' }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveTextContent(/^Hello$/);
+  });
+
+  it('conceals masked instruction text until that redaction is revealed', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [],
+          instructions: [
+            {
+              text: 'Discuss Project Acme now',
+              findings: [finding()],
+              maskedRanges: maskedAt(),
+            },
+          ],
+        }}
+        originalText="Hello"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    const bar = barOf(within(instructions).getByText(PROJECT_LABEL));
+    expect(instructions).not.toHaveTextContent('Project Acme');
+    expect(bar).toHaveClass(...REDACTED);
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' })).toHaveTextContent(
+      /^Hello$/,
+    );
+    fireEvent.mouseEnter(bar);
+    expect(within(instructions).getByText('Project Acme')).toBeVisible();
+    fireEvent.mouseMove(document, { clientX: 500, clientY: 500 });
+    expect(instructions).not.toHaveTextContent('Project Acme');
+  });
+
+  it('shows the blocked instruction finding and prevents confirmation', () => {
+    const onConfirm = jest.fn();
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'BLOCK',
+          findings: [],
+          instructions: [
+            {
+              text: 'Discuss Project Acme now',
+              findings: [finding({ action: 'BLOCK', replacement: undefined })],
+            },
+          ],
+        }}
+        originalText="Hello"
+        onCancel={jest.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(within(instructions).getByText('Project Acme', { selector: 'mark' })).toHaveClass(
+      BLOCK_HIGHLIGHT,
+    );
+    expect(instructions).toHaveTextContent('com_ui_dlp_decision_block');
+    expect(screen.queryByRole('button', { name: 'com_ui_dlp_continue' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'com_ui_dlp_send_masked' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter' });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('keeps redaction reveals independent across the prompt and multiple instructions', () => {
+    render(
+      <DlpInterventionDialog
+        result={{
+          decision: 'MASK',
+          findings: [finding()],
+          maskedRanges: maskedAt(),
+          instructions: [
+            {
+              text: 'Discuss Project Beta now',
+              findings: [finding()],
+              maskedRanges: maskedAt(),
+            },
+            {
+              text: 'Discuss Project Echo now',
+              findings: [finding()],
+              maskedRanges: maskedAt(),
+            },
+          ],
+        }}
+        originalText="Discuss Project Acme now"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    const prompt = screen.getByRole('region', { name: 'com_ui_dlp_masked_prompt' });
+    const [firstInstructionBar, secondInstructionBar] = within(instructions)
+      .getAllByText(PROJECT_LABEL)
+      .map(barOf);
+    const promptBar = barOf(within(prompt).getByText(PROJECT_LABEL));
+
+    fireEvent.mouseEnter(promptBar);
+    expect(prompt).toHaveTextContent('Project Acme');
+    expect(instructions).not.toHaveTextContent('Project Beta');
+    expect(instructions).not.toHaveTextContent('Project Echo');
+    fireEvent.mouseEnter(firstInstructionBar);
+    expect(instructions).toHaveTextContent('Project Beta');
+    expect(instructions).not.toHaveTextContent('Project Echo');
+    expect(prompt).not.toHaveTextContent('Project Acme');
+    expect(secondInstructionBar).toHaveClass(...REDACTED);
+
+    fireEvent.mouseEnter(secondInstructionBar);
+    expect(instructions).not.toHaveTextContent('Project Beta');
+    expect(instructions).toHaveTextContent('Project Echo');
+    expect(prompt).not.toHaveTextContent('Project Acme');
+  });
+
   it('shows the masked prompt with a friendly category label on each bar', () => {
     const onCancel = jest.fn();
     const onConfirm = jest.fn();

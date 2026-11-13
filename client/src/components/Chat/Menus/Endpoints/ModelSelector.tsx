@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { TooltipAnchor } from '@librechat/client';
-import { getConfigDefaults, GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
+import { getConfigDefaults, GOVERNANCE_ENDPOINT, isAgentsEndpoint } from 'librechat-data-provider';
 import type { ModelSelectorProps } from '~/common';
 import {
   renderModelSpecs,
@@ -26,6 +26,7 @@ function ModelSelectorContent({ governancePilot }: { governancePilot: boolean })
 
   const {
     // LibreChat
+    agents,
     agentsMap,
     modelSpecs,
     mappedEndpoints,
@@ -89,10 +90,15 @@ function ModelSelectorContent({ governancePilot }: { governancePilot: boolean })
   );
 
   if (governancePilot) {
+    const agentEndpoint = mappedEndpoints?.find((endpoint) => isAgentsEndpoint(endpoint.value));
+    const isAgentSelected = isAgentsEndpoint(selectedValues.endpoint);
     return (
       <GovernanceModelSelector
         endpoint={GOVERNANCE_ENDPOINT}
-        value={selectedValues.model}
+        value={isAgentSelected ? null : selectedValues.model}
+        agents={agentEndpoint ? (agents ?? []) : []}
+        selectedAgentId={isAgentSelected ? selectedValues.model : null}
+        onSelectAgent={(agentId) => agentEndpoint && handleSelectModel(agentEndpoint, agentId)}
         trigger={trigger}
         onSelect={(model) =>
           handleSelectModel(

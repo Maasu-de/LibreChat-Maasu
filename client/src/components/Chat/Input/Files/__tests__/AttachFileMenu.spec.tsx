@@ -2,7 +2,12 @@ import React from 'react';
 import { RecoilRoot } from 'recoil';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EModelEndpoint, EToolResources, Providers } from 'librechat-data-provider';
+import {
+  EModelEndpoint,
+  EToolResources,
+  Providers,
+  GOVERNANCE_ENDPOINT,
+} from 'librechat-data-provider';
 import AttachFileMenu from '../AttachFileMenu';
 
 jest.mock('~/hooks', () => ({
@@ -152,6 +157,61 @@ function openMenu() {
 
 describe('AttachFileMenu', () => {
   beforeEach(jest.clearAllMocks);
+
+  describe('governed attachment capabilities', () => {
+    beforeEach(() => {
+      setupMocks();
+      mockUseGetStartupConfig.mockReturnValue({ data: { governancePilotEnabled: true } });
+      mockUseGetAgentsConfig.mockReturnValue({ agentsConfig: { capabilities: [] } });
+      mockUseAgentToolPermissions.mockReturnValue({
+        fileSearchAllowedByAgent: true,
+        codeAllowedByAgent: true,
+        provider: GOVERNANCE_ENDPOINT,
+      });
+      mockUseAgentCapabilities.mockImplementation(
+        jest.requireActual('~/hooks/Agents/useAgentCapabilities').default,
+      );
+    });
+
+    afterEach(() => mockUseAgentCapabilities.mockReset());
+
+    it('keeps text uploads available for classic chat with empty agent capabilities', () => {
+      renderMenu({ endpoint: GOVERNANCE_ENDPOINT, endpointType: EModelEndpoint.custom });
+      openMenu();
+
+      expect(screen.getByText('Upload File')).toBeInTheDocument();
+      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
+      expect(screen.queryByText('Upload for File Search')).not.toBeInTheDocument();
+      expect(screen.queryByText('Upload to Code Environment')).not.toBeInTheDocument();
+    });
+
+    it.each([
+      [EModelEndpoint.custom, false],
+      [EModelEndpoint.custom, true],
+      [EModelEndpoint.agents, false],
+      [EModelEndpoint.agents, true],
+    ])(
+      'offers governed text uploads for agents (%s, SharePoint: %s)',
+      (endpointType, sharePointEnabled) => {
+        mockUseGetStartupConfig.mockReturnValue({
+          data: { governancePilotEnabled: true, sharePointFilePickerEnabled: sharePointEnabled },
+        });
+        renderMenu({
+          endpoint: EModelEndpoint.agents,
+          endpointType,
+          agentId: 'agent_saved',
+        });
+
+        openMenu();
+
+        expect(screen.getByText('Upload File')).toBeInTheDocument();
+        expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
+        expect(screen.queryByText('Upload Image')).not.toBeInTheDocument();
+        expect(screen.queryByText('Upload for File Search')).not.toBeInTheDocument();
+        expect(screen.queryByText('Upload to Code Environment')).not.toBeInTheDocument();
+      },
+    );
+  });
 
   describe('Upload to Provider vs Upload Image', () => {
     it('shows "Upload to Provider" when endpointType is custom (resolved from agent provider)', () => {

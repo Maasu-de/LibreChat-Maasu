@@ -3,6 +3,7 @@ import {
   AuthType,
   AgentCapabilities,
   EModelEndpoint,
+  GOVERNANCE_ENDPOINT,
   PrincipalType,
   defaultAgentCapabilities,
 } from 'librechat-data-provider';
@@ -63,6 +64,47 @@ function fakeReq(overrides: TestRequestOverrides = {}): ServerRequest {
 
 describe('createEndpointsConfigService', () => {
   describe('getEndpointsConfig', () => {
+    it('advertises model-only agents and the gateway in governance pilot mode', async () => {
+      const previousPilot = process.env.GOVERNANCE_PILOT_ENABLED;
+      process.env.GOVERNANCE_PILOT_ENABLED = 'true';
+      try {
+        const agents = {
+          allowedProviders: [GOVERNANCE_ENDPOINT],
+          capabilities: [],
+          disableBuilder: false,
+        };
+        const deps = createMockDeps({
+          getAppConfig: jest
+            .fn()
+            .mockResolvedValue(
+              appConfig({ endpoints: { agents, azureOpenAI: { assistants: true } } }),
+            ),
+          loadCustomEndpointsConfig: jest.fn().mockReturnValue({
+            [GOVERNANCE_ENDPOINT]: { type: EModelEndpoint.custom, userProvide: false },
+            external: { type: EModelEndpoint.custom, userProvide: false },
+          }),
+        });
+        const services = createEndpointsConfigService(deps);
+        const result = await services.getEndpointsConfig(fakeReq());
+
+        expect(Object.keys(result ?? {})).toEqual([GOVERNANCE_ENDPOINT, EModelEndpoint.agents]);
+        expect(result?.[EModelEndpoint.agents]).toEqual({ userProvide: false, ...agents });
+        expect(deps.loadDefaultEndpointsConfig).not.toHaveBeenCalled();
+        expect(
+          await services.checkCapability(
+            fakeReq({ body: { endpoint: EModelEndpoint.agents } }),
+            AgentCapabilities.tools,
+          ),
+        ).toBe(false);
+      } finally {
+        if (previousPilot == null) {
+          delete process.env.GOVERNANCE_PILOT_ENABLED;
+        } else {
+          process.env.GOVERNANCE_PILOT_ENABLED = previousPilot;
+        }
+      }
+    });
+
     it('merges default and custom endpoints', async () => {
       const deps = createMockDeps({
         loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({

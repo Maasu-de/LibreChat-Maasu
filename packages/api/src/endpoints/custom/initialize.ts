@@ -16,6 +16,7 @@ import type {
 } from '~/types';
 import {
   createGovernanceAttributionFetch,
+  prepareGovernanceAgentRun,
   createRequestDlpFetch,
   isGovernanceDlpEnabled,
   isGovernanceGatewayUrl,
@@ -359,6 +360,7 @@ export async function initializeCustom({
     };
     options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
     if (isGovernanceGatewayUrl(baseURL)) {
+      await prepareGovernanceAgentRun(req);
       const attributedFetch = createGovernanceAttributionFetch(req, options.configOptions?.fetch);
       options.configOptions = {
         ...(options.configOptions ?? {}),
