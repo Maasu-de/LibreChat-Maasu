@@ -361,7 +361,7 @@ describe('DlpInterventionDialog', () => {
       'BLOCK',
       '(com_ui_dlp_decision_mask + com_ui_dlp_decision_block → com_ui_dlp_decision_block)',
     ],
-    [['MASK'], 'MASK', null],
+    [['BLOCK'], 'BLOCK', null],
   ] as const)(
     'explains how the actions %j combine into the overall action',
     (actions, decision, combination) => {
@@ -385,6 +385,18 @@ describe('DlpInterventionDialog', () => {
       } else {
         expect(overall.textContent).not.toContain('→');
       }
+    },
+  );
+
+  it.each(['ALLOW', 'WARN', 'MASK'] as const)(
+    'hides the overall action when the decision is %s',
+    (decision) => {
+      renderDialog(
+        { decision, findings: [finding({ action: decision })] },
+        'Discuss Project Acme now',
+      );
+
+      expect(screen.queryByRole('region', { name: 'com_ui_dlp_overall_action' })).toBeNull();
     },
   );
 

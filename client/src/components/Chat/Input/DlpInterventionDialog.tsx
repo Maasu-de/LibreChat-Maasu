@@ -705,7 +705,7 @@ export default function DlpInterventionDialog({
               </section>
             )}
 
-            {!modelNotAllowed && (
+            {!modelNotAllowed && decision === 'BLOCK' && (
               <section
                 aria-label={localize('com_ui_dlp_overall_action')}
                 className={cn(
