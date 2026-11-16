@@ -16,14 +16,15 @@ import {
   resolveEndpointType,
   isAssistantsEndpoint,
   getEndpointFileConfig,
-  defaultAgentCapabilities,
 } from 'librechat-data-provider';
 import type { DropTargetMonitor } from 'react-dnd';
 import type * as t from 'librechat-data-provider';
+import { startupConfigKey } from '~/data-provider';
 import store, { ephemeralAgentByConvoId } from '~/store';
 import useFileHandling from './useFileHandling';
 import { isEphemeralAgent } from '~/common';
 import useLocalize from '../useLocalize';
+import { getAttachmentCapabilities } from '~/utils';
 
 export default function useDragHelpers() {
   const queryClient = useQueryClient();
@@ -105,8 +106,16 @@ export default function useDragHelpers() {
         return;
       }
 
-      const agentsConfig = endpointsConfig?.[EModelEndpoint.agents];
-      const capabilities = agentsConfig?.capabilities ?? defaultAgentCapabilities;
+      const agentsConfig = endpointsConfig?.[EModelEndpoint.agents] as
+        | t.TAgentsEndpoint
+        | null
+        | undefined;
+      const startupConfig = queryClient.getQueryData<t.TStartupConfig>(startupConfigKey(true));
+      const capabilities = getAttachmentCapabilities({
+        endpoint: currentEndpoint,
+        governancePilot: startupConfig?.governancePilotEnabled === true,
+        agentCapabilities: agentsConfig?.capabilities,
+      });
       const fileSearchEnabled = capabilities.includes(AgentCapabilities.file_search) === true;
       const codeEnabled = capabilities.includes(AgentCapabilities.execute_code) === true;
       const contextEnabled = capabilities.includes(AgentCapabilities.context) === true;

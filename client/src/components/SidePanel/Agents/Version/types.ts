@@ -1,3 +1,5 @@
+import type { Agent } from 'librechat-data-provider';
+
 export type VersionRecord = Record<string, any>;
 
 export type AgentState = {
@@ -7,6 +9,10 @@ export type AgentState = {
   artifacts?: string | null;
   capabilities?: string[];
   tools?: string[];
+  provider?: Agent['provider'];
+  model?: Agent['model'];
+  model_parameters?: Agent['model_parameters'];
+  recursion_limit?: Agent['recursion_limit'];
 } | null;
 
 export type VersionWithId = {
@@ -31,5 +37,9 @@ export interface AgentWithVersions {
   artifacts?: string | null;
   capabilities?: string[];
   tools?: string[];
+  provider?: Agent['provider'];
+  model?: Agent['model'];
+  model_parameters?: Agent['model_parameters'];
+  recursion_limit?: Agent['recursion_limit'];
   versions?: Array<VersionRecord>;
 }

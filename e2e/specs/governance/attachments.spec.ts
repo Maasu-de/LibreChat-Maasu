@@ -93,6 +93,36 @@ test.describe('governed text attachments', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 
+  test('allow: a dropped text file uses governed context without agent capabilities', async ({
+    page,
+  }) => {
+    const dataTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File(['Agenda: budget review.'], 'dropped-agenda.txt', {
+          type: 'text/plain',
+        }),
+      );
+      return transfer;
+    });
+    await page.locator('main').dispatchEvent('dragenter', { dataTransfer });
+    await page.locator('main').dispatchEvent('dragover', { dataTransfer });
+    await page.locator('main').dispatchEvent('drop', { dataTransfer });
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: 'Upload File', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Upload to Provider' })).not.toBeVisible();
+    const uploaded = page.waitForResponse((r) => isUpload(r.url(), r.request().method()));
+    await dialog.getByRole('button', { name: 'Upload File', exact: true }).click();
+    expect((await uploaded).status()).toBe(200);
+    await expect(composerFile(page, 'dropped-agenda.txt')).toBeVisible();
+
+    await sendMessage(page, 'Summarize the dropped agenda');
+    await expect(reply(page, 'attachment=yes iban=none email=no history-iban=none')).toBeVisible();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await dataTransfer.dispose();
+  });
+
   test('warn: the user sees the file finding and continues', async ({ page }) => {
     await attach(page, textFile('contacts.csv', 'name,email\nMax,max@example.com\n', 'text/csv'));
 

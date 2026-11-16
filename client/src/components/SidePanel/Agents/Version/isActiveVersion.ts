@@ -1,3 +1,4 @@
+import isEqual from 'lodash/isEqual';
 import type { AgentState, VersionRecord } from './types';
 
 export const isActiveVersion = (
@@ -53,6 +54,10 @@ export const isActiveVersion = (
     matchesDescription &&
     matchesInstructions &&
     matchesArtifacts &&
+    version.provider === currentAgent.provider &&
+    version.model === currentAgent.model &&
+    isEqual(version.model_parameters ?? {}, currentAgent.model_parameters ?? {}) &&
+    version.recursion_limit === currentAgent.recursion_limit &&
     toolsMatch() &&
     capabilitiesMatch()
   );

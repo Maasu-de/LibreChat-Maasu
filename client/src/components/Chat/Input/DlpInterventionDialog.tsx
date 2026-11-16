@@ -2,6 +2,7 @@ import { useId, useRef, useMemo, useState, useEffect, useCallback } from 'react'
 import { Trans } from 'react-i18next';
 import {
   Ban,
+  Bot,
   Eye,
   Tag,
   Mail,
@@ -507,6 +508,14 @@ export default function DlpInterventionDialog({
     () => buildPromptSegments(originalText, result.findings, result.maskedRanges),
     [originalText, result.findings, result.maskedRanges],
   );
+  const instructionSegments = useMemo(
+    () =>
+      (result.instructions ?? []).map(({ text, findings, maskedRanges }) =>
+        buildPromptSegments(text, findings, maskedRanges),
+      ),
+    [result.instructions],
+  );
+
   /** The distinct actions of the findings, least severe first, which the gateway combined. */
   const actions = useMemo(
     () =>
@@ -523,8 +532,8 @@ export default function DlpInterventionDialog({
   ]).size;
   const DecisionIcon = ACTION_STYLE[decision].icon;
   /** Whether the gateway replaces a value in the prompt; badges always list the originals. */
-  const hasMasked = promptSegments.some(
-    (segment) => 'finding' in segment && segment.finding.replacement !== undefined,
+  const hasMasked = [promptSegments, ...instructionSegments].some((segments) =>
+    segments.some((segment) => 'finding' in segment && segment.finding.replacement !== undefined),
   );
   const masked = hasMasked && showMasked;
   const toggleLabel = localize(masked ? 'com_ui_dlp_show_original' : 'com_ui_dlp_show_masked');
@@ -552,13 +561,13 @@ export default function DlpInterventionDialog({
    * A detected value shows as entered, more strongly where findings overlap. In the masked view a
    * value the gateway replaces shows its replacement once, across the parts an overlap split it in.
    */
-  const renderSegment = (segment: PromptSegment, index: number) => {
+  const renderSegment = (segment: PromptSegment, index: number, segments: PromptSegment[]) => {
     if (!('finding' in segment)) {
       return <span key={index}>{segment.text}</span>;
     }
     const { text, finding, overlap } = segment;
     const replaced = masked && finding.replacement !== undefined;
-    const previous = promptSegments[index - 1];
+    const previous = segments[index - 1];
     if (replaced && previous && 'finding' in previous && previous.finding === finding) {
       return null;
     }
@@ -757,6 +766,23 @@ export default function DlpInterventionDialog({
                   </p>
                 </div>
                 <ul className="flex flex-col gap-2">{files.map(renderFile)}</ul>
+              </section>
+            )}
+
+            {instructionSegments.length > 0 && (
+              <section
+                aria-label={localize('com_ui_agent_instructions')}
+                className="flex flex-col gap-3"
+              >
+                <h3 className={HEADING}>
+                  <Bot className="size-5" aria-hidden="true" />
+                  {localize('com_ui_agent_instructions')}
+                </h3>
+                {instructionSegments.map((segments, instructionIndex) => (
+                  <div key={instructionIndex} className={PROMPT_BOX}>
+                    <p className={PROMPT_TEXT}>{segments.map(renderSegment)}</p>
+                  </div>
+                ))}
               </section>
             )}
 

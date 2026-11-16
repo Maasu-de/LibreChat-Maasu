@@ -137,10 +137,12 @@ describe('fetchModels', () => {
       {
         id: 's1-model',
         governance_tier: { code: 'S1', name: 'EU Sovereign', description: 'S1 description' },
+        supported_parameters: ['max_tokens', 'temperature'],
       },
       {
         id: 's2-model',
         governance_tier: { code: 'S2', name: 'EU Hosted', description: 'S2 description' },
+        supported_parameters: ['max_tokens'],
       },
       { id: 'missing-tier' },
     ];

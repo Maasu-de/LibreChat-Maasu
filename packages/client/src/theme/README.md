@@ -57,7 +57,7 @@ import { ThemeProvider } from '@librechat/client';
 
 function App() {
   return (
-    <ThemeProvider initialTheme="system">
+    <ThemeProvider>
       <YourApp />
     </ThemeProvider>
   );
@@ -232,7 +232,6 @@ function getThemeFromEnv(): IThemeRGB | undefined {
 
 ```tsx
 <ThemeProvider 
-  initialTheme="system"
   themeRGB={getThemeFromEnv()}
 >
   <App />
@@ -286,7 +285,6 @@ The new ThemeProvider is backward compatible but adds new capabilities:
 
 ```tsx
 <ThemeProvider 
-  initialTheme="system"  // Same as before
   themeRGB={customTheme} // New: optional custom colors
 >
   <App />
@@ -383,7 +381,6 @@ function App() {
   
   return (
     <ThemeProvider 
-      initialTheme={isDark ? 'dark' : 'light'}
       themeRGB={isDark ? darkTheme : defaultTheme}
       themeName={isDark ? 'dark' : 'default'}
     >
@@ -447,7 +444,6 @@ function App() {
     <ThemeProvider 
       // Only pass props if you want to override stored values
       // If you always pass props, they will override localStorage
-      initialTheme={envTheme ? "system" : undefined}
       themeRGB={envTheme || undefined}
     >
       {/* Your app content */}

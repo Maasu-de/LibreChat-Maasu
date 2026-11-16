@@ -11,7 +11,7 @@ import {
 import type { AgentForm, AgentPanelProps } from '~/common';
 import { useLocalize, useAuthContext, useHasAccess, useResourcePermissions } from '~/hooks';
 import { GenericGrantAccessDialog } from '~/components/Sharing';
-import { useUpdateAgentMutation } from '~/data-provider';
+import { useGetStartupConfig, useUpdateAgentMutation } from '~/data-provider';
 import AdvancedButton from './Advanced/AdvancedButton';
 import VersionButton from './Version/VersionButton';
 import DuplicateAgent from './DuplicateAgent';
@@ -35,6 +35,8 @@ export default function AgentFooter({
 }) {
   const localize = useLocalize();
   const { user } = useAuthContext();
+  const { data: startupConfig } = useGetStartupConfig();
+  const governancePilot = startupConfig?.governancePilotEnabled === true;
 
   const methods = useFormContext<AgentForm>();
 
@@ -119,7 +121,8 @@ export default function AgentFooter({
               </button>
             </GenericGrantAccessDialog>
           )}
-        {(agent?.author === user?.id || user?.role === SystemRoles.ADMIN || canEditThisAgent) &&
+        {!governancePilot &&
+          (agent?.author === user?.id || user?.role === SystemRoles.ADMIN || canEditThisAgent) &&
           !permissionsLoading && <DuplicateAgent agent_id={agent_id} />}
         {/* Submit Button */}
         <button

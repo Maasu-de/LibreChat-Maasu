@@ -6,13 +6,16 @@ import type {
   GovernanceDecision,
   GovernanceDlpReview,
   GovernanceFileFinding,
+  GovernanceInstructionReview,
   GovernanceModelRestriction,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
 import type { FileContext } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
+import type { GovernanceAgentRequest } from './agents';
 import type { GovernanceMasking } from './mask';
 import { standardCache } from '~/cache';
+import { getGovernanceMasking } from './mask';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
 const EVENT_END = /\r?\n\r?\n/;
@@ -47,6 +50,9 @@ export interface StoredReview {
   masks?: GovernanceMask[];
   /** The submitted message's attached files in which values are masked. */
   maskedFileIds?: string[];
+  agentRequest?: GovernanceAgentRequest;
+  instructionMessages?: string[];
+  conversationCreatedAt?: string;
 }
 
 export interface ReviewStore {
@@ -205,6 +211,34 @@ export function findingsInSubmittedText(
       start: Math.max(finding.start - offset, 0),
       end: finding.end - offset,
     }));
+}
+
+/** Findings in newly introduced agent instructions, kept separate from the user's draft. */
+export function findingsInInstructions(
+  messages: GovernanceChatMessage[],
+  findings: GovernanceFinding[],
+  messageIndices: number[] = [],
+): GovernanceInstructionReview[] {
+  return messageIndices.flatMap((index) => {
+    const message = messages[index];
+    if (message?.role !== 'system') {
+      return [];
+    }
+    const instructionFindings = findings
+      .filter((finding) => finding.location === `/messages/${index}/content`)
+      .map((finding) => ({ ...finding, location: GOVERNANCE_DLP_TEXT_LOCATION }));
+    if (instructionFindings.length === 0) {
+      return [];
+    }
+    const { ranges } = getGovernanceMasking(message.content, instructionFindings);
+    return [
+      {
+        text: message.content,
+        findings: instructionFindings,
+        ...(ranges.length > 0 ? { maskedRanges: ranges } : {}),
+      },
+    ];
+  });
 }
 
 /** An attached-document block this turn added to a message; `current` marks the submitted one's. */
@@ -376,6 +410,7 @@ export function toClientReview(
   findings: GovernanceFinding[],
   { text, ranges }: GovernanceMasking,
   fileFindings: GovernanceFileFinding[] = [],
+  instructions: GovernanceInstructionReview[] = [],
 ): GovernanceDlpReview {
   return {
     reviewId: review.review_id,
@@ -384,6 +419,7 @@ export function toClientReview(
     findings,
     maskedRanges: ranges.length > 0 ? ranges : undefined,
     fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
+    instructions: instructions.length > 0 ? instructions : undefined,
     maskedPreview:
       decision === 'BLOCK' ? undefined : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text }],
     expiresAt: review.expires_at,
@@ -399,6 +435,7 @@ export function toModelBlockReview(
   model: string,
   findings: GovernanceFinding[],
   fileFindings: GovernanceFileFinding[],
+  instructions: GovernanceInstructionReview[] = [],
 ): GovernanceDlpReview {
   return {
     reviewId: review.review_id,
@@ -406,6 +443,7 @@ export function toModelBlockReview(
     policyVersion: review.policy_version,
     findings: findings.map((finding) => ({ ...finding, replacement: undefined })),
     fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
+    instructions: instructions.length > 0 ? instructions : undefined,
     modelNotAllowed: { model, allowedTiers: review.allowed_tiers ?? [] },
   };
 }

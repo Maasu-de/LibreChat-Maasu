@@ -245,6 +245,114 @@ describe('DLP intervention text segmentation', () => {
 });
 
 describe('DlpInterventionDialog', () => {
+  it('shows warned agent instructions separately from the clean composer prompt', () => {
+    const { onConfirm } = renderDialog(
+      {
+        decision: 'WARN',
+        findings: [],
+        instructions: [
+          {
+            text: 'Discuss Project Acme now',
+            findings: [finding({ action: 'WARN', replacement: undefined })],
+          },
+        ],
+      },
+      'Hello',
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(within(instructions).getByRole('heading')).toHaveTextContent(
+      'com_ui_agent_instructions',
+    );
+    expect(within(instructions).getByText('Project Acme', { selector: 'mark' })).toHaveClass(
+      WARN_HIGHLIGHT,
+    );
+    const prompt = promptRegion();
+    expect(prompt).toHaveTextContent(/^Hello$/);
+    expect(prompt.querySelector('mark')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_anyway' }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveTextContent(/^Hello$/);
+  });
+
+  it('opens masked instruction text on its replacement, and shows it as entered on request', () => {
+    renderDialog(
+      {
+        decision: 'MASK',
+        findings: [],
+        instructions: [
+          { text: 'Discuss Project Acme now', findings: [finding()], maskedRanges: maskedAt() },
+        ],
+      },
+      'Hello',
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(instructions).toHaveTextContent(`Discuss [CONFIDENTIAL] (${PROJECT_MASK}) now`);
+    expect(instructions).not.toHaveTextContent('Project Acme');
+    expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent(/^Hello$/);
+
+    showOriginal();
+    expect(instructions).toHaveTextContent(`Discuss Project Acme (${PROJECT_MASK}) now`);
+    expect(within(instructions).getByText('Project Acme', { selector: 'mark' })).toHaveClass(
+      MASK_HIGHLIGHT,
+    );
+  });
+
+  it('shows the blocked instruction finding and prevents confirmation', () => {
+    const { onConfirm } = renderDialog(
+      {
+        decision: 'BLOCK',
+        findings: [],
+        instructions: [
+          {
+            text: 'Discuss Project Acme now',
+            findings: [finding({ action: 'BLOCK', replacement: undefined })],
+          },
+        ],
+      },
+      'Hello',
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(within(instructions).getByText('Project Acme', { selector: 'mark' })).toHaveClass(
+      BLOCK_HIGHLIGHT,
+    );
+    expect(instructions).toHaveTextContent('com_ui_dlp_decision_block');
+    expect(screen.queryByRole('button', { name: 'com_ui_dlp_send_anyway' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'com_ui_dlp_send_masked' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter' });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('switches the prompt and every instruction between masked and original values together', () => {
+    renderDialog({
+      decision: 'MASK',
+      findings: [finding()],
+      maskedRanges: maskedAt(),
+      instructions: [
+        { text: 'Discuss Project Beta now', findings: [finding()], maskedRanges: maskedAt() },
+        { text: 'Discuss Project Echo now', findings: [finding()], maskedRanges: maskedAt() },
+      ],
+    });
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(promptRegion('com_ui_dlp_masked_prompt')).not.toHaveTextContent('Project Acme');
+    expect(instructions).not.toHaveTextContent('Project Beta');
+    expect(instructions).not.toHaveTextContent('Project Echo');
+
+    showOriginal();
+    expect(promptRegion()).toHaveTextContent('Discuss Project Acme');
+    expect(instructions).toHaveTextContent('Discuss Project Beta');
+    expect(instructions).toHaveTextContent('Discuss Project Echo');
+
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
+    expect(promptRegion('com_ui_dlp_masked_prompt')).not.toHaveTextContent('Project Acme');
+    expect(instructions).not.toHaveTextContent('Project Beta');
+    expect(instructions).not.toHaveTextContent('Project Echo');
+  });
+
   it('opens on the masked prompt, and shows it as entered on the color of each action', () => {
     const { onCancel, onConfirm } = renderDialog({
       decision: 'MASK',

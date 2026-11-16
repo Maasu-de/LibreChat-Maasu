@@ -20,7 +20,6 @@ import {
   EToolResources,
   EModelEndpoint,
   isPermissiveMimeConfig,
-  defaultAgentCapabilities,
   bedrockDocumentExtensions,
   isDocumentSupportedProvider,
 } from 'librechat-data-provider';
@@ -39,7 +38,7 @@ import { SharePointPickerDialog } from '~/components/SharePoint';
 import { useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
-import { cn } from '~/utils';
+import { cn, getAttachmentCapabilities } from '~/utils';
 
 type FileUploadType =
   | 'image'
@@ -105,11 +104,13 @@ const AttachFileMenu = ({
 
   const [isSharePointDialogOpen, setIsSharePointDialogOpen] = useState(false);
 
-  /** TODO: Ephemeral Agent Capabilities
-   * Allow defining agent capabilities on a per-endpoint basis
-   * Use definition for agents endpoint for ephemeral agents
-   * */
-  const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
+  const capabilities = useAgentCapabilities(
+    getAttachmentCapabilities({
+      endpoint,
+      governancePilot,
+      agentCapabilities: agentsConfig?.capabilities,
+    }),
+  );
 
   const { fileSearchAllowedByAgent, codeAllowedByAgent, provider } = useAgentToolPermissions(
     agentId,
@@ -192,6 +193,7 @@ const AttachFileMenu = ({
       } else {
         items.push({
           label: localize('com_ui_upload_image_input'),
+          show: !governancePilot,
           onClick: () => {
             setToolResource(undefined);
             onAction('image');

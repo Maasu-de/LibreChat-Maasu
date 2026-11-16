@@ -1,13 +1,13 @@
 import { ChevronLeft } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { useToastContext } from '@librechat/client';
-import { useGetAgentByIdQuery, useRevertAgentVersionMutation } from '~/data-provider';
+import { useGetExpandedAgentByIdQuery, useRevertAgentVersionMutation } from '~/data-provider';
 import type { AgentWithVersions, VersionContext } from './types';
 import { isActiveVersion } from './isActiveVersion';
 import { useAgentPanelContext } from '~/Providers';
 import VersionContent from './VersionContent';
 import { useLocalize } from '~/hooks';
-import { Panel } from '~/common';
+import { Panel, isEphemeralAgent } from '~/common';
 
 export default function VersionPanel() {
   const localize = useLocalize();
@@ -16,7 +16,14 @@ export default function VersionPanel() {
 
   const selectedAgentId = agent_id ?? '';
 
-  const { data: agent, isLoading, error, refetch } = useGetAgentByIdQuery(selectedAgentId);
+  const {
+    data: agent,
+    isLoading,
+    error,
+    refetch,
+  } = useGetExpandedAgentByIdQuery(selectedAgentId, {
+    enabled: !isEphemeralAgent(selectedAgentId),
+  });
 
   const revertAgentVersion = useRevertAgentVersionMutation({
     onSuccess: () => {
@@ -45,6 +52,10 @@ export default function VersionPanel() {
       artifacts: agentWithVersions.artifacts,
       capabilities: agentWithVersions.capabilities,
       tools: agentWithVersions.tools,
+      provider: agentWithVersions.provider,
+      model: agentWithVersions.model,
+      model_parameters: agentWithVersions.model_parameters,
+      recursion_limit: agentWithVersions.recursion_limit,
     };
   }, [agentWithVersions]);
 
@@ -72,13 +83,7 @@ export default function VersionPanel() {
       matchingVersions.length > 0 ? versions.findIndex((v) => v === matchingVersions[0]) : -1;
 
     return versions.map((version, displayIndex) => {
-      const originalIndex =
-        agentWithVersions?.versions?.findIndex(
-          (v) =>
-            v.updatedAt === version.updatedAt &&
-            v.createdAt === version.createdAt &&
-            v.name === version.name,
-        ) ?? displayIndex;
+      const originalIndex = agentWithVersions?.versions?.indexOf(version) ?? displayIndex;
 
       return {
         id: displayIndex,
