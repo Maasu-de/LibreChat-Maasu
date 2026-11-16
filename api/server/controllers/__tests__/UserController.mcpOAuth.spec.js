@@ -38,6 +38,10 @@ jest.mock('@librechat/api', () => ({
     getTokens: jest.fn(),
     deleteUserTokens: jest.fn().mockResolvedValue(undefined),
   },
+  isGovernancePilotEnabled: () => process.env.GOVERNANCE_PILOT_ENABLED === 'true',
+  getGovernanceMCPOAuthBinding: () => undefined,
+  sanitizeMCPErrorForLogging: (error) =>
+    process.env.GOVERNANCE_PILOT_ENABLED === 'true' ? 'MCP operation failed' : error,
   normalizeHttpError: jest.fn((error) => error),
   extractWebSearchEnvVars: jest.fn((params) => params.keys),
   needsRefresh: jest.fn(),

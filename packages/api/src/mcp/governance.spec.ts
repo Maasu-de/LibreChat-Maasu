@@ -1,4 +1,5 @@
 import { getTenantId, createMCPGovernanceIdentityModel } from '@librechat/data-schemas';
+import mongoose from 'mongoose';
 import type { ParsedServerConfig } from './types';
 import {
   governanceConnectionId,
@@ -36,7 +37,7 @@ describe('MCP governance bridge', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    global.fetch = fetchMock;
+    global.fetch = Object.assign(fetchMock, { preconnect: originalFetch.preconnect });
     process.env.GOVERNANCE_MCP_METADATA_URL = 'http://gateway/internal/mcp/connections';
     process.env.LIBRECHAT_SERVICE_CREDENTIAL = 'service-credential';
     fetchMock.mockResolvedValue({ ok: true });
@@ -115,12 +116,13 @@ describe('MCP governance bridge', () => {
   });
 
   it('removes tool private metadata and preserves schema property names', () => {
-    const tool = governanceToolDefinition({
+    const rawTool = {
       name: 'search',
-      inputSchema: { type: 'object', properties: { token: { type: 'string' } } },
+      inputSchema: { type: 'object' as const, properties: { token: { type: 'string' } } },
       _meta: { token: 'private', nested: { api_key: 'private', security: ['read'] } },
       credentials: 'private',
-    });
+    };
+    const tool = governanceToolDefinition(rawTool);
     expect(tool._meta).toEqual({ nested: { security: ['read'] } });
     expect(tool.inputSchema.properties).toHaveProperty('token');
     expect(JSON.stringify(tool)).not.toContain('private');
@@ -169,9 +171,12 @@ describe('MCP governance bridge', () => {
         lean: async () => ({ _id: 'operator-id' }),
       }),
     );
-    jest.mocked(createMCPGovernanceIdentityModel).mockReturnValue({
-      findOneAndUpdate,
-    } as ReturnType<typeof createMCPGovernanceIdentityModel>);
+    const model = jest
+      .requireActual<typeof import('@librechat/data-schemas')>('@librechat/data-schemas')
+      .createMCPGovernanceIdentityModel(mongoose);
+    jest
+      .mocked(createMCPGovernanceIdentityModel)
+      .mockReturnValue(Object.assign(model, { findOneAndUpdate }));
     const operator: ParsedServerConfig = { ...config, dbId: undefined, source: 'config' };
     expect(await governanceConnectionId('server', operator)).toBe('operator-id');
     expect(

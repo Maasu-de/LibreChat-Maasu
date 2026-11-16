@@ -4,3 +4,4 @@ export * from './keyvFiles';
 export { default as keyvMongo } from './keyvMongo';
 export * from './cacheFactory';
 export * from './redisUtils';
+export * from './diagnostics';

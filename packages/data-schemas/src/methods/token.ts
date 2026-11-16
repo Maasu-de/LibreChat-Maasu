@@ -1,18 +1,22 @@
-import type { QueryOptions } from 'mongoose';
+import type { ClientSession, QueryOptions } from 'mongoose';
 import { IToken, TokenCreateData, TokenQuery, TokenUpdateData, TokenDeleteResult } from '~/types';
 import logger from '~/config/winston';
 
 // Factory function that takes mongoose instance and returns the methods
 export function createTokenMethods(mongoose: typeof import('mongoose')): {
   findToken: (query: TokenQuery, options?: QueryOptions) => Promise<IToken | null>;
-  createToken: (tokenData: TokenCreateData) => Promise<IToken>;
-  updateToken: (query: TokenQuery, updateData: TokenUpdateData) => Promise<IToken | null>;
-  deleteTokens: (query: TokenQuery) => Promise<TokenDeleteResult>;
+  createToken: (tokenData: TokenCreateData, session?: ClientSession) => Promise<IToken>;
+  updateToken: (
+    query: TokenQuery,
+    updateData: TokenUpdateData,
+    session?: ClientSession,
+  ) => Promise<IToken | null>;
+  deleteTokens: (query: TokenQuery, session?: ClientSession) => Promise<TokenDeleteResult>;
 } {
   /**
    * Creates a new Token instance.
    */
-  async function createToken(tokenData: TokenCreateData): Promise<IToken> {
+  async function createToken(tokenData: TokenCreateData, session?: ClientSession): Promise<IToken> {
     try {
       const Token = mongoose.models.Token;
       const currentTime = new Date();
@@ -24,7 +28,9 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
         expiresAt,
       };
 
-      return await Token.create(newTokenData);
+      if (!session) return await Token.create(newTokenData);
+      const [token] = await Token.create([newTokenData], { session });
+      return token;
     } catch (error) {
       logger.debug('An error occurred while creating token:', error);
       throw error;
@@ -37,6 +43,7 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
   async function updateToken(
     query: TokenQuery,
     updateData: TokenUpdateData,
+    session?: ClientSession,
   ): Promise<IToken | null> {
     try {
       const Token = mongoose.models.Token;
@@ -46,7 +53,10 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
         dataToUpdate.expiresAt = new Date(Date.now() + updateData.expiresIn * 1000);
       }
 
-      return await Token.findOneAndUpdate(query, dataToUpdate, { new: true });
+      return await Token.findOneAndUpdate(query, dataToUpdate, {
+        new: true,
+        ...(session && { session }),
+      });
     } catch (error) {
       logger.debug('An error occurred while updating token:', error);
       throw error;
@@ -54,7 +64,10 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
   }
 
   /** Deletes all Token documents matching every provided field (AND semantics). */
-  async function deleteTokens(query: TokenQuery): Promise<TokenDeleteResult> {
+  async function deleteTokens(
+    query: TokenQuery,
+    session?: ClientSession,
+  ): Promise<TokenDeleteResult> {
     try {
       const Token = mongoose.models.Token;
       const conditions = [];
@@ -80,9 +93,8 @@ export function createTokenMethods(mongoose: typeof import('mongoose')): {
         throw new Error('At least one query parameter must be provided');
       }
 
-      return await Token.deleteMany({
-        $and: conditions,
-      });
+      const deletion = Token.deleteMany({ $and: conditions });
+      return await (session ? deletion.session(session) : deletion);
     } catch (error) {
       logger.debug('An error occurred while deleting tokens:', error);
       throw error;

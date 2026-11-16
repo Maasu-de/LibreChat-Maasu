@@ -1,4 +1,5 @@
 import pick from 'lodash/pick';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { logger } from '@librechat/data-schemas';
 import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -17,6 +18,7 @@ import {
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
   requiresUserScopedConnection,
+  sanitizeMCPErrorForLogging,
 } from './utils';
 import { MCPServersInitializer } from './registry/MCPServersInitializer';
 import { OboTokenResolutionError, resolveOboToken } from '~/mcp/oauth';
@@ -27,7 +29,8 @@ import { ConnectionsRepository } from './ConnectionsRepository';
 import { MCPConnectionFactory } from './MCPConnectionFactory';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { formatToolContent } from './parsers';
-import { MCPConnection } from './connection';
+import { MCPConnection, isCompleteMCPToolList } from './connection';
+import { observedMCPConfig, publishMCPGovernance } from './governance';
 import { processMCPEnv } from '~/utils/env';
 
 function createOboToolCallErrorMessage(
@@ -125,9 +128,25 @@ export class MCPManager extends UserConnectionManager {
     const logPrefix = user?.id ? `[MCP][User: ${user.id}][${serverName}]` : `[MCP][${serverName}]`;
 
     try {
-      const existingAppConnection = await this.appConnections?.get(serverName);
+      const existingAppConnection = args.throwOnError
+        ? undefined
+        : await this.appConnections?.get(serverName);
       if (existingAppConnection && (await existingAppConnection.isConnected())) {
         const tools = await existingAppConnection.fetchTools();
+        if (process.env.GOVERNANCE_MCP_METADATA_URL && isCompleteMCPToolList(tools)) {
+          const config = await MCPServersRegistry.getInstance().getServerConfig(
+            serverName,
+            user?.id,
+            args.configServers,
+          );
+          if (config)
+            await publishMCPGovernance(
+              serverName,
+              observedMCPConfig(config, existingAppConnection),
+              tools,
+              user?.id,
+            );
+        }
         return { tools, oauthRequired: false, oauthUrl: null };
       }
     } catch {
@@ -184,11 +203,26 @@ export class MCPManager extends UserConnectionManager {
     const finalizeDiscoveryResult = async (
       result: Awaited<ReturnType<typeof MCPConnectionFactory.discoverTools>>,
     ): Promise<t.ToolDiscoveryResult> => {
+      if (
+        process.env.GOVERNANCE_MCP_METADATA_URL &&
+        result.tools &&
+        isCompleteMCPToolList(result.tools)
+      ) {
+        await publishMCPGovernance(
+          serverName,
+          result.connection ? observedMCPConfig(serverConfig, result.connection) : serverConfig,
+          result.tools,
+          user?.id,
+        );
+      }
       if (result.connection) {
         try {
           await result.connection.disconnect();
         } catch (error) {
-          logger.warn(`${logPrefix} [Discovery] Failed to disconnect discovery connection`, error);
+          logger.warn(
+            `${logPrefix} [Discovery] Failed to disconnect discovery connection`,
+            sanitizeMCPErrorForLogging(error),
+          );
         }
       }
       return {
@@ -199,13 +233,17 @@ export class MCPManager extends UserConnectionManager {
     };
 
     if (!useOAuth) {
-      const result = await MCPConnectionFactory.discoverTools(basic, {
-        user: args.user,
-        customUserVars: args.customUserVars,
-        requestBody: args.requestBody,
-        graphTokenResolver: args.graphTokenResolver,
-        connectionTimeout: args.connectionTimeout,
-      });
+      const result = await MCPConnectionFactory.discoverTools(
+        basic,
+        {
+          user: args.user,
+          customUserVars: args.customUserVars,
+          requestBody: args.requestBody,
+          graphTokenResolver: args.graphTokenResolver,
+          connectionTimeout: args.connectionTimeout,
+        },
+        args.throwOnError,
+      );
       return finalizeDiscoveryResult(result);
     }
 
@@ -214,20 +252,24 @@ export class MCPManager extends UserConnectionManager {
       return { tools: null, oauthRequired: true, oauthUrl: null };
     }
 
-    const result = await MCPConnectionFactory.discoverTools(basic, {
-      user,
-      useOAuth: true,
-      flowManager: args.flowManager,
-      tokenMethods: args.tokenMethods,
-      signal: args.signal,
-      oauthStart: args.oauthStart,
-      customUserVars: args.customUserVars,
-      requestBody: args.requestBody,
-      graphTokenResolver: args.graphTokenResolver,
-      connectionTimeout: args.connectionTimeout,
-      oboTokenResolver: args.oboTokenResolver,
-      oboTrustChecker: args.oboTrustChecker,
-    });
+    const result = await MCPConnectionFactory.discoverTools(
+      basic,
+      {
+        user,
+        useOAuth: true,
+        flowManager: args.flowManager,
+        tokenMethods: args.tokenMethods,
+        signal: args.signal,
+        oauthStart: args.oauthStart,
+        customUserVars: args.customUserVars,
+        requestBody: args.requestBody,
+        graphTokenResolver: args.graphTokenResolver,
+        connectionTimeout: args.connectionTimeout,
+        oboTokenResolver: args.oboTokenResolver,
+        oboTrustChecker: args.oboTrustChecker,
+      },
+      args.throwOnError,
+    );
 
     return finalizeDiscoveryResult(result);
   }
@@ -395,6 +437,8 @@ Please follow these instructions when using tools from the respective MCP server
     oboTokenResolver?: OboTokenResolver;
     oboTrustChecker?: OboTrustChecker;
   }): Promise<t.FormattedToolResponse> {
+    if (isGovernancePilotEnabled())
+      throw new Error('MCP tool execution requires an active governance policy');
     /** User-specific connection */
     let connection: MCPConnection | undefined;
     let cleanupRequestOAuthHandler: (() => void) | undefined;
