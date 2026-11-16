@@ -253,6 +253,15 @@ export class MCPManager extends UserConnectionManager {
       //try get the appConnection (if the config is not in the app level anymore any existing connection will disconnect and get will return null)
       const existingAppConnection = await this.appConnections?.get(serverName);
       if (existingAppConnection) {
+        if (process.env.GOVERNANCE_MCP_METADATA_URL) {
+          const config = await MCPServersRegistry.getInstance().getServerConfig(serverName, userId);
+          return MCPServerInspector.getToolFunctions(
+            serverName,
+            existingAppConnection,
+            config,
+            userId,
+          );
+        }
         return MCPServerInspector.getToolFunctions(serverName, existingAppConnection);
       }
 
@@ -264,6 +273,15 @@ export class MCPManager extends UserConnectionManager {
         return null;
       }
 
+      if (process.env.GOVERNANCE_MCP_METADATA_URL) {
+        const config = await MCPServersRegistry.getInstance().getServerConfig(serverName, userId);
+        return MCPServerInspector.getToolFunctions(
+          serverName,
+          userConnections.get(serverName)!,
+          config,
+          userId,
+        );
+      }
       return MCPServerInspector.getToolFunctions(serverName, userConnections.get(serverName)!);
     } catch (error) {
       logger.warn(

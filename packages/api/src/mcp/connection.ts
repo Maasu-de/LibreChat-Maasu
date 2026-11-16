@@ -1122,6 +1122,13 @@ interface MCPConnectionParams {
 /** Result of an MCP `tools/list` request: one page of tools plus an optional pagination cursor. */
 type MCPListToolsResult = Awaited<ReturnType<Client['listTools']>>;
 
+const completeToolLists = new WeakSet<t.MCPTool[]>();
+
+/** Partial or failed discovery must never make previously discovered tools unavailable. */
+export function isCompleteMCPToolList(tools: t.MCPTool[]): boolean {
+  return completeToolLists.has(tools);
+}
+
 export class MCPConnection extends EventEmitter {
   public client: Client;
   private options: t.MCPOptions;
@@ -2283,6 +2290,7 @@ export class MCPConnection extends EventEmitter {
 
       const { nextCursor } = result;
       if (nextCursor == null) {
+        completeToolLists.add(allTools);
         return allTools;
       }
 

@@ -161,6 +161,8 @@ export type ParsedServerConfig = MCPOptions & {
   capabilities?: string;
   tools?: string;
   toolFunctions?: LCAvailableTools;
+  toolDefinitions?: MCPTool[];
+  remoteServerInstructions?: boolean;
   initDuration?: number;
   updatedAt?: number;
   dbId?: string;

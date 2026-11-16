@@ -1,5 +1,11 @@
 const { logger } = require('@librechat/data-schemas');
-const { getMissingCustomUserVars, requiresEphemeralUserConnection } = require('@librechat/api');
+const {
+  getMissingCustomUserVars,
+  requiresEphemeralUserConnection,
+  isCompleteMCPToolList,
+  publishMCPGovernance,
+  observedMCPConfig,
+} = require('@librechat/api');
 const { CacheKeys, Constants } = require('librechat-data-provider');
 const { getMCPManager, getMCPServersRegistry, getFlowStateManager } = require('~/config');
 const { findToken, createToken, updateToken, deleteTokens } = require('~/models');
@@ -79,7 +85,8 @@ async function reinitMCPServer({
         );
         try {
           const storageLocation = serverConfig.source === 'user' ? 'DB' : 'CACHE';
-          await registry.reinspectServer(serverName, storageLocation, user?.id);
+          serverConfig = (await registry.reinspectServer(serverName, storageLocation, user?.id))
+            .config;
           logger.info(`[MCP Reinitialize] Reinspection succeeded for server: ${serverName}`);
         } catch (reinspectError) {
           logger.error(
@@ -191,7 +198,7 @@ async function reinitMCPServer({
             oboTrustChecker: createOboTrustChecker(),
           });
 
-          if (discoveryResult.tools && discoveryResult.tools.length > 0) {
+          if (discoveryResult.tools) {
             tools = discoveryResult.tools;
             logger.info(
               `[MCP Reinitialize] Discovered ${tools.length} tools for ${serverName} without full auth`,
@@ -212,9 +219,24 @@ async function reinitMCPServer({
 
     if (connection && !oauthRequired) {
       tools = await connection.fetchTools();
+      if (process.env.GOVERNANCE_MCP_METADATA_URL) {
+        serverConfig = observedMCPConfig(serverConfig, connection);
+      }
     }
 
-    if (tools && tools.length > 0) {
+    if (
+      process.env.GOVERNANCE_MCP_METADATA_URL &&
+      serverConfig &&
+      (!tools || !isCompleteMCPToolList(tools))
+    ) {
+      await publishMCPGovernance(serverName, serverConfig, null, user.id);
+    }
+
+    if (
+      tools &&
+      (tools.length > 0 ||
+        (process.env.GOVERNANCE_MCP_METADATA_URL && isCompleteMCPToolList(tools)))
+    ) {
       availableTools = await updateMCPServerTools({
         userId: user.id,
         serverName,

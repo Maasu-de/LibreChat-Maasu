@@ -2,6 +2,7 @@ import { logger } from '@librechat/data-schemas';
 import type * as t from '~/mcp/types';
 import { MCPServersRegistry } from '~/mcp/registry/MCPServersRegistry';
 import { MCPServerInspector } from '~/mcp/registry/MCPServerInspector';
+import * as governance from '~/mcp/governance';
 
 // Mock MCPServerInspector to avoid actual server connections
 jest.mock('~/mcp/registry/MCPServerInspector');
@@ -90,6 +91,35 @@ describe('MCPServersRegistry', () => {
   // Tests for getPrivateServerConfig have been removed
   // The new architecture uses getServerConfig() which checks cache first, then DB
   // Private server functionality is now handled by the DB repository (not yet implemented)
+
+  it('publishes the effective saved connection instead of stripped update fields', async () => {
+    const previousUrl = process.env.GOVERNANCE_MCP_METADATA_URL;
+    process.env.GOVERNANCE_MCP_METADATA_URL = 'http://gateway/internal/mcp/connections';
+    const publish = jest.spyOn(governance, 'publishMCPGovernance').mockResolvedValue();
+    const effective: t.ParsedServerConfig = {
+      type: 'sse',
+      url: 'https://mcp.example',
+      dbId: 'persistent-id',
+      source: 'user',
+    };
+    jest.spyOn(registry['dbConfigsRepo'], 'get').mockResolvedValue(effective);
+    try {
+      await registry.updateServer(
+        'server',
+        {
+          ...effective,
+          oauth: { client_id: 'client', audience: 'unsupported-user-audience' },
+        },
+        'DB',
+        'actor',
+      );
+      expect(publish).toHaveBeenCalledWith('server', effective, undefined, 'actor');
+    } finally {
+      if (previousUrl == null) delete process.env.GOVERNANCE_MCP_METADATA_URL;
+      else process.env.GOVERNANCE_MCP_METADATA_URL = previousUrl;
+      publish.mockRestore();
+    }
+  });
 
   describe('getAllServerConfigs', () => {
     it('should return servers from cache repository', async () => {

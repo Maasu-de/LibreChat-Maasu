@@ -11,6 +11,7 @@ import {
 import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/errors';
 import { MCPServerInspector } from './MCPServerInspector';
 import { ServerConfigsDB } from './db/ServerConfigsDB';
+import { publishMCPGovernance } from '~/mcp/governance';
 import { cacheConfig } from '~/cache/cacheConfig';
 import { withTimeout } from '~/utils';
 
@@ -394,6 +395,7 @@ export class MCPServersRegistry {
     const configRepo = this.getConfigRepository(storageLocation);
     const stubConfig: t.ParsedServerConfig = { ...config, inspectionFailed: true, source: 'yaml' };
     const result = await configRepo.add(serverName, stubConfig, userId);
+    await publishMCPGovernance(result.serverName, result.config, null, userId);
     await this.invalidateServerReadCaches(result.serverName, userId);
     this.resetYamlServerNamesMemo();
     return result;
@@ -439,6 +441,12 @@ export class MCPServersRegistry {
             await this.getOperatorManagedServerNames(reservedServerNames),
           )
         : await configRepo.add(serverName, tagged, userId);
+    await publishMCPGovernance(
+      result.serverName,
+      result.config,
+      parsedConfig.toolDefinitions,
+      userId,
+    );
     await this.invalidateServerReadCaches(result.serverName, userId);
     if (storageLocation === 'CACHE') {
       this.resetYamlServerNamesMemo();
@@ -487,6 +495,11 @@ export class MCPServersRegistry {
 
     const updatedConfig = { ...parsedConfig, updatedAt: Date.now() };
     await configRepo.update(serverName, updatedConfig, userId);
+    if (process.env.GOVERNANCE_MCP_METADATA_URL) {
+      const effective = await configRepo.get(serverName, userId);
+      if (effective)
+        await publishMCPGovernance(serverName, effective, updatedConfig.toolDefinitions, userId);
+    }
     await this.invalidateServerReadCaches(serverName, userId);
     return { serverName, config: updatedConfig };
   }
@@ -533,6 +546,11 @@ export class MCPServersRegistry {
       throw new MCPInspectionFailedError(serverName, error as Error);
     }
     await configRepo.update(serverName, parsedConfig, userId);
+    if (process.env.GOVERNANCE_MCP_METADATA_URL) {
+      const effective = await configRepo.get(serverName, userId);
+      if (effective)
+        await publishMCPGovernance(serverName, effective, parsedConfig.toolDefinitions, userId);
+    }
     await this.invalidateServerReadCaches(serverName, userId);
     return parsedConfig;
   }
@@ -678,6 +696,7 @@ export class MCPServersRegistry {
       );
 
       const parsedConfig: t.ParsedServerConfig = { ...inspected, source: 'config' };
+      await publishMCPGovernance(serverName, parsedConfig, parsedConfig.toolDefinitions);
       await this.upsertConfigCache(cacheKey, parsedConfig);
 
       logger.info(
@@ -694,6 +713,7 @@ export class MCPServersRegistry {
         source: 'config',
         updatedAt: Date.now(),
       };
+      await publishMCPGovernance(serverName, stubConfig);
       try {
         await this.upsertConfigCache(cacheKey, stubConfig);
         logger.info(`${prefix} Stored stub config for recovery`);
@@ -767,7 +787,11 @@ export class MCPServersRegistry {
     userId?: string,
   ): Promise<void> {
     const configRepo = this.getConfigRepository(storageLocation);
+    const previous = process.env.GOVERNANCE_MCP_METADATA_URL
+      ? await configRepo.get(serverName, userId)
+      : undefined;
     await configRepo.remove(serverName, userId);
+    if (previous) await publishMCPGovernance(serverName, previous, null, userId, false);
     await this.invalidateServerReadCaches(serverName, userId);
     if (storageLocation === 'CACHE') {
       this.resetYamlServerNamesMemo();

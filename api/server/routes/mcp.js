@@ -22,6 +22,7 @@ const {
   generateCheckAccess,
   validateOAuthSession,
   OAUTH_SESSION_COOKIE,
+  observedMCPConfig,
 } = require('@librechat/api');
 const {
   createMCPServerController,
@@ -484,7 +485,9 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
             userId: flowState.userId,
             serverName,
             tools,
-            serverConfig,
+            serverConfig: process.env.GOVERNANCE_MCP_METADATA_URL
+              ? observedMCPConfig(serverConfig, userConnection)
+              : serverConfig,
           });
         } else {
           logger.debug(`[MCP OAuth] System-level OAuth completed for ${serverName}`);
