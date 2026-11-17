@@ -515,28 +515,50 @@ export default function DlpInterventionDialog({
       ),
     [result.instructions],
   );
+  /** Each agent instruction's findings, grouped like the prompt's. */
+  const instructionGroups = useMemo(
+    () =>
+      (result.instructions ?? []).map(
+        ({ text, findings }) => groupFindings(toPromptFindings(text, findings))[0]?.groups ?? [],
+      ),
+    [result.instructions],
+  );
+  /** Every finding group, in the prompt, the agent instructions and the attached files. */
+  const allGroups = useMemo(
+    () => [...promptGroups, ...instructionGroups.flat(), ...files.flatMap(({ groups }) => groups)],
+    [promptGroups, instructionGroups, files],
+  );
 
   /** The distinct actions of the findings, least severe first, which the gateway combined. */
   const actions = useMemo(
-    () =>
-      SEVERITY.filter(
-        (action) =>
-          promptGroups.some((group) => group.action === action) ||
-          files.some(({ groups }) => groups.some((group) => group.action === action)),
-      ),
-    [promptGroups, files],
+    () => SEVERITY.filter((action) => allGroups.some((group) => group.action === action)),
+    [allGroups],
   );
-  const categoryCount = new Set([
-    ...promptGroups.map(({ category }) => category),
-    ...files.flatMap(({ groups }) => groups.map(({ category }) => category)),
-  ]).size;
+  const categoryCount = new Set(allGroups.map(({ category }) => category)).size;
   const DecisionIcon = ACTION_STYLE[decision].icon;
-  /** Whether the gateway replaces a value in the prompt; badges always list the originals. */
-  const hasMasked = [promptSegments, ...instructionSegments].some((segments) =>
-    segments.some((segment) => 'finding' in segment && segment.finding.replacement !== undefined),
-  );
-  const masked = hasMasked && showMasked;
+  /** Whether the gateway replaces a value in the text; badges always list the originals. */
+  const replacesValue = (segments: PromptSegment[]) =>
+    segments.some((segment) => 'finding' in segment && segment.finding.replacement !== undefined);
+  const promptMasked = replacesValue(promptSegments);
+  const instructionsMasked = instructionSegments.some(replacesValue);
+  const masked = (promptMasked || instructionsMasked) && showMasked;
   const toggleLabel = localize(masked ? 'com_ui_dlp_show_original' : 'com_ui_dlp_show_masked');
+  /** Each section with masked values gets the toggle; all of them share one view. */
+  const maskToggle = (
+    <Button
+      variant="ghost"
+      size="icon"
+      title={toggleLabel}
+      aria-label={toggleLabel}
+      onClick={() => setShowMasked((current) => !current)}
+    >
+      {masked ? (
+        <Eye className="size-5" aria-hidden="true" />
+      ) : (
+        <EyeOff className="size-5" aria-hidden="true" />
+      )}
+    </Button>
+  );
 
   /**
    * Enter sends, unless another control has focus, which keeps its own action. A held Enter never
@@ -772,15 +794,26 @@ export default function DlpInterventionDialog({
             {instructionSegments.length > 0 && (
               <section
                 aria-label={localize('com_ui_agent_instructions')}
-                className="flex flex-col gap-3"
+                className={cn(
+                  'flex flex-col gap-3',
+                  files.length > 0 && 'border-t border-border-light pt-5',
+                )}
               >
-                <h3 className={HEADING}>
-                  <Bot className="size-5" aria-hidden="true" />
-                  {localize('com_ui_agent_instructions')}
-                </h3>
+                <div className="flex items-center justify-between gap-4">
+                  <h3 className={HEADING}>
+                    <Bot className="size-5" aria-hidden="true" />
+                    {localize('com_ui_agent_instructions')}
+                  </h3>
+                  {instructionsMasked && maskToggle}
+                </div>
                 {instructionSegments.map((segments, instructionIndex) => (
                   <div key={instructionIndex} className={PROMPT_BOX}>
                     <p className={PROMPT_TEXT}>{segments.map(renderSegment)}</p>
+                    {instructionGroups[instructionIndex].length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {instructionGroups[instructionIndex].map(renderGroup)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </section>
@@ -790,7 +823,8 @@ export default function DlpInterventionDialog({
               <div
                 className={cn(
                   'flex flex-col gap-3',
-                  files.length > 0 && 'border-t border-border-light pt-5',
+                  (files.length > 0 || instructionSegments.length > 0) &&
+                    'border-t border-border-light pt-5',
                 )}
               >
                 <div className="flex items-center justify-between gap-4">
@@ -798,21 +832,7 @@ export default function DlpInterventionDialog({
                     <MessageSquareText className="size-5" aria-hidden="true" />
                     {localize('com_ui_dlp_your_prompt')}
                   </h3>
-                  {hasMasked && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title={toggleLabel}
-                      aria-label={toggleLabel}
-                      onClick={() => setShowMasked((current) => !current)}
-                    >
-                      {masked ? (
-                        <Eye className="size-5" aria-hidden="true" />
-                      ) : (
-                        <EyeOff className="size-5" aria-hidden="true" />
-                      )}
-                    </Button>
-                  )}
+                  {promptMasked && maskToggle}
                 </div>
                 <section
                   className={PROMPT_BOX}

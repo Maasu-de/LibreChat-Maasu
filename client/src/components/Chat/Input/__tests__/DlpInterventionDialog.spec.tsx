@@ -292,6 +292,10 @@ describe('DlpInterventionDialog', () => {
     expect(instructions).toHaveTextContent(`Discuss [CONFIDENTIAL] (${PROJECT_MASK}) now`);
     expect(instructions).not.toHaveTextContent('Project Acme');
     expect(promptRegion('com_ui_dlp_masked_prompt')).toHaveTextContent(/^Hello$/);
+    expect(screen.getAllByRole('button', { name: 'com_ui_dlp_show_original' })).toHaveLength(1);
+    expect(
+      within(instructions).getByRole('button', { name: 'com_ui_dlp_show_original' }),
+    ).toBeVisible();
 
     showOriginal();
     expect(instructions).toHaveTextContent(`Discuss Project Acme (${PROJECT_MASK}) now`);
@@ -326,7 +330,7 @@ describe('DlpInterventionDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('switches the prompt and every instruction between masked and original values together', () => {
+  it('switches the prompt and every instruction together from either section', () => {
     renderDialog({
       decision: 'MASK',
       findings: [finding()],
@@ -338,19 +342,86 @@ describe('DlpInterventionDialog', () => {
     });
 
     const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    const toggles = () => screen.getAllByRole('button', { name: /^com_ui_dlp_show_/ });
+    expect(toggles()).toHaveLength(2);
     expect(promptRegion('com_ui_dlp_masked_prompt')).not.toHaveTextContent('Project Acme');
     expect(instructions).not.toHaveTextContent('Project Beta');
     expect(instructions).not.toHaveTextContent('Project Echo');
 
-    showOriginal();
+    fireEvent.click(within(instructions).getByRole('button', { name: 'com_ui_dlp_show_original' }));
     expect(promptRegion()).toHaveTextContent('Discuss Project Acme');
     expect(instructions).toHaveTextContent('Discuss Project Beta');
     expect(instructions).toHaveTextContent('Discuss Project Echo');
+    expect(toggles().map((toggle) => toggle.getAttribute('aria-label'))).toEqual([
+      'com_ui_dlp_show_masked',
+      'com_ui_dlp_show_masked',
+    ]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_show_masked' }));
+    fireEvent.click(toggles()[1]);
     expect(promptRegion('com_ui_dlp_masked_prompt')).not.toHaveTextContent('Project Acme');
     expect(instructions).not.toHaveTextContent('Project Beta');
     expect(instructions).not.toHaveTextContent('Project Echo');
+  });
+
+  it('gives each instruction its own badges by category and action, like the prompt', () => {
+    renderDialog(
+      {
+        decision: 'MASK',
+        findings: [],
+        instructions: [
+          {
+            text: 'Discuss Project Acme with jane@example.com',
+            findings: [
+              finding(),
+              finding({
+                start: 26,
+                end: 42,
+                category: 'EMAIL_ADDRESS',
+                action: 'WARN',
+                replacement: undefined,
+              }),
+            ],
+            maskedRanges: maskedAt(),
+          },
+        ],
+      },
+      'Hello',
+    );
+
+    const instructions = screen.getByRole('region', { name: 'com_ui_agent_instructions' });
+    expect(within(instructions).getByRole('button', { name: PROJECT_MASK })).toBeVisible();
+    expect(within(instructions).getByRole('button', { name: EMAIL_WARN })).toBeVisible();
+    expect(within(promptRegion('com_ui_dlp_masked_prompt')).queryByRole('button')).toBeNull();
+  });
+
+  it('counts instruction findings in the overall action and in the data types', () => {
+    renderDialog({
+      decision: 'BLOCK',
+      findings: [finding()],
+      maskedRanges: maskedAt(),
+      fileFindings: [{ filename: 'report.pdf', category: 'IBAN_CODE', action: 'MASK', count: 1 }],
+      instructions: [
+        {
+          text: 'Write to jane@example.com',
+          findings: [
+            finding({
+              start: 9,
+              end: 25,
+              category: 'EMAIL_ADDRESS',
+              action: 'BLOCK',
+              replacement: undefined,
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_overall_action' })).toHaveTextContent(
+      '(com_ui_dlp_decision_mask + com_ui_dlp_decision_block → com_ui_dlp_decision_block)',
+    );
+    expect(screen.getByRole('region', { name: 'com_ui_dlp_attachments' })).toHaveTextContent(
+      'com_ui_dlp_one_file 1 · com_ui_dlp_data_types 3',
+    );
   });
 
   it('opens on the masked prompt, and shows it as entered on the color of each action', () => {
