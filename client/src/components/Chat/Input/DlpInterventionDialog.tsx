@@ -212,7 +212,8 @@ export function buildPromptSegments(
 
 /**
  * The findings in each place, grouped by category and action, each group with its distinct
- * values. Places keep the order in which they first appear.
+ * values. Places keep the order in which they first appear; groups go from the most severe
+ * action to the least, and groups with the same action keep that order too.
  */
 export function groupFindings(findings: GovernanceFileFinding[] = []): FileFindings[] {
   const files = new Map<string, FileFindings>();
@@ -232,6 +233,9 @@ export function groupFindings(findings: GovernanceFileFinding[] = []): FileFindi
     }
     group.count += count;
     group.terms = [...new Set([...(group.terms ?? []), ...(terms ?? [])])];
+  }
+  for (const file of files.values()) {
+    file.groups.sort((a, b) => SEVERITY.indexOf(b.action) - SEVERITY.indexOf(a.action));
   }
   return Array.from(files.values());
 }
