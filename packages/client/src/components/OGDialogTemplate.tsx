@@ -45,6 +45,8 @@ function isSelectionProps(selection: unknown): selection is SelectionProps {
 type DialogTemplateProps = {
   title: string;
   description?: string;
+  /** Shown beside the title and description. */
+  icon?: ReactNode;
   main?: ReactNode;
   buttons?: ReactNode;
   leftButtons?: ReactNode;
@@ -79,6 +81,7 @@ const OGDialogTemplate: ForwardRefExoticComponent<
   const localize = useLocalize();
   const {
     title,
+    icon,
     main,
     buttons,
     selection,
@@ -122,6 +125,17 @@ const OGDialogTemplate: ForwardRefExoticComponent<
     selectionContent = selection;
   }
 
+  const heading = (
+    <>
+      <OGDialogTitle>{title}</OGDialogTitle>
+      {description && (
+        <OGDialogDescription className="items-center justify-center">
+          {description}
+        </OGDialogDescription>
+      )}
+    </>
+  );
+
   return (
     <OGDialogContent
       overlayClassName={overlayClassName}
@@ -132,12 +146,19 @@ const OGDialogTemplate: ForwardRefExoticComponent<
       onKeyDown={onKeyDown}
       onClick={(e) => e.stopPropagation()}
     >
-      <OGDialogHeader className={cn(headerClassName ?? '')}>
-        <OGDialogTitle>{title}</OGDialogTitle>
-        {description && (
-          <OGDialogDescription className="items-center justify-center">
-            {description}
-          </OGDialogDescription>
+      <OGDialogHeader
+        className={cn(
+          icon != null && 'flex-row items-start gap-4 space-y-0',
+          headerClassName ?? '',
+        )}
+      >
+        {icon != null ? (
+          <>
+            {icon}
+            <div className="flex min-w-0 flex-col space-y-1.5 text-left">{heading}</div>
+          </>
+        ) : (
+          heading
         )}
       </OGDialogHeader>
       <div className={cn('px-0 py-2', mainClassName)}>{main != null ? main : null}</div>

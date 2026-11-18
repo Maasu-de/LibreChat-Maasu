@@ -1,10 +1,18 @@
 import { useMemo, useState, useCallback, memo } from 'react';
 import type { TFile, TMessage } from 'librechat-data-provider';
 import FileContainer from '~/components/Chat/Input/Files/FileContainer';
+import { MASKED_VALUE } from '~/components/Chat/Input/labels';
 import FilePreviewDialog from './FilePreviewDialog';
+import { useLocalize } from '~/hooks';
 import Image from './Image';
 
 const Files = ({ message }: { message?: TMessage }) => {
+  const localize = useLocalize();
+  /** Attached files in which the gateway masked values before they reached the model. */
+  const maskedFiles = useMemo(
+    () => new Set(message?.governanceMaskedFiles),
+    [message?.governanceMaskedFiles],
+  );
   const imageFiles = useMemo(() => {
     return message?.files?.filter((file) => file.type?.startsWith('image/')) || [];
   }, [message?.files]);
@@ -29,6 +37,13 @@ const Files = ({ message }: { message?: TMessage }) => {
             key={file.file_id}
             file={file as TFile}
             onClick={() => setSelectedFile(file)}
+            subtitle={
+              maskedFiles.has(file.file_id ?? '') ? (
+                <div className="truncate text-xs">
+                  <span className={MASKED_VALUE}>{localize('com_ui_dlp_masked_file')}</span>
+                </div>
+              ) : undefined
+            }
           />
         ))}
       {imageFiles.length > 0 &&

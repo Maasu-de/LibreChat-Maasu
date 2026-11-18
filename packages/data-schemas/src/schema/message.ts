@@ -164,6 +164,20 @@ const messageSchema: Schema<IMessage> = new Schema(
      * count), so they are not duplicated into the stored `text`.
      */
     quotes: { type: [String], default: undefined },
+    /** Where the gateway replaced a detected value in the text; never the value itself. */
+    governanceMasks: {
+      type: [
+        {
+          _id: false,
+          start: Number,
+          end: Number,
+          category: String,
+          label: String,
+        },
+      ],
+      default: undefined,
+    },
+    governanceMaskedFiles: { type: [String], default: undefined },
     /*
     attachments: {
       type: [

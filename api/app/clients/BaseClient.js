@@ -662,6 +662,14 @@ class BaseClient {
       }
       /** A governed turn is stored only once the gateway starts its completion. */
       onDlpSent(this.options.req, () => {
+        /** The approved review's replacements, which the user's message highlights. */
+        const masked = this.options.req?.governanceDlpMasked;
+        if (masked?.masks.length > 0) {
+          userMessage.governanceMasks = masked.masks;
+        }
+        if (masked?.maskedFileIds.length > 0) {
+          userMessage.governanceMaskedFiles = masked.maskedFileIds;
+        }
         userMessagePromise = this.saveMessageToDatabase(userMessage, saveOptions, user).catch(
           (err) => {
             logger.error('[BaseClient] Failed to save user message:', err);

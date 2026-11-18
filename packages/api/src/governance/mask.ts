@@ -1,4 +1,8 @@
-import type { GovernanceFinding, GovernanceMaskedRange } from 'librechat-data-provider';
+import type {
+  GovernanceMask,
+  GovernanceFinding,
+  GovernanceMaskedRange,
+} from 'librechat-data-provider';
 
 /** The characters Python's `str.isspace()` matches, which the gateway skips when trimming. */
 const GATEWAY_WHITESPACE =
@@ -10,6 +14,8 @@ export interface GovernanceMasking {
   text: string;
   /** The ranges of the original text that the replacements take the place of, in text order. */
   ranges: GovernanceMaskedRange[];
+  /** Where each non-empty replacement sits in the masked text, in code points and text order. */
+  masks: GovernanceMask[];
 }
 
 /**
@@ -28,9 +34,10 @@ export function getGovernanceMasking(
     .filter(({ finding }) => finding.replacement !== undefined)
     .sort(({ finding: a }, { finding: b }) => a.start - b.start || b.end - a.end);
 
-  const masking: GovernanceMasking = { text: '', ranges: [] };
+  const masking: GovernanceMasking = { text: '', ranges: [], masks: [] };
   let covered = 0;
   let copied = 0;
+  let length = 0;
   for (const { finding, index } of candidates) {
     const { start, end, replacement = '' } = finding;
     if (end <= covered) {
@@ -46,6 +53,17 @@ export function getGovernanceMasking(
     }
     masking.ranges.push({ start: from, end, finding: index });
     masking.text += chars.slice(copied, from).join('') + replacement;
+    length += from - copied;
+    const sent = Array.from(replacement).length;
+    if (sent > 0) {
+      masking.masks.push({
+        start: length,
+        end: length + sent,
+        category: finding.category,
+        ...(finding.label !== undefined ? { label: finding.label } : {}),
+      });
+    }
+    length += sent;
     copied = end;
   }
   masking.text += chars.slice(copied).join('');
