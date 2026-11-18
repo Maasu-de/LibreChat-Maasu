@@ -416,9 +416,6 @@ describe('DlpInterventionDialog', () => {
       ],
     });
 
-    expect(screen.getByRole('region', { name: 'com_ui_dlp_overall_action' })).toHaveTextContent(
-      '(com_ui_dlp_decision_mask + com_ui_dlp_decision_block → com_ui_dlp_decision_block)',
-    );
     expect(screen.getByRole('region', { name: 'com_ui_dlp_attachments' })).toHaveTextContent(
       'com_ui_dlp_one_file 1 · com_ui_dlp_data_types 3',
     );
@@ -566,15 +563,11 @@ describe('DlpInterventionDialog', () => {
   });
 
   it.each([
-    [
-      ['MASK', 'BLOCK'],
-      'BLOCK',
-      '(com_ui_dlp_decision_mask + com_ui_dlp_decision_block → com_ui_dlp_decision_block)',
-    ],
-    [['BLOCK'], 'BLOCK', null],
+    [['WARN', 'MASK', 'BLOCK'], 'BLOCK'],
+    [['BLOCK'], 'BLOCK'],
   ] as const)(
-    'explains how the actions %j combine into the overall action',
-    (actions, decision, combination) => {
+    'shows only the overall action for the actions %j, without how they combine',
+    (actions, decision) => {
       renderDialog(
         {
           decision,
@@ -590,11 +583,7 @@ describe('DlpInterventionDialog', () => {
         new RegExp(`^com_ui_dlp_overall_action:com_ui_dlp_decision_${decision.toLowerCase()}`),
       );
       expect(overall).toHaveTextContent(`com_ui_dlp_outcome_${decision.toLowerCase()}`);
-      if (combination) {
-        expect(overall).toHaveTextContent(combination);
-      } else {
-        expect(overall.textContent).not.toContain('→');
-      }
+      expect(overall.textContent).not.toMatch(/[()+→]/);
     },
   );
 

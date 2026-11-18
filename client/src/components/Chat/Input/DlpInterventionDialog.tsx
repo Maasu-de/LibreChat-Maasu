@@ -533,11 +533,6 @@ export default function DlpInterventionDialog({
     [promptGroups, instructionGroups, files],
   );
 
-  /** The distinct actions of the findings, least severe first, which the gateway combined. */
-  const actions = useMemo(
-    () => SEVERITY.filter((action) => allGroups.some((group) => group.action === action)),
-    [allGroups],
-  );
   const categoryCount = new Set(allGroups.map(({ category }) => category)).size;
   const DecisionIcon = ACTION_STYLE[decision].icon;
   /** Whether the gateway replaces a value in the text; badges always list the originals. */
@@ -759,13 +754,6 @@ export default function DlpInterventionDialog({
                   <p className="flex flex-wrap items-center gap-x-2 text-sm font-semibold">
                     <span>{`${localize('com_ui_dlp_overall_action')}:`}</span>
                     <span className="text-base">{localize(DECISION_COPY[decision])}</span>
-                    {actions.length > 1 && (
-                      <span className="font-normal">
-                        {`(${actions
-                          .map((action) => localize(DECISION_COPY[action]))
-                          .join(' + ')} → ${localize(DECISION_COPY[decision])})`}
-                      </span>
-                    )}
                   </p>
                   <p className="text-sm">{localize(OUTCOME_COPY[decision])}</p>
                 </div>
