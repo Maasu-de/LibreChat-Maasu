@@ -30,12 +30,35 @@ authentication refresh contacts the IdP and synchronizes administrator entitleme
 OpenID users with older LibreChat refresh sessions must sign in again; those local
 sessions cannot renew credentials in pilot mode, even after token reuse is enabled.
 
-Administrator mapping must be explicit in pilot mode. Set `OPENID_ADMIN_ROLE`
-and `OPENID_ADMIN_ROLE_PARAMETER_PATH` to the IdP's administrator value and
-ID-token claim path. For bundled Keycloak use `governance-admin` and
-`realm_access.roles`. Missing or blank settings reject startup, login, and
-refresh. A stored LibreChat `ADMIN` role cannot substitute for the claim.
-Outside pilot mode, the existing administrator mapping remains unchanged.
+In pilot mode, `OPENID_ADMIN_ROLE_PARAMETER_PATH` defaults to `realm_access.roles`
+when omitted. The administrator value uses `OPENID_ADMIN_ROLE`, then the legacy
+`KEYCLOAK_ADMIN_ROLE` only if the canonical setting is absent, then
+`governance-admin` if both are absent. Explicit blanks never activate a fallback.
+Empty or whitespace-only settings reject governed startup, login, and refresh;
+they never grant administrator access. With valid configuration, ordinary users
+without the administrator claim can still log in if other login requirements pass.
+A stored LibreChat `ADMIN` role cannot substitute for the claim.
+
+The resolver checks the complete path as an exact own top-level claim name first,
+including dotted and URL-style keys. Only if it is absent does it traverse
+dot-separated object keys. An invalid existing top-level value does not fall
+back to a nested value. Array indexing is not supported; arrays are accepted as
+final claim values. Strings and string-array entries are trimmed and compared
+exactly and case-sensitively; blank and non-string entries are ignored. Delimited
+strings are not split into roles.
+
+Configuration and claim trimming follows ECMAScript `String.trim()`, matching the
+Gateway: leading/trailing whitespace and line terminators, including `U+FEFF`,
+are removed; `U+001C` through `U+001F` and `U+0085` are retained. Configure the same
+mapping in LibreChat and the Gateway. Outside pilot mode, the existing
+administrator mapping remains unchanged, including its token-source setting.
+
+**Upgrade note:** remove existing `OPENID_ADMIN_ROLE=` and
+`OPENID_ADMIN_ROLE_PARAMETER_PATH=` assignments to use defaults, or set explicit
+valid values. A blank legacy alias also fails if the canonical role is omitted.
+An `.env` copied from an older example can otherwise prevent governed startup or
+login. The bundled Compose files load or mount `.env`; they do not supply fallback
+values for these administrator settings.
 
 Set `GOVERNANCE_GATEWAY_SERVICE_CREDENTIAL` in LibreChat and the Gateway web
 process to the same dedicated secret. The two read endpoints return 503 when it

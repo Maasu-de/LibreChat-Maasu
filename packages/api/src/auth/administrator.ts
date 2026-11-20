@@ -1,4 +1,3 @@
-import get from 'lodash/get';
 import { SystemRoles } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { RefreshTokenset } from './refresh';
@@ -6,22 +5,52 @@ import { isGovernancePilotEnabled } from '../governance/mode';
 
 export const GOVERNANCE_ADMIN_ROLE: SystemRoles.GOVERNANCE_ADMIN = SystemRoles.GOVERNANCE_ADMIN;
 
+function administratorRole(): string {
+  return (
+    process.env.OPENID_ADMIN_ROLE ??
+    process.env.KEYCLOAK_ADMIN_ROLE ??
+    'governance-admin'
+  ).trim();
+}
+
+function administratorClaimPath(): string {
+  return (process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH ?? 'realm_access.roles').trim();
+}
+
 export function assertOidcAdministratorConfigured(): void {
   if (!isGovernancePilotEnabled()) return;
-  if (!process.env.OPENID_ADMIN_ROLE?.trim()) {
-    throw new Error('Governed mode requires OPENID_ADMIN_ROLE');
+  if (!administratorRole()) {
+    throw new Error(
+      'Governed mode requires a non-blank administrator role (OPENID_ADMIN_ROLE or legacy KEYCLOAK_ADMIN_ROLE)',
+    );
   }
-  if (!process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH?.trim()) {
-    throw new Error('Governed mode requires OPENID_ADMIN_ROLE_PARAMETER_PATH');
+  if (!administratorClaimPath()) {
+    throw new Error('Governed mode requires a non-blank OPENID_ADMIN_ROLE_PARAMETER_PATH');
   }
 }
 
 export function hasOidcAdministratorClaim(claims: object): boolean {
-  const expected = process.env.OPENID_ADMIN_ROLE?.trim();
-  const path = process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH?.trim();
+  const expected = administratorRole();
+  const path = administratorClaimPath();
   if (!expected || !path) return false;
-  const value = get(claims, path);
-  return value === expected || (Array.isArray(value) && value.includes(expected));
+  const parts = Object.prototype.hasOwnProperty.call(claims, path) ? [path] : path.split('.');
+  let value: unknown = claims;
+  for (const part of parts) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      !Object.prototype.hasOwnProperty.call(value, part)
+    ) {
+      return false;
+    }
+    value = Reflect.get(value, part);
+  }
+  if (typeof value === 'string') return value.trim() === expected;
+  return (
+    Array.isArray(value) &&
+    value.some((item) => typeof item === 'string' && item.trim() === expected)
+  );
 }
 
 /** Applies only to validated ID-token claims supplied by the OIDC client. */
@@ -58,8 +87,6 @@ export function hasStaleGovernanceAdministratorRole(
   user: Pick<IUser, 'provider' | 'role'>,
 ): boolean {
   return (
-    isGovernancePilotEnabled() &&
-    user.provider === 'openid' &&
-    user.role === SystemRoles.ADMIN
+    isGovernancePilotEnabled() && user.provider === 'openid' && user.role === SystemRoles.ADMIN
   );
 }
