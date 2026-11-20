@@ -196,6 +196,7 @@ export type ListRolesResponse = {
 export interface MCPServerStatus {
   requiresOAuth: boolean;
   connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
+  authorizationComplete?: boolean;
 }
 
 export interface MCPConnectionStatusResponse {
@@ -277,4 +278,22 @@ export type FinanceUsageDashboard = {
   /** Group rows fully attribute shared requests and must not be summed into tenant totals. */
   by_group_aggregation: 'overlapping_full_attribution';
   by_model: FinanceUsageBreakdownRow[];
+};
+
+export type MCPProviderRevocation = {
+  outcome: 'success' | 'failure';
+  reason?:
+    | 'provider_unavailable'
+    | 'provider_rejected'
+    | 'provider_error'
+    | 'client_metadata_unavailable'
+    | 'tokens_unavailable'
+    | 'not_attempted';
+  http_status?: number;
+};
+
+export type MCPRevocationResponse = {
+  success: boolean;
+  local_disconnection?: { outcome: 'success' | 'failure' };
+  provider_revocation?: MCPProviderRevocation;
 };

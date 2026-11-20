@@ -59,9 +59,21 @@ export * from './governance/budgets';
 export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
+export * from './governance/mcp';
+export * from './governance/oauth';
+export {
+  isGovernanceMCPAuditConfigured,
+  queueGovernanceMCPAudit,
+  mutateGovernanceMCP,
+  createGovernanceMCPMutation,
+  recordGovernanceMCPFailure,
+} from './governance/audit';
 export { getGovernanceAgentRestoreError } from './governance/agents';
 export * from './governance/groups';
-export { getGovernanceGroupCapabilities } from './governance/authorization';
+export {
+  getGovernanceGroupCapabilities,
+  getGovernanceMCPOAuthBinding,
+} from './governance/authorization';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';
 export { createReviewEvent, createApprovalRetryEvent } from './governance/review';
 /* Files */
@@ -90,3 +102,5 @@ export * from './rum/proxy';
 export type * from './mcp/types';
 export type * from './flow/types';
 export type * from './types';
+
+export { mergeMCPRevocationFailure } from './mcp/revocation';

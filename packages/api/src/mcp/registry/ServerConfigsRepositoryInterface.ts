@@ -1,3 +1,4 @@
+import type { ClientSession } from 'mongoose';
 import { ParsedServerConfig, AddServerResult } from '~/mcp/types';
 
 /**
@@ -7,16 +8,25 @@ export interface IServerConfigsRepositoryInterface {
   add(serverName: string, config: ParsedServerConfig, userId?: string): Promise<AddServerResult>;
 
   //ACL Entry check if update is possible
-  update(serverName: string, config: ParsedServerConfig, userId?: string): Promise<void>;
+  update(
+    serverName: string,
+    config: ParsedServerConfig,
+    userId?: string,
+    session?: ClientSession,
+  ): Promise<void>;
 
   /** Atomic add-or-update without requiring callers to inspect error messages. */
   upsert(serverName: string, config: ParsedServerConfig, userId?: string): Promise<void>;
 
   //ACL Entry check if remove is possible
-  remove(serverName: string, userId?: string): Promise<void>;
+  remove(serverName: string, userId?: string, session?: ClientSession): Promise<void>;
 
   //ACL Entry check if read is possible
-  get(serverName: string, userId?: string): Promise<ParsedServerConfig | undefined>;
+  get(
+    serverName: string,
+    userId?: string,
+    session?: ClientSession,
+  ): Promise<ParsedServerConfig | undefined>;
 
   //ACL Entry get all accessible mcp config definitions + any mcp configured with agents
   getAll(userId?: string, role?: string): Promise<Record<string, ParsedServerConfig>>;

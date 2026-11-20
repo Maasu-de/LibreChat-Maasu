@@ -23,6 +23,8 @@ jest.mock('~/hooks/AuthContext', () => ({
   AuthContextProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+jest.mock('../MCPConnections', () => () => null);
+
 jest.mock('../RouteErrorBoundary', () => () => null);
 jest.mock('../Layouts/Startup', () => () => null);
 jest.mock('../Layouts/Login', () => () => null);
@@ -66,5 +68,13 @@ describe('skills routes', () => {
     const paths = flattenPaths((router as unknown as { routes: RouteNode[] }).routes);
 
     expect(paths).toContain('skills/new');
+  });
+});
+
+describe('MCP administration routes', () => {
+  it('registers both standalone and embedded content outside chat', () => {
+    const paths = flattenPaths((router as unknown as { routes: RouteNode[] }).routes);
+    expect(paths).toContain('governance/mcp');
+    expect(paths).toContain('governance/mcp/content');
   });
 });
