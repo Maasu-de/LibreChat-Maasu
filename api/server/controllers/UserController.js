@@ -4,6 +4,7 @@ const {
   getNewS3URL,
   needsRefresh,
   MCPOAuthHandler,
+  mergeMCPRevocationFailure,
   MCPTokenStorage,
   sanitizeMCPErrorForLogging,
   isGovernancePilotEnabled,
@@ -516,7 +517,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
   const oauthServers = await getMCPServersRegistry().getOAuthServers(userId);
   if (!oauthServers.has(serverName) || !serverConfig) {
     await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion, binding);
-    return;
+    return { outcome: 'failure', reason: 'client_metadata_unavailable' };
   }
 
   // 1. get client info used for revocation (client id, secret)
@@ -534,14 +535,14 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
       sanitizeMCPErrorForLogging(error),
     );
     await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion, binding);
-    return;
+    return { outcome: 'failure', reason: 'client_metadata_unavailable' };
   }
   if (clientTokenData == null) {
     logger.info(
       `[maybeUninstallOAuthMCP] Missing OAuth client metadata for ${serverName}; clearing local MCP OAuth state only.`,
     );
     await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion, binding);
-    return;
+    return { outcome: 'failure', reason: 'client_metadata_unavailable' };
   }
   const { clientInfo, clientMetadata } = clientTokenData;
 
@@ -576,6 +577,11 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
   if (commitTokenDeletion)
     await clearStoredMCPOAuthState(userId, serverName, commitTokenDeletion, binding);
 
+  let provider =
+    tokens?.access_token || tokens?.refresh_token
+      ? { outcome: 'success' }
+      : { outcome: 'failure', reason: 'tokens_unavailable' };
+
   if (tokens?.access_token) {
     try {
       await MCPOAuthHandler.revokeOAuthToken(
@@ -594,6 +600,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
         allowedAddresses,
       );
     } catch (error) {
+      provider = mergeMCPRevocationFailure(provider, error);
       logger.error(
         `[maybeUninstallOAuthMCP] Error revoking OAuth access token for ${serverName}:`,
         sanitizeMCPErrorForLogging(error),
@@ -619,6 +626,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
         allowedAddresses,
       );
     } catch (error) {
+      provider = mergeMCPRevocationFailure(provider, error);
       logger.error(
         `[maybeUninstallOAuthMCP] Error revoking OAuth refresh token for ${serverName}:`,
         sanitizeMCPErrorForLogging(error),
@@ -628,6 +636,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
 
   // 4. delete tokens from the DB and clear the flow state after revocation attempts
   if (!commitTokenDeletion) await clearStoredMCPOAuthState(userId, serverName, undefined, binding);
+  return provider;
 };
 
 module.exports = {

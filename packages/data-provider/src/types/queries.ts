@@ -279,3 +279,21 @@ export type FinanceUsageDashboard = {
   by_group_aggregation: 'overlapping_full_attribution';
   by_model: FinanceUsageBreakdownRow[];
 };
+
+export type MCPProviderRevocation = {
+  outcome: 'success' | 'failure';
+  reason?:
+    | 'provider_unavailable'
+    | 'provider_rejected'
+    | 'provider_error'
+    | 'client_metadata_unavailable'
+    | 'tokens_unavailable'
+    | 'not_attempted';
+  http_status?: number;
+};
+
+export type MCPRevocationResponse = {
+  success: boolean;
+  local_disconnection?: { outcome: 'success' | 'failure' };
+  provider_revocation?: MCPProviderRevocation;
+};

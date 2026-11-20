@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@librechat/data-schemas';
 import type { ClientSession } from 'mongoose';
 import type { IGroup } from '@librechat/data-schemas';
+import type { MCPProviderRevocation } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types/http';
 import { isGovernancePilotEnabled } from './mode';
 
@@ -19,7 +20,9 @@ export type MCPAuditAction =
   | 'mcp.deleted'
   | 'mcp.inspected'
   | 'mcp.oauth.authorized'
-  | 'mcp.oauth.revoked';
+  | 'mcp.oauth.revoked'
+  | 'mcp.oauth.disconnected_locally'
+  | 'mcp.oauth.provider_revocation';
 
 interface GroupAuditDelivery {
   _id: string;
@@ -36,6 +39,8 @@ interface GroupAuditDelivery {
     occurred_at: string;
     action: GroupMutationAction | MCPAuditAction;
     outcome: 'success' | 'failure';
+    reason?: MCPProviderRevocation['reason'];
+    http_status?: number;
     actor: { issuer: string; user_id: string };
     resource:
       | { type: 'group'; id: string; affected_user_id?: string }
@@ -104,6 +109,7 @@ export async function queueGovernanceMCPAudit(
   connectionId: string,
   outcome: 'success' | 'failure' = 'success',
   session?: ClientSession,
+  provider?: MCPProviderRevocation,
 ): Promise<void> {
   if (!isGovernancePilotEnabled()) return;
   const actor = req.user;
@@ -127,6 +133,8 @@ export async function queueGovernanceMCPAudit(
         occurred_at: occurredAt.toISOString(),
         action,
         outcome,
+        ...(provider?.reason && { reason: provider.reason }),
+        ...(provider?.http_status && { http_status: provider.http_status }),
         actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
         resource: { type: 'mcp_connection', id: connectionId },
       },

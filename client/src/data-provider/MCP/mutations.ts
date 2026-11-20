@@ -157,7 +157,7 @@ export const useInspectMCPServerMutation = (): UseMutationResult<
 };
 
 export const useRevokeMCPAuthorizationMutation = (): UseMutationResult<
-  { success: boolean },
+  t.MCPRevocationResponse,
   Error,
   string
 > => {

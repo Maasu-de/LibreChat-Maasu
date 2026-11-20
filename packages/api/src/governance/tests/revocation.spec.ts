@@ -78,7 +78,9 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-async function revokeAuthorization() {
+async function revokeAuthorization(
+  provider: import('librechat-data-provider').MCPProviderRevocation = { outcome: 'success' },
+) {
   const handlers = administration.createGovernanceMCPHandlers({
     getRegistry: () => ({
       getServerConfig: async () => ({
@@ -100,6 +102,7 @@ async function revokeAuthorization() {
           },
         }),
       );
+      return provider;
     },
   });
   const app = express();
@@ -125,7 +128,11 @@ it('rejects a callback whose token exchange finishes after successful revocation
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     const revoked = await revokeAuthorization();
     expect(revoked.status).toBe(200);
-    expect(revoked.body).toEqual({ success: true });
+    expect(revoked.body).toEqual({
+      success: true,
+      local_disconnection: { outcome: 'success' },
+      provider_revocation: { outcome: 'success' },
+    });
     expect(await authorization.isGovernanceMCPOAuthAuthorized(actor.id, connectionId)).toBe(false);
 
     await expect(
@@ -139,8 +146,11 @@ it('rejects a callback whose token exchange finishes after successful revocation
 
     expect(await models.Token.countDocuments()).toBe(0);
     const events = await outbox().find().toArray();
-    expect(events).toHaveLength(1);
-    expect(events[0].payload).toMatchObject({ action: 'mcp.oauth.revoked', outcome: 'success' });
+    expect(events).toHaveLength(2);
+    expect(events[0].payload).toMatchObject({
+      action: 'mcp.oauth.disconnected_locally',
+      outcome: 'success',
+    });
   });
 });
 
@@ -165,7 +175,8 @@ it('allows a fresh authorization started after revocation', async () => {
     ).toMatchObject({ access_token: 'access-secret', refresh_token: 'refresh-secret' });
     const events = await outbox().find().sort({ createdAt: 1 }).toArray();
     expect(events.map(({ payload }) => payload.action)).toEqual([
-      'mcp.oauth.revoked',
+      'mcp.oauth.disconnected_locally',
+      'mcp.oauth.provider_revocation',
       'mcp.oauth.authorized',
     ]);
   });
@@ -392,5 +403,37 @@ it('serializes revocation behind an authorization publication already in progres
     expect(await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId)).toBe(
       generation + 2,
     );
+  });
+});
+
+it('keeps local deletion successful and audits a provider 503 separately', async () => {
+  await schemas.runAsSystem(async () => {
+    await storage.storeTokens(tokenData());
+    const provider = {
+      outcome: 'failure' as const,
+      reason: 'provider_unavailable' as const,
+      http_status: 503,
+    };
+    const response = await revokeAuthorization(provider);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      success: false,
+      local_disconnection: { outcome: 'success' },
+      provider_revocation: provider,
+    });
+    expect(await models.Token.countDocuments()).toBe(0);
+    const events = await outbox().find().sort({ createdAt: 1 }).toArray();
+    expect(
+      events.map(({ payload }) => ({
+        action: payload.action,
+        outcome: payload.outcome,
+        reason: payload.reason,
+        http_status: payload.http_status,
+      })),
+    ).toEqual([
+      { action: 'mcp.oauth.disconnected_locally', outcome: 'success' },
+      { action: 'mcp.oauth.provider_revocation', ...provider },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('access-secret');
   });
 });

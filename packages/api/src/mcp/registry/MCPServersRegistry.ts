@@ -5,6 +5,7 @@ import type { ClientSession } from 'mongoose';
 import type { GovernanceMCPMutation } from '~/governance/audit';
 import type { IServerConfigsRepositoryInterface } from './ServerConfigsRepositoryInterface';
 import type * as t from '~/mcp/types';
+import { requireApiKeyReentryForRebinding, prepareOAuthSecretReuse } from './binding';
 import {
   ServerConfigsCacheFactory,
   APP_CACHE_NAMESPACE,
@@ -512,18 +513,21 @@ export class MCPServersRegistry {
     const configRepo = this.getConfigRepository(storageLocation);
     const source = (storageLocation === 'CACHE' ? 'yaml' : 'user') as t.MCPServerSource;
 
+    const storedConfig = await configRepo.get(serverName, userId);
+    if (storedConfig) {
+      requireApiKeyReentryForRebinding(storedConfig, config);
+      config = prepareOAuthSecretReuse(storedConfig, config);
+    }
     let configForInspection = { ...config };
     if (mutation) {
-      const existingConfig = await configRepo.get(serverName, userId);
-      configForInspection = preserveGovernanceMCPSecrets(configForInspection, existingConfig);
+      configForInspection = preserveGovernanceMCPSecrets(configForInspection, storedConfig);
     } else if (config.apiKey?.source === 'admin' && !config.apiKey?.key) {
-      const existingConfig = await configRepo.get(serverName, userId);
-      if (existingConfig?.apiKey?.key) {
+      if (storedConfig?.apiKey?.key) {
         configForInspection = {
           ...configForInspection,
           apiKey: {
             ...configForInspection.apiKey!,
-            key: existingConfig.apiKey.key,
+            key: storedConfig.apiKey.key,
           },
         };
       }

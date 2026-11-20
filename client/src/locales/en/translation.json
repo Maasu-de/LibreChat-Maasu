@@ -1,4 +1,7 @@
 {
+  "com_ui_mcp_api_key_reentry_required": "Connection settings changed. Re-enter the Service HTTP key to save this MCP server.",
+  "com_ui_mcp_oauth_secret_reentry_required": "OAuth settings changed. Re-enter the client secret to save this MCP server.",
+  "com_ui_mcp_disconnected_provider_failed": "Disconnected locally. Provider revocation failed; the provider tokens may still be valid.",
   "com_ui_mcp_connections": "MCP Connections",
   "com_ui_mcp_connections_description": "Configure and inspect administrator-managed remote MCP connections. Connections are unavailable to users and agents until permitted by governance policy.",
   "com_ui_mcp_admin_required": "A Governance administrator role is required.",

@@ -555,8 +555,15 @@ export function useMCPServerManager({
     (serverName: string) => {
       if (administration) {
         revokeAuthorizationMutation.mutate(serverName, {
-          onSuccess: () =>
-            showToast({ message: localize('com_nav_mcp_access_revoked'), status: 'success' }),
+          onSuccess: (result) =>
+            showToast({
+              message: localize(
+                result.provider_revocation?.outcome === 'failure'
+                  ? 'com_ui_mcp_disconnected_provider_failed'
+                  : 'com_nav_mcp_access_revoked',
+              ),
+              status: result.provider_revocation?.outcome === 'failure' ? 'error' : 'success',
+            }),
           onError: () =>
             showToast({ message: localize('com_nav_mcp_vars_update_error'), status: 'error' }),
         });

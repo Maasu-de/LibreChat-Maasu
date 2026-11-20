@@ -1664,7 +1664,9 @@ export class MCPOAuthHandler {
 
     if (!response.ok) {
       logger.error(`[MCPOAuth] Token revocation failed for ${serverName}: HTTP ${response.status}`);
-      throw new Error(`Token revocation failed: HTTP ${response.status}`);
+      throw Object.assign(new Error(`Token revocation failed: HTTP ${response.status}`), {
+        status: response.status,
+      });
     }
   }
 }

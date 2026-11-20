@@ -204,7 +204,7 @@ it.each([false, true])(
       } else {
         expect(await models.Token.countDocuments()).toBe(0);
         expect((await outbox().findOne())?.payload).toMatchObject({
-          action: 'mcp.oauth.revoked',
+          action: 'mcp.oauth.disconnected_locally',
           outcome: 'success',
         });
         expect(providerRevoke).toHaveBeenCalledTimes(1);

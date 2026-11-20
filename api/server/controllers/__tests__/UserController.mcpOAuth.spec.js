@@ -22,6 +22,7 @@ jest.mock('librechat-data-provider', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  mergeMCPRevocationFailure: jest.fn(() => ({ outcome: 'failure', reason: 'provider_error' })),
   MCPOAuthHandler: {
     generateFlowId: jest.fn((userId, serverName, tenantId) => {
       const flowId = `${userId}:${serverName}`;

@@ -1404,5 +1404,5 @@ export const getActiveJobs = (): Promise<ActiveJobsResponse> => {
 
 export const inspectMCPServer = (serverName: string): Promise<mcp.MCPInspectionResponse> =>
   request.get(endpoints.mcpInspect(serverName));
-export const revokeMCPOAuth = (serverName: string): Promise<{ success: boolean }> =>
+export const revokeMCPOAuth = (serverName: string): Promise<q.MCPRevocationResponse> =>
   request.post(endpoints.mcpOAuthRevoke(serverName));

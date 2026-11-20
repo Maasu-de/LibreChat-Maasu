@@ -15,6 +15,8 @@ const {
   recordGovernanceMCPFailure,
   isUserSourced,
   MCPErrorCodes,
+  MCPApiKeyReentryRequiredError,
+  MCPOAuthSecretReentryRequiredError,
   redactServerSecrets,
   redactAllServerSecrets,
   isMCPDomainNotAllowedError,
@@ -47,6 +49,12 @@ const db = require('~/models');
  * @returns {import('express').Response | null} Response if handled, null if not an MCP error
  */
 function handleMCPError(error, res) {
+  if (
+    error instanceof MCPApiKeyReentryRequiredError ||
+    error instanceof MCPOAuthSecretReentryRequiredError
+  ) {
+    return res.status(400).json({ error: error.code, message: error.message });
+  }
   if (isGovernancePilotEnabled())
     return res.status(error.statusCode ?? 400).json({ message: 'MCP connection operation failed' });
   if (isMCPDomainNotAllowedError(error)) {

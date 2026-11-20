@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import type { ClientSession } from 'mongoose';
+import { requireApiKeyReentryForRebinding, prepareOAuthSecretReuse } from '../binding';
 import { logger, encryptV2, decryptV2, createMethods } from '@librechat/data-schemas';
 import {
   ResourceType,
@@ -232,6 +233,11 @@ export class ServerConfigsDB implements IServerConfigsRepositoryInterface {
     }
 
     const existingServer = await this._dbMethods.findMCPServerByServerName(serverName, session);
+
+    if (existingServer) {
+      requireApiKeyReentryForRebinding(existingServer.config, config);
+      config = prepareOAuthSecretReuse(existingServer.config, config);
+    }
 
     let configToSave: ParsedServerConfig = sanitizeUserManagedOAuthConfig({
       ...config,

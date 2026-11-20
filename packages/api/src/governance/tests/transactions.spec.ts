@@ -215,7 +215,7 @@ it.each(['no authentication', 'API key'] as const)(
   },
 );
 
-it('preserves an omitted client secret when OAuth discovery remains selected', async () => {
+it('requires a new client secret when switching from configured OAuth to discovery', async () => {
   const created = await request(app)
     .post('/servers')
     .send({
@@ -236,8 +236,8 @@ it('preserves an omitted client secret when OAuth discovery remains selected', a
   const updated = await request(app)
     .patch(`/servers/${serverName}`)
     .send({ config: { type: 'sse', url: config.url, title: config.title, oauth: {} } });
-  expect(updated.status).toBe(200);
-  expect(updated.body.oauth).toEqual({});
+  expect(updated.status).toBe(400);
+  expect(updated.body.error).toBe('MCP_OAUTH_SECRET_REENTRY_REQUIRED');
   const saved = await schemas.runAsSystem(() => models.MCPServer.findOne({ serverName }).lean());
   expect(await schemas.decryptV2(saved!.config.oauth!.client_secret!)).toBe(
     'existing-oauth-secret',
@@ -452,3 +452,97 @@ it('preserves unique names and audit events for concurrent creates with the same
     }),
   ).toBe(3);
 });
+
+it.each(['url', 'type', 'authorization_type', 'custom_header'])(
+  'rejects service-key rebinding before inspection: %s',
+  async (field) => {
+    const name = await create();
+    const updated = { ...config, apiKey: { source: 'admin', authorization_type: 'bearer' } };
+    if (field === 'url') Object.assign(updated, { url: 'https://other.example/mcp' });
+    if (field === 'type') Object.assign(updated, { type: 'streamable-http' });
+    if (field === 'authorization_type')
+      Object.assign(updated.apiKey, { authorization_type: 'basic' });
+    if (field === 'custom_header')
+      Object.assign(updated.apiKey, { authorization_type: 'custom', custom_header: 'X-Other' });
+    const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+    jest.mocked(MCPServerInspector.inspect).mockClear();
+    const response = await request(app).patch(`/servers/${name}`).send({ config: updated });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('MCP_API_KEY_REENTRY_REQUIRED');
+    expect(MCPServerInspector.inspect).not.toHaveBeenCalled();
+    const saved = await schemas.runAsSystem(() =>
+      models.MCPServer.findOne({ serverName: name }).lean(),
+    );
+    expect('url' in saved!.config && saved!.config.url).toBe(config.url);
+    expect(response.text).not.toContain(config.apiKey.key);
+  },
+);
+
+it.each(['authorization_url', 'token_url', 'client_id', 'revocation_endpoint'])(
+  'rejects retained OAuth secret rebinding before inspection: %s',
+  async (field) => {
+    const oauth = {
+      client_id: 'client',
+      client_secret: 'oauth-secret',
+      authorization_url: 'https://identity.example/authorize',
+      token_url: 'https://identity.example/token',
+      revocation_endpoint: 'https://identity.example/revoke',
+    };
+    const created = await request(app)
+      .post('/servers')
+      .send({ config: { type: 'sse', url: config.url, title: config.title, oauth } });
+    expect(created.status).toBe(201);
+    const { client_secret: _secret, ...updatedOAuth } = oauth;
+    Object.assign(updatedOAuth, {
+      [field]: field === 'client_id' ? 'other-client' : 'https://other.example/oauth',
+    });
+    const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+    jest.mocked(MCPServerInspector.inspect).mockClear();
+    const response = await request(app)
+      .patch(`/servers/${created.body.serverName}`)
+      .send({ config: { type: 'sse', url: config.url, title: config.title, oauth: updatedOAuth } });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('MCP_OAUTH_SECRET_REENTRY_REQUIRED');
+    expect(MCPServerInspector.inspect).not.toHaveBeenCalled();
+    expect(response.text).not.toContain('oauth-secret');
+  },
+);
+
+it.each(['API key', 'OAuth secret'])(
+  'rejects %s rebinding at the database boundary',
+  async (credential) => {
+    const connection =
+      credential === 'API key'
+        ? config
+        : {
+            type: 'sse',
+            url: config.url,
+            title: config.title,
+            oauth: {
+              client_id: 'client',
+              client_secret: 'secret',
+              authorization_url: 'https://identity.example/authorize',
+              token_url: 'https://identity.example/token',
+            },
+          };
+    const created = await request(app).post('/servers').send({ config: connection });
+    expect(created.status).toBe(201);
+    await schemas.runAsSystem(async () => {
+      const { ServerConfigsDB } = await import('~/mcp/registry/db/ServerConfigsDB');
+      const repository = new ServerConfigsDB(mongoose);
+      const existing = await repository.get(created.body.serverName, actor.id);
+      if (!existing) throw new Error('Missing connection');
+      const updated = { ...existing, url: 'https://other.example/mcp' };
+      if (updated.apiKey) updated.apiKey = { ...updated.apiKey, key: undefined };
+      if (updated.oauth) updated.oauth = { ...updated.oauth, client_secret: undefined };
+      await expect(
+        repository.update(created.body.serverName, updated, actor.id),
+      ).rejects.toMatchObject({
+        code:
+          credential === 'API key'
+            ? 'MCP_API_KEY_REENTRY_REQUIRED'
+            : 'MCP_OAUTH_SECRET_REENTRY_REQUIRED',
+      });
+    });
+  },
+);

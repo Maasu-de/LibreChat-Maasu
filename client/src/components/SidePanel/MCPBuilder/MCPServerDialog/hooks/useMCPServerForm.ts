@@ -255,7 +255,11 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
 
       if (error && typeof error === 'object' && 'response' in error) {
         const axiosError = error as { response?: { data?: { error?: string } } };
-        if (axiosError.response?.data?.error === 'MCP_INSPECTION_FAILED') {
+        if (axiosError.response?.data?.error === 'MCP_API_KEY_REENTRY_REQUIRED') {
+          errorMessage = localize('com_ui_mcp_api_key_reentry_required');
+        } else if (axiosError.response?.data?.error === 'MCP_OAUTH_SECRET_REENTRY_REQUIRED') {
+          errorMessage = localize('com_ui_mcp_oauth_secret_reentry_required');
+        } else if (axiosError.response?.data?.error === 'MCP_INSPECTION_FAILED') {
           errorMessage = localize('com_ui_mcp_server_connection_failed');
         } else if (axiosError.response?.data?.error === 'MCP_DOMAIN_NOT_ALLOWED') {
           errorMessage = localize('com_ui_mcp_domain_not_allowed');

@@ -34,6 +34,7 @@ jest.mock('@librechat/data-schemas', () => {
 
 jest.mock('@librechat/api', () => {
   return {
+    mergeMCPRevocationFailure: jest.requireActual('@librechat/api').mergeMCPRevocationFailure,
     MCPOAuthHandler: {
       revokeOAuthToken: (...args) => mockRevokeOAuthToken(...args),
       generateFlowId: (userId, serverName, tenantId, binding) => {
@@ -173,6 +174,35 @@ describe('maybeUninstallOAuthMCP', () => {
     mockGetGovernanceMCPOAuthBinding.mockReturnValue(undefined);
   });
 
+  test.each([503, 401])(
+    'returns provider HTTP %s separately after local deletion',
+    async (status) => {
+      setupOAuthServerFound();
+      mockGetTokens.mockResolvedValue({
+        access_token: 'private-access',
+        refresh_token: 'private-refresh',
+      });
+      mockDeleteUserTokens.mockResolvedValue(undefined);
+      mockDeleteFlow.mockResolvedValue(true);
+      mockRevokeOAuthToken
+        .mockRejectedValueOnce(
+          Object.assign(new Error('provider echoed private-access'), { status }),
+        )
+        .mockResolvedValueOnce(undefined);
+      const commit = jest.fn(async (operation) => operation({ id: 'session' }));
+      const result = await maybeUninstallOAuthMCP(userId, pluginKey, appConfig, commit);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(mockDeleteUserTokens).toHaveBeenCalled();
+      expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({
+        outcome: 'failure',
+        reason: status === 503 ? 'provider_unavailable' : 'provider_rejected',
+        http_status: status,
+      });
+      expect(JSON.stringify(result)).not.toContain('private-access');
+    },
+  );
+
   test('uses the current connection binding for revocation and cached token cleanup', async () => {
     setupOAuthServerFound();
     const binding = 'current-connection-binding';
@@ -233,7 +263,7 @@ describe('maybeUninstallOAuthMCP', () => {
         expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
         expect(mockDeleteUserTokens).not.toHaveBeenCalled();
       } else {
-        await expect(result).resolves.toBeUndefined();
+        await expect(result).resolves.toEqual({ outcome: 'success' });
         expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(2);
         expect(mockDeleteTokens).toHaveBeenCalledWith(expect.objectContaining({ userId }), session);
       }
@@ -318,7 +348,9 @@ describe('maybeUninstallOAuthMCP', () => {
     mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
 
     try {
-      await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toBeUndefined();
+      await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toMatchObject({
+        outcome: 'failure',
+      });
       expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(1);
       expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
       expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
@@ -428,7 +460,9 @@ describe('maybeUninstallOAuthMCP', () => {
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(undefined);
 
-    await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toBeUndefined();
+    await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toMatchObject({
+      outcome: 'failure',
+    });
 
     expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
@@ -445,7 +479,9 @@ describe('maybeUninstallOAuthMCP', () => {
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(undefined);
 
-    await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toBeUndefined();
+    await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toMatchObject({
+      outcome: 'failure',
+    });
 
     expect(mockRevokeOAuthToken).not.toHaveBeenCalled();
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
@@ -481,7 +517,9 @@ describe('maybeUninstallOAuthMCP', () => {
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(undefined);
 
-    await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toBeUndefined();
+    await expect(maybeUninstallOAuthMCP(userId, pluginKey, appConfig)).resolves.toMatchObject({
+      outcome: 'failure',
+    });
 
     expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(2);
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);

@@ -10,7 +10,11 @@ import type { ParsedServerConfig, ToolDiscoveryResult } from '~/mcp/types';
 import type { RequestHandler, Response } from 'express';
 import type { ClientSession } from 'mongoose';
 import type { ServerRequest } from '~/types/http';
-import type { MCPOptions, MCPServerUserInput } from 'librechat-data-provider';
+import type {
+  MCPProviderRevocation,
+  MCPOptions,
+  MCPServerUserInput,
+} from 'librechat-data-provider';
 import { isGovernancePilotEnabled } from './mode';
 import {
   isGovernanceMCPAuditConfigured,
@@ -28,6 +32,8 @@ import {
   claimGovernanceMCPOAuthGeneration,
   advanceGovernanceMCPOAuthGeneration,
 } from './oauth';
+
+import { requireApiKeyReentryForRebinding, prepareOAuthSecretReuse } from '~/mcp/registry/binding';
 
 const routingQueryParameters = new Set(['tenant', 'api-version', 'toolset']);
 
@@ -96,6 +102,10 @@ export function preserveGovernanceMCPSecrets(
   existing?: ParsedServerConfig,
 ): ParsedServerConfig {
   if (!isGovernancePilotEnabled()) return config;
+  if (existing) {
+    requireApiKeyReentryForRebinding(existing, config);
+    config = prepareOAuthSecretReuse(existing, config);
+  }
   return {
     ...config,
     ...(config.apiKey?.source === 'admin' &&
@@ -181,7 +191,7 @@ interface GovernanceMCPDependencies {
     pluginKey: string,
     appConfig?: AppConfig,
     commitTokenDeletion?: (operation: (session?: ClientSession) => Promise<void>) => Promise<void>,
-  ) => Promise<void>;
+  ) => Promise<MCPProviderRevocation | void>;
 }
 
 export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
@@ -232,6 +242,7 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
     const { serverName } = req.params;
     let config: ParsedServerConfig | undefined;
     let revocationCommitted = false;
+    let provider: MCPProviderRevocation = { outcome: 'failure', reason: 'not_attempted' };
     try {
       config = await deps.getRegistry().getServerConfig(serverName, request.user?.id);
       if (!config?.dbId || !request.user?.id) {
@@ -242,38 +253,69 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
       const connectionId = config.dbId;
       if (isGovernancePilotEnabled()) {
         await getGovernanceMCPOAuthGeneration(userId, connectionId);
-        await deps.revoke(
-          userId,
-          `${Constants.mcp_prefix}${serverName}`,
-          request.config,
-          async (operation) => {
-            await mutateGovernanceMCP(
-              request,
-              'mcp.oauth.revoked',
-              async (session) => {
-                if (!session) throw new Error('MCP OAuth revocation requires a transaction');
-                await advanceGovernanceMCPOAuthGeneration(userId, connectionId, session);
-                await deps.getManager().disconnectUserConnection(userId, serverName);
-                await operation(session);
-              },
-              connectionId,
-            );
-            revocationCommitted = true;
-          },
+        provider =
+          (await deps.revoke(
+            userId,
+            `${Constants.mcp_prefix}${serverName}`,
+            request.config,
+            async (operation) => {
+              await mutateGovernanceMCP(
+                request,
+                'mcp.oauth.disconnected_locally',
+                async (session) => {
+                  if (!session) throw new Error('MCP OAuth revocation requires a transaction');
+                  await advanceGovernanceMCPOAuthGeneration(userId, connectionId, session);
+                  await deps.getManager().disconnectUserConnection(userId, serverName);
+                  await operation(session);
+                },
+                connectionId,
+              );
+              revocationCommitted = true;
+            },
+          )) ?? provider;
+        await queueGovernanceMCPAudit(
+          request,
+          'mcp.oauth.provider_revocation',
+          connectionId,
+          provider.outcome,
+          undefined,
+          provider,
         );
       } else {
         await deps.revoke(userId, `${Constants.mcp_prefix}${serverName}`, request.config);
         await deps.getManager().disconnectUserConnection(userId, serverName);
       }
-      res.json({ success: true });
+      res.json({
+        success: !isGovernancePilotEnabled() || provider.outcome === 'success',
+        ...(isGovernancePilotEnabled()
+          ? {
+              local_disconnection: { outcome: 'success' },
+              provider_revocation: provider,
+            }
+          : {}),
+      });
     } catch {
       if (revocationCommitted) {
         logger.warn('[Governance MCP] Provider revocation cleanup remains pending');
-        res.json({ success: true });
+        res.status(503).json({
+          success: false,
+          local_disconnection: { outcome: 'success' },
+          provider_revocation: provider,
+          message: 'Provider revocation audit could not be recorded',
+        });
         return;
       }
-      await recordGovernanceMCPFailure(request, 'mcp.oauth.revoked', config?.dbId);
-      res.status(500).json({ message: 'MCP OAuth revocation failed' });
+      await recordGovernanceMCPFailure(request, 'mcp.oauth.disconnected_locally', config?.dbId);
+      res.status(500).json({
+        message: 'MCP OAuth revocation failed',
+        ...(isGovernancePilotEnabled()
+          ? {
+              success: false,
+              local_disconnection: { outcome: 'failure' },
+              provider_revocation: provider,
+            }
+          : {}),
+      });
     }
   };
   return { inspect, revoke };

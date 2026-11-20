@@ -180,7 +180,11 @@ async function revoke() {
   app.post('/:serverName/revoke', handlers.revoke);
   const response = await request(app).post(`/${serverName}/revoke`);
   expect(response.status).toBe(200);
-  expect(response.body).toEqual({ success: true });
+  expect(response.body).toEqual({
+    success: false,
+    local_disconnection: { outcome: 'success' },
+    provider_revocation: { outcome: 'failure', reason: 'not_attempted' },
+  });
 }
 
 it.each(['load', 'silent'] as const)(
