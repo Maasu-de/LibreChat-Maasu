@@ -4,6 +4,7 @@
 import axios from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 import { setTokenHeader } from '../src/headers-helpers';
+import * as frame from '../src/frame';
 
 /**
  * The response interceptor in request.ts registers at import time when
@@ -681,6 +682,19 @@ describe('axios 401 interceptor — governance SSO gateway', () => {
       expect(mockAdapter.mock.calls[0][0].url).toBe(url);
     },
   );
+
+  it('uses top-level sign-in when the embedded MCP session watcher expires', async () => {
+    setTokenHeader('valid-token');
+    const reload = trackReloads();
+    const redirect = jest.spyOn(frame, 'redirectMCPFrameToLogin').mockReturnValue(true);
+    mockAdapter.mockImplementation(createGatewaySessionEndedError);
+
+    await axios.get('/_sso/session').catch(() => undefined);
+
+    expect(redirect).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(0);
+  });
 
   it('reloads when the session watcher finds the session ended', async () => {
     expect.assertions(2);

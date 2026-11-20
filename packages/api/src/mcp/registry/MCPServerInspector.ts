@@ -11,6 +11,12 @@ import {
 } from '~/mcp/utils';
 import { isMCPDomainAllowed, extractMCPServerDomain } from '~/auth/domain';
 import { MCPConnectionFactory } from '~/mcp/MCPConnectionFactory';
+import { isCompleteMCPToolList } from '~/mcp/connection';
+import {
+  governanceToolDefinition,
+  observedMCPConfig,
+  publishMCPGovernance,
+} from '~/mcp/governance';
 import { MCPDomainNotAllowedError } from '~/mcp/errors';
 import { detectOAuthRequirement } from '~/mcp/oauth';
 import { isEnabled } from '~/utils';
@@ -55,6 +61,10 @@ export class MCPServerInspector {
 
     const useSSRFProtection = !Array.isArray(allowedDomains) || allowedDomains.length === 0;
     const start = Date.now();
+    delete (rawConfig as t.ParsedServerConfig).toolDefinitions;
+    if (rawConfig.serverInstructions === true) {
+      (rawConfig as t.ParsedServerConfig).remoteServerInstructions = true;
+    }
     const inspector = new MCPServerInspector(
       serverName,
       rawConfig,
@@ -142,7 +152,7 @@ export class MCPServerInspector {
   }
 
   private async fetchServerInstructions(): Promise<void> {
-    if (isEnabled(this.config.serverInstructions)) {
+    if (this.config.remoteServerInstructions || isEnabled(this.config.serverInstructions)) {
       this.config.serverInstructions = this.connection!.client.getInstructions();
     }
   }
@@ -150,29 +160,18 @@ export class MCPServerInspector {
   private async fetchServerCapabilities(): Promise<void> {
     const capabilities = this.connection!.client.getServerCapabilities();
     this.config.capabilities = JSON.stringify(capabilities);
-    const tools = await this.connection!.fetchTools();
-    this.config.tools = tools.map((tool) => tool.name).join(', ');
   }
 
   private async fetchToolFunctions(): Promise<void> {
-    this.config.toolFunctions = await MCPServerInspector.getToolFunctions(
-      this.serverName,
-      this.connection!,
-    );
+    delete this.config.toolDefinitions;
+    const tools = await this.connection!.fetchTools();
+    if (isCompleteMCPToolList(tools))
+      this.config.toolDefinitions = tools.map(governanceToolDefinition);
+    this.config.tools = tools.map((tool) => tool.name).join(', ');
+    this.config.toolFunctions = MCPServerInspector.formatToolFunctions(this.serverName, tools);
   }
 
-  /**
-   * Converts server tools to LibreChat-compatible tool functions format.
-   * @param serverName - The name of the server
-   * @param connection - The MCP connection
-   * @returns Tool functions formatted for LibreChat
-   */
-  public static async getToolFunctions(
-    serverName: string,
-    connection: MCPConnection,
-  ): Promise<t.LCAvailableTools> {
-    const tools = await connection.fetchTools();
-
+  private static formatToolFunctions(serverName: string, tools: t.MCPTool[]): t.LCAvailableTools {
     const toolFunctions: t.LCAvailableTools = {};
     tools.forEach((tool) => {
       const name = `${tool.name}${Constants.mcp_delimiter}${serverName}`;
@@ -187,5 +186,18 @@ export class MCPServerInspector {
     });
 
     return toolFunctions;
+  }
+
+  public static async getToolFunctions(
+    serverName: string,
+    connection: MCPConnection,
+    config?: t.ParsedServerConfig,
+    userId?: string,
+  ): Promise<t.LCAvailableTools> {
+    const tools = await connection.fetchTools();
+    if (config && isCompleteMCPToolList(tools)) {
+      await publishMCPGovernance(serverName, observedMCPConfig(config, connection), tools, userId);
+    }
+    return this.formatToolFunctions(serverName, tools);
   }
 }

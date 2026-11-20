@@ -13,6 +13,14 @@ export type GroupMutationAction =
   | 'membership.added'
   | 'membership.removed';
 
+export type MCPAuditAction =
+  | 'mcp.created'
+  | 'mcp.updated'
+  | 'mcp.deleted'
+  | 'mcp.inspected'
+  | 'mcp.oauth.authorized'
+  | 'mcp.oauth.revoked';
+
 interface GroupAuditDelivery {
   _id: string;
   createdAt: Date;
@@ -26,10 +34,12 @@ interface GroupAuditDelivery {
   payload: {
     mutation_id: string;
     occurred_at: string;
-    action: GroupMutationAction;
-    outcome: 'success';
+    action: GroupMutationAction | MCPAuditAction;
+    outcome: 'success' | 'failure';
     actor: { issuer: string; user_id: string };
-    resource: { type: 'group'; id: string; affected_user_id?: string };
+    resource:
+      | { type: 'group'; id: string; affected_user_id?: string }
+      | { type: 'mcp_connection'; id: string };
   };
 }
 
@@ -38,8 +48,9 @@ function outbox() {
   return mongoose.connection.db.collection<GroupAuditDelivery>('governance_group_audit_outbox');
 }
 
-function getGovernanceGroupAuditUrl(): string | undefined {
-  const explicit = process.env.GOVERNANCE_AUDIT_URL?.trim();
+function getGovernanceAuditUrl(kind: 'group' | 'mcp' = 'group'): string | undefined {
+  const explicit =
+    process.env[kind === 'mcp' ? 'GOVERNANCE_MCP_AUDIT_URL' : 'GOVERNANCE_AUDIT_URL']?.trim();
   const configured = explicit || process.env.GOVERNANCE_API_BASE_URL?.trim();
   if (!configured) return;
   try {
@@ -55,7 +66,7 @@ function getGovernanceGroupAuditUrl(): string | undefined {
     if (!explicit) {
       const path = url.pathname.replace(/\/+$/, '');
       if (!path.endsWith('/v1')) return;
-      url.pathname = path.replace(/\/v1$/, '/api/v1/internal/group-audit');
+      url.pathname = path.replace(/\/v1$/, `/api/v1/internal/${kind}-audit`);
     }
     return url.href;
   } catch {
@@ -67,12 +78,131 @@ export function isGovernanceGroupAuditConfigured(req: ServerRequest): boolean {
   return (
     !isGovernancePilotEnabled() ||
     Boolean(
-      getGovernanceGroupAuditUrl() &&
+      getGovernanceAuditUrl() &&
         process.env.LIBRECHAT_SERVICE_CREDENTIAL &&
         req.user?.openidIssuer &&
         req.user.openidId,
     )
   );
+}
+
+export function isGovernanceMCPAuditConfigured(req: ServerRequest): boolean {
+  return (
+    !isGovernancePilotEnabled() ||
+    Boolean(
+      getGovernanceAuditUrl('mcp') &&
+        process.env.LIBRECHAT_SERVICE_CREDENTIAL &&
+        req.user?.openidIssuer &&
+        req.user.openidId,
+    )
+  );
+}
+
+export async function queueGovernanceMCPAudit(
+  req: ServerRequest,
+  action: MCPAuditAction,
+  connectionId: string,
+  outcome: 'success' | 'failure' = 'success',
+  session?: ClientSession,
+): Promise<void> {
+  if (!isGovernancePilotEnabled()) return;
+  const actor = req.user;
+  if (!isGovernanceMCPAuditConfigured(req) || !actor?.openidIssuer || !actor.openidId) {
+    throw new Error('Governance MCP audit is not configured');
+  }
+  if (!/^[a-fA-F0-9]{24}$/.test(connectionId)) {
+    throw new Error('Invalid MCP connection identifier');
+  }
+  const occurredAt = new Date();
+  const id = randomUUID();
+  await outbox().insertOne(
+    {
+      _id: id,
+      createdAt: occurredAt,
+      status: 'pending',
+      retryCount: 0,
+      nextAttemptAt: occurredAt,
+      payload: {
+        mutation_id: id,
+        occurred_at: occurredAt.toISOString(),
+        action,
+        outcome,
+        actor: { issuer: actor.openidIssuer, user_id: actor.openidId },
+        resource: { type: 'mcp_connection', id: connectionId },
+      },
+    },
+    { session },
+  );
+}
+
+export type GovernanceMCPMutation = <T>(
+  operation: (session?: ClientSession) => Promise<T>,
+  connectionId: string | ((result: T) => string),
+) => Promise<T>;
+
+/** Commit connection state and its durable audit delivery in the same transaction. */
+export async function mutateGovernanceMCP<T>(
+  req: ServerRequest,
+  action: MCPAuditAction,
+  operation: (session?: ClientSession) => Promise<T>,
+  connectionId: string | ((result: T) => string),
+): Promise<T> {
+  if (!isGovernancePilotEnabled()) return operation();
+  if (!isGovernanceMCPAuditConfigured(req)) {
+    throw new Error('Governance MCP audit is not configured');
+  }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const session = await mongoose.startSession();
+    try {
+      return await session.withTransaction(
+        async () => {
+          const result = await operation(session);
+          const id = typeof connectionId === 'function' ? connectionId(result) : connectionId;
+          await queueGovernanceMCPAudit(req, action, id, 'success', session);
+          return result;
+        },
+        { writeConcern: { w: 'majority' } },
+      );
+    } catch (error) {
+      if (
+        action !== 'mcp.created' ||
+        !(error instanceof mongoose.mongo.MongoServerError) ||
+        error.code !== 11000 ||
+        error.keyPattern?.serverName !== 1 ||
+        attempt === 4
+      )
+        throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+  throw new Error('MCP connection creation could not be completed');
+}
+
+export function createGovernanceMCPMutation(
+  req: ServerRequest,
+  action: MCPAuditAction,
+): GovernanceMCPMutation | undefined {
+  if (!isGovernancePilotEnabled()) return;
+  return (operation, connectionId) => mutateGovernanceMCP(req, action, operation, connectionId);
+}
+
+/** Failed creations use an opaque attempt reference because no connection was persisted. */
+export async function recordGovernanceMCPFailure(
+  req: ServerRequest,
+  action: MCPAuditAction,
+  connectionId?: string,
+): Promise<void> {
+  if (!isGovernancePilotEnabled()) return;
+  try {
+    const reference =
+      connectionId ??
+      (action === 'mcp.created' ? new mongoose.Types.ObjectId().toHexString() : undefined);
+    if (!reference) return;
+    await queueGovernanceMCPAudit(req, action, reference, 'failure');
+  } catch {
+    logger.warn('[Governance MCP] Failed operation could not be recorded');
+  }
 }
 
 export function groupSessionArgs(session?: ClientSession): [] | [ClientSession] {
@@ -153,9 +283,13 @@ const LEASE_MS = 30000;
 let lastQuarantineAlert = 0;
 
 async function deliverPendingAudit(): Promise<void> {
-  const endpoint = getGovernanceGroupAuditUrl();
   const credential = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
-  if (!endpoint || !credential || mongoose.connection.readyState !== 1) return;
+  if (
+    (!getGovernanceAuditUrl() && !getGovernanceAuditUrl('mcp')) ||
+    !credential ||
+    mongoose.connection.readyState !== 1
+  )
+    return;
   for (let i = 0; i < 100; i++) {
     const now = new Date();
     const leaseId = randomUUID();
@@ -174,6 +308,10 @@ async function deliverPendingAudit(): Promise<void> {
     const filter = { _id: record._id, leaseId };
     let status: number | undefined;
     try {
+      const endpoint = getGovernanceAuditUrl(
+        record.payload.resource.type === 'mcp_connection' ? 'mcp' : 'group',
+      );
+      if (!endpoint) throw new Error('Governance audit endpoint unavailable');
       const response = await fetch(endpoint, {
         method: 'POST',
         signal: AbortSignal.timeout(5000),

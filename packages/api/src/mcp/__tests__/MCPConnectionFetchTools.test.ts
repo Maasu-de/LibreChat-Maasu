@@ -9,7 +9,7 @@
  */
 
 import { logger } from '@librechat/data-schemas';
-import { MCPConnection } from '~/mcp/connection';
+import { MCPConnection, isCompleteMCPToolList } from '~/mcp/connection';
 import { mcpConfig } from '~/mcp/mcpConfig';
 
 jest.mock('@librechat/data-schemas', () => ({
@@ -74,6 +74,16 @@ function expectListToolsCall(
 }
 
 describe('MCPConnection.fetchTools pagination', () => {
+  it('identifies successful empty discovery and rejects failed or incomplete lists', async () => {
+    const empty = createConnectionWithListTools(jest.fn().mockResolvedValue({ tools: [] }));
+    expect(isCompleteMCPToolList(await empty.fetchTools())).toBe(true);
+    const failed = createConnectionWithListTools(jest.fn().mockRejectedValue(new Error('offline')));
+    expect(isCompleteMCPToolList(await failed.fetchTools())).toBe(false);
+    const incomplete = createConnectionWithListTools(
+      jest.fn().mockResolvedValue({ tools: [makeTool('a')], nextCursor: 'repeated' }),
+    );
+    expect(isCompleteMCPToolList(await incomplete.fetchTools())).toBe(false);
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mcpConfig.TOOLS_LIST_MAX_TOOLS = 1000;
@@ -88,6 +98,7 @@ describe('MCPConnection.fetchTools pagination', () => {
     const tools = await conn.fetchTools();
 
     expect(tools.map((t) => t.name)).toEqual(['a', 'b']);
+    expect(isCompleteMCPToolList(tools)).toBe(true);
     expect(listTools).toHaveBeenCalledTimes(1);
     expectListToolsCall(listTools, 1, undefined);
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -131,6 +142,7 @@ describe('MCPConnection.fetchTools pagination', () => {
     // mcpConfig.TOOLS_LIST_MAX_PAGES is mocked to 3.
     expect(listTools).toHaveBeenCalledTimes(3);
     expect(tools.map((t) => t.name)).toEqual(['t1', 't2', 't3']);
+    expect(isCompleteMCPToolList(tools)).toBe(false);
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('pagination limit'));
   });
 

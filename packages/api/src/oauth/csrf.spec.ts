@@ -1,4 +1,12 @@
-import { shouldUseSecureCookie } from './csrf';
+import express from 'express';
+import request from 'supertest';
+import {
+  shouldUseSecureCookie,
+  setOAuthCsrfCookie,
+  setOAuthSessionCookie,
+  validateOAuthCsrf,
+  validateOAuthSession,
+} from './csrf';
 
 describe('shouldUseSecureCookie', () => {
   const originalEnv = process.env;
@@ -124,5 +132,62 @@ describe('shouldUseSecureCookie', () => {
       process.env.DOMAIN_SERVER = 'http://LOCALHOST:3080';
       expect(shouldUseSecureCookie()).toBe(false);
     });
+  });
+});
+
+describe('OAuth cookie paths', () => {
+  const originalEnv = process.env;
+  const userId = 'administrator';
+  const flowId = `${userId}:remote`;
+
+  beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      JWT_SECRET: 'test-oauth-secret',
+      SESSION_COOKIE_SECURE: 'false',
+    };
+    delete process.env.DOMAIN_CLIENT;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it.each([
+    [undefined, ''],
+    ['https://chat.example/', ''],
+    ['https://chat.example/chat', '/chat'],
+    ['https://chat.example/chat/', '/chat'],
+  ])('sends and clears browser-binding cookies with DOMAIN_CLIENT=%s', async (domain, basePath) => {
+    if (domain) process.env.DOMAIN_CLIENT = domain;
+    const server = express();
+    const path = `${basePath}/api/mcp`;
+    server.use((req, _res, next) => {
+      req.cookies = Object.fromEntries(
+        (req.headers.cookie ?? '')
+          .split(';')
+          .filter(Boolean)
+          .map((cookie) => cookie.trim().split('=')),
+      );
+      next();
+    });
+    server.get(`${path}/bind`, (_req, res) => {
+      setOAuthCsrfCookie(res, flowId, '/api/mcp');
+      setOAuthSessionCookie(res, userId);
+      res.sendStatus(204);
+    });
+    server.get(`${path}/callback`, (req, res) => {
+      res.json({
+        csrf: validateOAuthCsrf(req, res, flowId, '/api/mcp'),
+        session: validateOAuthSession(req, userId),
+      });
+    });
+
+    const browser = request.agent(server);
+    await browser.get(`${path}/bind`).expect(204);
+    const callback = await browser.get(`${path}/callback`).expect(200);
+    expect(callback.body).toEqual({ csrf: true, session: true });
+    const replay = await browser.get(`${path}/callback`).expect(200);
+    expect(replay.body).toEqual({ csrf: false, session: true });
   });
 });

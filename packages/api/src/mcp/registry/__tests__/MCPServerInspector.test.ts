@@ -42,6 +42,7 @@ describe('MCPServerInspector', () => {
         command: 'node',
         args: ['server.js'],
         serverInstructions: 'instructions for test_server',
+        remoteServerInstructions: true,
         requiresOAuth: false,
         capabilities:
           '{"tools":{"listChanged":true},"resources":{"listChanged":true},"prompts":{"get":"getPrompts for test_server"}}',
@@ -424,6 +425,7 @@ describe('MCPServerInspector', () => {
 
       // Verify result is correct
       expect(result).toEqual({
+        remoteServerInstructions: true,
         type: 'stdio',
         command: 'node',
         args: ['server.js'],

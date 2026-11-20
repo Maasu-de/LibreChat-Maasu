@@ -1,3 +1,4 @@
+import { isGovernanceMCPApi } from './mcp';
 import { Constants, isEphemeralAgentId } from 'librechat-data-provider';
 import type { IUser, IMessage } from '@librechat/data-schemas';
 import type { RequestHandler, Response } from 'express';
@@ -134,6 +135,10 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
       return;
     }
   }
+  if (isGovernanceMCPApi(req.method, path)) {
+    next();
+    return;
+  }
   const readOnly = req.method === 'GET' || req.method === 'HEAD';
   if (readOnly && path === '/agents/categories') {
     next();
@@ -216,6 +221,7 @@ export const enforceGovernancePilot: RequestHandler = (req, res, next) => {
     /^\/(agents|assistants|actions|keys|api-keys|mcp|memories|skills|presets|chat)(\/|$)/.test(
       path,
     ) ||
+    /^\/permissions\/mcpserver(?:\/|$)/.test(path) ||
     (/^\/user\/(plugins|settings\/skills\/active)$/.test(path) && !readOnly) ||
     (/^\/admin\/(config|skills)(\/|$)/.test(path) && !readOnly) ||
     (/^\/files(\/|$)/.test(path) && !readOnly && !isGovernanceAttachmentsEnabled()) ||

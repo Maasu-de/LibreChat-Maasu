@@ -19,6 +19,7 @@ export * from './mcp/zod';
 export * from './mcp/errors';
 export * from './mcp/cache';
 export * from './mcp/tools';
+export * from './mcp/governance';
 export * from './mcp/request';
 /* Utilities */
 export * from './mcp/utils';
@@ -59,9 +60,21 @@ export * from './governance/budgets';
 export * from './governance/mode';
 export * from './governance/config';
 export * from './governance/pilot';
+export * from './governance/mcp';
+export * from './governance/oauth';
+export {
+  isGovernanceMCPAuditConfigured,
+  queueGovernanceMCPAudit,
+  mutateGovernanceMCP,
+  createGovernanceMCPMutation,
+  recordGovernanceMCPFailure,
+} from './governance/audit';
 export { getGovernanceAgentRestoreError } from './governance/agents';
 export * from './governance/groups';
-export { getGovernanceGroupCapabilities } from './governance/authorization';
+export {
+  getGovernanceGroupCapabilities,
+  getGovernanceMCPOAuthBinding,
+} from './governance/authorization';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';
 export { createReviewEvent, createApprovalRetryEvent } from './governance/review';
 /* Files */

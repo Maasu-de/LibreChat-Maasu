@@ -3,6 +3,10 @@ const { logger, getTenantId } = require('@librechat/data-schemas');
 const { Providers, Constants: AgentConstants } = require('@librechat/agents');
 const {
   sendEvent,
+  isGovernancePilotEnabled,
+  isGovernanceRemoteMCP,
+  getGovernanceMCPOAuthBinding,
+  isGovernanceMCPOAuthAuthorized,
   PENDING_STALE_MS,
   MCPOAuthHandler,
   isMCPDomainAllowed,
@@ -53,6 +57,7 @@ const missingToolCache = new Map();
 const MISSING_TOOL_TTL_MS = 10_000;
 
 async function userCanUseMCPServers(user, req) {
+  if (isGovernancePilotEnabled()) return false;
   if (!user?.id || !user?.role) {
     return false;
   }
@@ -95,7 +100,10 @@ function evictStale(map, ttl) {
 const unavailableMsg =
   "This tool's MCP server is temporarily unavailable. Please try again shortly.";
 
-function getOAuthFlowId(userId, serverName, tenantId = getTenantId()) {
+function getOAuthFlowId(userId, serverName, tenantId = getTenantId(), binding) {
+  if (binding) {
+    return MCPOAuthHandler.generateFlowId(userId, serverName, tenantId, binding);
+  }
   if (!tenantId) {
     return MCPOAuthHandler.generateFlowId(userId, serverName);
   }
@@ -118,6 +126,7 @@ async function getAppConfigForUser(userId, user) {
  * @returns {Promise<Record<string, import('@librechat/api').ParsedServerConfig>>}
  */
 async function resolveConfigServers(req) {
+  if (isGovernancePilotEnabled()) return {};
   try {
     const registry = getMCPServersRegistry();
     const appConfig = await getAppConfigForRequest(req);
@@ -152,6 +161,12 @@ async function resolveMcpConfigNames(req) {
  */
 async function resolveAllMcpConfigs(userId, user) {
   const registry = getMCPServersRegistry();
+  if (isGovernancePilotEnabled()) {
+    const configs = await registry.getAllServerConfigs(userId, undefined, user?.role);
+    return Object.fromEntries(
+      Object.entries(configs).filter(([, config]) => config.dbId && isGovernanceRemoteMCP(config)),
+    );
+  }
   const appConfig = await getAppConfigForUser(userId, user);
   let configServers = {};
   try {
@@ -903,22 +918,30 @@ function createToolInstance({
 async function getMCPSetupData(userId, options = {}) {
   const registry = getMCPServersRegistry();
   const { role, tenantId } = options;
+  const governed = isGovernancePilotEnabled();
 
-  const appConfig = await getAppConfig({ role, tenantId, userId });
-  const configServers = await registry.ensureConfigServers(appConfig?.mcpConfig || {});
-  const mcpConfig = role
-    ? await registry.getAllServerConfigs(userId, configServers, role)
-    : await registry.getAllServerConfigs(userId, configServers);
+  let mcpConfig;
+  if (governed) {
+    mcpConfig = await resolveAllMcpConfigs(userId, { role });
+  } else {
+    const appConfig = await getAppConfig({ role, tenantId, userId });
+    const configServers = await registry.ensureConfigServers(appConfig?.mcpConfig || {});
+    mcpConfig = role
+      ? await registry.getAllServerConfigs(userId, configServers, role)
+      : await registry.getAllServerConfigs(userId, configServers);
+  }
   const mcpManager = getMCPManager(userId);
   /** @type {Map<string, import('@librechat/api').MCPConnection>} */
   let appConnections = new Map();
-  try {
-    // Use getLoaded() instead of getAll() to avoid forcing connection creation.
-    // getAll() creates connections for all servers, which is problematic for servers
-    // that require user context (e.g., those with {{LIBRECHAT_USER_ID}} placeholders).
-    appConnections = (await mcpManager.appConnections?.getLoaded()) || new Map();
-  } catch (error) {
-    logger.error(`[MCP][User: ${userId}] Error getting app connections:`, error);
+  if (!governed) {
+    try {
+      // Use getLoaded() instead of getAll() to avoid forcing connection creation.
+      // getAll() creates connections for all servers, which is problematic for servers
+      // that require user context (e.g., those with {{LIBRECHAT_USER_ID}} placeholders).
+      appConnections = (await mcpManager.appConnections?.getLoaded()) || new Map();
+    } catch (error) {
+      logger.error(`[MCP][User: ${userId}] Error getting app connections:`, error);
+    }
   }
   const userConnections = mcpManager.getUserConnections(userId) || new Map();
   const oauthServers = new Set(
@@ -940,12 +963,13 @@ async function getMCPSetupData(userId, options = {}) {
  * @param {string} userId - The user ID
  * @param {string} serverName - The server name
  * @param {string} [tenantId] - The tenant ID for the current request.
+ * @param {string} [binding] - The current governed connection's authorization binding.
  * @returns {Object} Object containing hasActiveFlow and hasFailedFlow flags
  */
-async function checkOAuthFlowStatus(userId, serverName, tenantId = getTenantId()) {
+async function checkOAuthFlowStatus(userId, serverName, tenantId = getTenantId(), binding) {
   const flowsCache = getLogStores(CacheKeys.FLOWS);
   const flowManager = getFlowStateManager(flowsCache);
-  const flowId = getOAuthFlowId(userId, serverName, tenantId);
+  const flowId = getOAuthFlowId(userId, serverName, tenantId, binding);
 
   try {
     const flowState = await flowManager.getFlowState(flowId, 'mcp_oauth');
@@ -1019,19 +1043,38 @@ async function getServerConnectionStatus(
   const connection = appConnections.get(serverName) || userConnections.get(serverName);
   const isStaleOrDoNotExist = connection ? connection?.isStale(config.updatedAt) : true;
 
-  const baseConnectionState = isStaleOrDoNotExist
+  let baseConnectionState = isStaleOrDoNotExist
     ? 'disconnected'
     : connection?.connectionState || 'disconnected';
+  const authorizationComplete =
+    isGovernancePilotEnabled() && oauthServers.has(serverName) && config.dbId
+      ? await isGovernanceMCPOAuthAuthorized(
+          userId,
+          config.dbId,
+          getGovernanceMCPOAuthBinding(config),
+        )
+      : undefined;
+  if (authorizationComplete === false) baseConnectionState = 'disconnected';
   let finalConnectionState = baseConnectionState;
 
   // connection state overrides specific to OAuth servers
-  if (baseConnectionState === 'disconnected' && oauthServers.has(serverName)) {
+  if (
+    baseConnectionState === 'disconnected' &&
+    oauthServers.has(serverName) &&
+    !authorizationComplete
+  ) {
     // check if server is actively being reconnected
     const oauthReconnectionManager = getOAuthReconnectionManager();
     if (oauthReconnectionManager.isReconnecting(userId, serverName)) {
       finalConnectionState = 'connecting';
     } else {
-      const { hasActiveFlow, hasFailedFlow } = await checkOAuthFlowStatus(userId, serverName);
+      const binding = getGovernanceMCPOAuthBinding(config);
+      const { hasActiveFlow, hasFailedFlow } = await checkOAuthFlowStatus(
+        userId,
+        serverName,
+        getTenantId(),
+        binding,
+      );
 
       if (hasFailedFlow) {
         finalConnectionState = 'error';
@@ -1044,6 +1087,7 @@ async function getServerConnectionStatus(
   return {
     requiresOAuth: oauthServers.has(serverName),
     connectionState: finalConnectionState,
+    ...(authorizationComplete != null ? { authorizationComplete } : {}),
   };
 }
 

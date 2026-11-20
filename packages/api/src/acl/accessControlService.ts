@@ -304,9 +304,11 @@ export class AccessControlService {
   public async removeAllPermissions({
     resourceType,
     resourceId,
+    session,
   }: {
     resourceType: ResourceType;
     resourceId: string | Types.ObjectId;
+    session?: ClientSession;
   }): Promise<DeleteResult> {
     try {
       this.validateResourceType(resourceType);
@@ -315,10 +317,13 @@ export class AccessControlService {
         throw new Error(`Invalid resource ID: ${resourceId}`);
       }
 
-      const result = await this._dbMethods.deleteAclEntries({
-        resourceType,
-        resourceId,
-      });
+      const result = await this._dbMethods.deleteAclEntries(
+        {
+          resourceType,
+          resourceId,
+        },
+        { session },
+      );
 
       return result;
     } catch (error) {

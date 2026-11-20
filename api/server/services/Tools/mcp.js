@@ -1,5 +1,13 @@
 const { logger } = require('@librechat/data-schemas');
-const { getMissingCustomUserVars, requiresEphemeralUserConnection } = require('@librechat/api');
+const {
+  getMissingCustomUserVars,
+  requiresEphemeralUserConnection,
+  isCompleteMCPToolList,
+  publishMCPGovernance,
+  observedMCPConfig,
+  sanitizeMCPErrorForLogging,
+  isGovernancePilotEnabled,
+} = require('@librechat/api');
 const { CacheKeys, Constants } = require('librechat-data-provider');
 const { getMCPManager, getMCPServersRegistry, getFlowStateManager } = require('~/config');
 const { findToken, createToken, updateToken, deleteTokens } = require('~/models');
@@ -79,12 +87,13 @@ async function reinitMCPServer({
         );
         try {
           const storageLocation = serverConfig.source === 'user' ? 'DB' : 'CACHE';
-          await registry.reinspectServer(serverName, storageLocation, user?.id);
+          serverConfig = (await registry.reinspectServer(serverName, storageLocation, user?.id))
+            .config;
           logger.info(`[MCP Reinitialize] Reinspection succeeded for server: ${serverName}`);
         } catch (reinspectError) {
           logger.error(
             `[MCP Reinitialize] Reinspection failed for server ${serverName}:`,
-            reinspectError,
+            sanitizeMCPErrorForLogging(reinspectError),
           );
           return {
             availableTools: null,
@@ -156,7 +165,9 @@ async function reinitMCPServer({
 
       logger.info(`[MCP Reinitialize] Successfully established connection for ${serverName}`);
     } catch (err) {
-      logger.info(`[MCP Reinitialize] getConnection threw error: ${err.message}`);
+      logger.info(
+        `[MCP Reinitialize] getConnection threw error: ${sanitizeMCPErrorForLogging(err.message)}`,
+      );
       logger.info(
         `[MCP Reinitialize] OAuth state - oauthRequired: ${oauthRequired}, oauthUrl: ${oauthUrl ? 'present' : 'null'}`,
       );
@@ -191,7 +202,7 @@ async function reinitMCPServer({
             oboTrustChecker: createOboTrustChecker(),
           });
 
-          if (discoveryResult.tools && discoveryResult.tools.length > 0) {
+          if (discoveryResult.tools) {
             tools = discoveryResult.tools;
             logger.info(
               `[MCP Reinitialize] Discovered ${tools.length} tools for ${serverName} without full auth`,
@@ -199,22 +210,37 @@ async function reinitMCPServer({
           }
         } catch (discoveryErr) {
           logger.debug(
-            `[MCP Reinitialize] Tool discovery failed for ${serverName}: ${discoveryErr?.message ?? String(discoveryErr)}`,
+            `[MCP Reinitialize] Tool discovery failed for ${serverName}: ${sanitizeMCPErrorForLogging(discoveryErr?.message ?? String(discoveryErr))}`,
           );
         }
       } else {
         logger.error(
           `[MCP Reinitialize] Error initializing MCP server ${serverName} for user:`,
-          err,
+          sanitizeMCPErrorForLogging(err),
         );
       }
     }
 
     if (connection && !oauthRequired) {
-      tools = await connection.fetchTools();
+      tools = await connection.fetchTools(isGovernancePilotEnabled());
+      if (process.env.GOVERNANCE_MCP_METADATA_URL) {
+        serverConfig = observedMCPConfig(serverConfig, connection);
+      }
     }
 
-    if (tools && tools.length > 0) {
+    if (
+      process.env.GOVERNANCE_MCP_METADATA_URL &&
+      serverConfig &&
+      (!tools || !isCompleteMCPToolList(tools))
+    ) {
+      await publishMCPGovernance(serverName, serverConfig, null, user.id);
+    }
+
+    if (
+      tools &&
+      (tools.length > 0 ||
+        (process.env.GOVERNANCE_MCP_METADATA_URL && isCompleteMCPToolList(tools)))
+    ) {
       availableTools = await updateMCPServerTools({
         userId: user.id,
         serverName,
@@ -265,7 +291,7 @@ async function reinitMCPServer({
   } catch (error) {
     logger.error(
       '[MCP Reinitialize] Error loading MCP Tools, servers may still be initializing:',
-      error,
+      sanitizeMCPErrorForLogging(error),
     );
   } finally {
     if (connection && ephemeralServer && !requestScopedConnections) {
@@ -274,7 +300,7 @@ async function reinitMCPServer({
       } catch (error) {
         logger.warn(
           `[MCP Reinitialize] Failed to disconnect ephemeral server ${serverName}`,
-          error,
+          sanitizeMCPErrorForLogging(error),
         );
       }
     }
