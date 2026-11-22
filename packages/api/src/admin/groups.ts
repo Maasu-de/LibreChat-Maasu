@@ -24,6 +24,7 @@ type GroupListFilter = Pick<GroupFilterOptions, 'source' | 'search'>;
 
 const VALID_GROUP_SOURCES: ReadonlySet<string> = new Set(['local', 'entra']);
 const MAX_CREATE_MEMBER_IDS = 500;
+const MAX_MEMBER_ID_LENGTH = 256;
 const MAX_SEARCH_LENGTH = 200;
 const MAX_NAME_LENGTH = 500;
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -78,6 +79,7 @@ export interface AdminGroupsDeps {
   findUsers: (
     searchCriteria: FilterQuery<IUser>,
     fieldsToSelect?: string | string[] | null,
+    options?: { session?: ClientSession },
   ) => Promise<IUser[]>;
   deleteConfig: (
     principalType: PrincipalType,
@@ -113,6 +115,31 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
     deleteConfig,
     deleteAclEntries,
   } = deps;
+
+  /** Resolve every effective member per alias; an empty set marks a known ineffective alias. */
+  async function resolveAuditMembers(
+    ids: string[],
+    session: ClientSession,
+  ): Promise<Map<string, Set<string>>> {
+    if (!ids.length) return new Map();
+    const objectIds = ids.filter(isValidObjectIdString);
+    const conditions: FilterQuery<IUser>[] = [{ idOnTheSource: { $in: ids } }];
+    if (objectIds.length) conditions.push({ _id: { $in: objectIds } });
+    const users = await findUsers({ $or: conditions }, 'idOnTheSource', { session });
+    const resolved = new Map<string, Set<string>>();
+    for (const user of users) {
+      const nativeId = user._id.toString();
+      const effectiveMemberId = user.idOnTheSource || nativeId;
+      if (!resolved.has(nativeId)) resolved.set(nativeId, new Set<string>());
+      const subjects = resolved.get(effectiveMemberId) ?? new Set<string>();
+      subjects.add(nativeId);
+      resolved.set(effectiveMemberId, subjects);
+    }
+    for (const id of objectIds) {
+      if (!resolved.has(id) && resolved.has(id.toLowerCase())) resolved.set(id, new Set<string>());
+    }
+    return resolved;
+  }
 
   async function listGroupsHandler(req: ServerRequest, res: Response) {
     try {
@@ -202,6 +229,15 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
           .status(400)
           .json({ error: `memberIds must not exceed ${MAX_CREATE_MEMBER_IDS} entries` });
       }
+      if (
+        rawIds.some(
+          (id) => typeof id !== 'string' || !id.trim() || id.length > MAX_MEMBER_ID_LENGTH,
+        )
+      ) {
+        return res.status(400).json({
+          error: `memberIds must contain non-empty strings of at most ${MAX_MEMBER_ID_LENGTH} characters`,
+        });
+      }
       let memberIds = rawIds;
       const objectIds = rawIds.filter(isValidObjectIdString);
       if (objectIds.length > 0) {
@@ -237,7 +273,8 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
             },
             ...groupSessionArgs(session),
           ),
-        rawIds,
+        undefined,
+        resolveAuditMembers,
       );
       return res.status(201).json({ group });
     } catch (error) {
@@ -305,8 +342,12 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         return res.status(400).json({ error: 'No valid fields to update' });
       }
 
-      const group = await mutateGovernanceGroup(req, 'group.updated', (session) =>
-        updateGroupById(id, updateData, ...groupSessionArgs(session)),
+      const group = await mutateGovernanceGroup(
+        req,
+        'group.updated',
+        (session) => updateGroupById(id, updateData, ...groupSessionArgs(session)),
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
@@ -330,8 +371,12 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
       if (!isValidObjectIdString(id)) {
         return res.status(400).json({ error: 'Invalid group ID format' });
       }
-      const deleted = await mutateGovernanceGroup(req, 'group.deleted', (session) =>
-        deleteGroup(id, ...groupSessionArgs(session)),
+      const deleted = await mutateGovernanceGroup(
+        req,
+        'group.deleted',
+        (session) => deleteGroup(id, ...groupSessionArgs(session)),
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
       if (!deleted) {
         return res.status(404).json({ error: 'Group not found' });
@@ -450,7 +495,8 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         req,
         'membership.added',
         async (session) => (await addUserToGroup(userId, id, ...groupSessionArgs(session))).group,
-        [userId],
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
@@ -506,7 +552,8 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
           isValidObjectIdString(userId)
             ? removeObjectIdMember(id, userId, session)
             : removeMemberById(id, userId, ...groupSessionArgs(session)),
-        [userId],
+        (session) => findGroupById(id, undefined, session),
+        resolveAuditMembers,
       );
 
       if (!group) {

@@ -1,4 +1,3 @@
-import { createHmac } from 'crypto';
 import { logger } from '@librechat/data-schemas';
 import type { IGroup, IUser } from '@librechat/data-schemas';
 import type {
@@ -8,6 +7,7 @@ import type {
   GovernanceConnectionResponse,
 } from 'librechat-data-provider';
 import type { Request, Response } from 'express';
+import { pseudonymizeUserId } from '../governance/subjects';
 
 const GOVERNANCE_HEALTH_TIMEOUT_MS = 5_000;
 const GOVERNANCE_USAGE_TIMEOUT_MS = 10_000;
@@ -103,15 +103,6 @@ export const testGovernanceConnection = async (_req: Request, res: Response): Pr
   } finally {
     clearTimeout(timeout);
   }
-};
-
-/**
- * Mirrors the gateway's `pseudonymize_user_id`: HMAC-SHA256 over `<tenant_id>:<user_id>`.
- * Chat requests forward the Mongo user `_id` as the user ID.
- */
-const pseudonymizeUserId = (secret: string, tenantId: string, userId: string): string => {
-  const digest = createHmac('sha256', secret).update(`${tenantId}:${userId}`).digest('hex');
-  return `sha256:${digest}`;
 };
 
 const shortenPseudonym = (pseudonym: string): string => {

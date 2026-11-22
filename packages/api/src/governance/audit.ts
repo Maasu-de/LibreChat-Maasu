@@ -5,6 +5,7 @@ import type { ClientSession } from 'mongoose';
 import type { IGroup } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import { isGovernancePilotEnabled } from './mode';
+import { pseudonymizeUserId } from './subjects';
 
 export type GroupMutationAction =
   | 'group.created'
@@ -12,6 +13,28 @@ export type GroupMutationAction =
   | 'group.deleted'
   | 'membership.added'
   | 'membership.removed';
+
+type GroupDetails = {
+  name: string;
+  has_description: boolean;
+  has_email: boolean;
+  has_avatar: boolean;
+};
+type GroupField = 'name' | 'description' | 'email' | 'avatar';
+const groupFields: GroupField[] = ['name', 'description', 'email', 'avatar'];
+const groupDetails = (group: IGroup): GroupDetails => ({
+  name: group.name,
+  has_description: Boolean(group.description),
+  has_email: Boolean(group.email),
+  has_avatar: Boolean(group.avatar),
+});
+
+export function affectedSubjectRef(userId: string): string {
+  const secret = process.env.USAGE_PSEUDONYMIZATION_SECRET;
+  const tenant = process.env.PILOT_TENANT_ID;
+  if (!secret || !tenant) throw new Error('Governance subject references are not configured');
+  return pseudonymizeUserId(secret, tenant, userId);
+}
 
 interface GroupAuditDelivery {
   _id: string;
@@ -29,7 +52,11 @@ interface GroupAuditDelivery {
     action: GroupMutationAction;
     outcome: 'success';
     actor: { issuer: string; user_id: string };
-    resource: { type: 'group'; id: string; affected_user_id?: string };
+    resource: { type: 'group'; id: string; name: string; affected_subject_ref?: string };
+    cause?: 'member_removed' | 'group_deleted';
+    before?: GroupDetails;
+    after?: GroupDetails;
+    changed_fields?: GroupField[];
   };
 }
 
@@ -69,6 +96,8 @@ export function isGovernanceGroupAuditConfigured(req: ServerRequest): boolean {
     Boolean(
       getGovernanceGroupAuditUrl() &&
         process.env.LIBRECHAT_SERVICE_CREDENTIAL &&
+        process.env.USAGE_PSEUDONYMIZATION_SECRET &&
+        process.env.PILOT_TENANT_ID &&
         req.user?.openidIssuer &&
         req.user.openidId,
     )
@@ -84,33 +113,53 @@ export async function mutateGovernanceGroup(
   req: ServerRequest,
   action: GroupMutationAction,
   operation: (session?: ClientSession) => Promise<IGroup | null>,
-  affectedUserIds: string[] = [],
+  previousGroup?: (session?: ClientSession) => Promise<IGroup | null>,
+  resolveMembers?: (ids: string[], session: ClientSession) => Promise<Map<string, Set<string>>>,
 ): Promise<IGroup | null> {
   if (!isGovernancePilotEnabled()) return operation();
   const actor = req.user;
   if (!isGovernanceGroupAuditConfigured(req) || !actor?.openidIssuer || !actor.openidId) {
     throw new Error('Governance group audit is not configured');
   }
-  if (affectedUserIds.some((id) => typeof id !== 'string' || !id.trim() || id.length > 256)) {
-    throw new Error('Invalid affected user identifier');
-  }
   const identity = { issuer: actor.openidIssuer, user_id: actor.openidId };
   const session = await mongoose.startSession();
   try {
     const result = await session.withTransaction(
       async () => {
+        const before = previousGroup ? await previousGroup(session) : null;
         const group = await operation(session);
         if (!group) return null;
-        const events: { action: GroupMutationAction; userId?: string }[] =
-          action === 'group.created'
-            ? [
-                { action },
-                ...affectedUserIds.map((userId) => ({
-                  action: 'membership.added' as const,
-                  userId,
-                })),
-              ]
-            : [{ action, userId: affectedUserIds[0] }];
+        const oldMembers = new Set(
+          (before ?? (action === 'group.deleted' ? group : null))?.memberIds ?? [],
+        );
+        const newMembers = new Set(action === 'group.deleted' ? [] : (group.memberIds ?? []));
+        const changedFields = before
+          ? groupFields.filter((field) => (before[field] ?? '') !== (group[field] ?? ''))
+          : [];
+        const membershipChanged =
+          oldMembers.size !== newMembers.size || [...oldMembers].some((id) => !newMembers.has(id));
+        const resolved =
+          membershipChanged && resolveMembers
+            ? await resolveMembers([...new Set([...oldMembers, ...newMembers])], session)
+            : new Map<string, Set<string>>();
+        const subjects = (members: Set<string>): Set<string> =>
+          new Set([...members].flatMap((id) => [...(resolved.get(id) ?? [id])]));
+        const previousSubjects = subjects(oldMembers);
+        const currentSubjects = subjects(newMembers);
+        const events: { action: GroupMutationAction; userId?: string }[] = [];
+        if (
+          action === 'group.created' ||
+          action === 'group.deleted' ||
+          (action === 'group.updated' && changedFields.length)
+        )
+          events.push({ action });
+        for (const userId of currentSubjects) {
+          if (!previousSubjects.has(userId)) events.push({ action: 'membership.added', userId });
+        }
+        for (const userId of previousSubjects) {
+          if (!currentSubjects.has(userId)) events.push({ action: 'membership.removed', userId });
+        }
+        if (!events.length) return group;
         const occurredAt = new Date();
         const deliveries: GroupAuditDelivery[] = events.map((event) => {
           const id = randomUUID();
@@ -126,10 +175,30 @@ export async function mutateGovernanceGroup(
               action: event.action,
               outcome: 'success',
               actor: identity,
+              ...(event.action === 'membership.removed'
+                ? {
+                    cause:
+                      action === 'group.deleted'
+                        ? ('group_deleted' as const)
+                        : ('member_removed' as const),
+                  }
+                : {}),
+              ...(event.action === 'group.updated' && before
+                ? {
+                    before: groupDetails(before),
+                    after: groupDetails(group),
+                    changed_fields: changedFields,
+                  }
+                : {}),
               resource: {
                 type: 'group',
                 id: group._id.toString(),
-                ...(event.userId ? { affected_user_id: event.userId } : {}),
+                name: group.name,
+                ...(event.userId
+                  ? {
+                      affected_subject_ref: affectedSubjectRef(event.userId),
+                    }
+                  : {}),
               },
             },
           };

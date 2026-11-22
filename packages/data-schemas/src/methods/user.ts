@@ -1,4 +1,5 @@
 import mongoose, { FilterQuery } from 'mongoose';
+import type { ClientSession } from 'mongoose';
 import type { RefillIntervalUnit } from 'librechat-data-provider';
 import type { IUser, BalanceConfig, CreateUserRequest, UserDeleteResult } from '~/types';
 import { escapeRegExp } from '~/utils/string';
@@ -16,7 +17,12 @@ export function createUserMethods(mongoose: typeof import('mongoose')): {
   findUsers: (
     searchCriteria: FilterQuery<IUser>,
     fieldsToSelect?: string | string[] | null,
-    options?: { limit?: number; offset?: number; sort?: Record<string, 1 | -1> },
+    options?: {
+      limit?: number;
+      offset?: number;
+      sort?: Record<string, 1 | -1>;
+      session?: ClientSession;
+    },
   ) => Promise<IUser[]>;
   countUsers: (filter?: FilterQuery<IUser>) => Promise<number>;
   createUser: (
@@ -147,11 +153,17 @@ export function createUserMethods(mongoose: typeof import('mongoose')): {
   async function findUsers(
     searchCriteria: FilterQuery<IUser>,
     fieldsToSelect?: string | string[] | null,
-    options?: { limit?: number; offset?: number; sort?: Record<string, 1 | -1> },
+    options?: {
+      limit?: number;
+      offset?: number;
+      sort?: Record<string, 1 | -1>;
+      session?: ClientSession;
+    },
   ): Promise<IUser[]> {
     const User = mongoose.models.User as mongoose.Model<IUser>;
     const normalizedCriteria = normalizeEmailInCriteria(searchCriteria);
     const query = User.find(normalizedCriteria);
+    if (options?.session) query.session(options.session);
     if (fieldsToSelect) {
       query.select(fieldsToSelect);
     }
