@@ -517,6 +517,27 @@ export class MCPTokenStorage {
     }
   }
 
+  /** Read stored credentials for revocation without requiring usable access or refreshing it. */
+  static async getTokensForRevocation({
+    userId,
+    serverName,
+    binding,
+    findToken,
+  }: Pick<GetTokensParams, 'userId' | 'serverName' | 'binding' | 'findToken'>): Promise<Partial<
+    Pick<MCPOAuthTokens, 'access_token' | 'refresh_token'>
+  > | null> {
+    const identifier = getTokenIdentifier(serverName, binding);
+    const [accessToken, refreshToken] = await Promise.all([
+      findToken({ userId, type: 'mcp_oauth', identifier }),
+      findToken({ userId, type: 'mcp_oauth_refresh', identifier: `${identifier}:refresh` }),
+    ]);
+    if (!accessToken && !refreshToken) return null;
+    return {
+      ...(accessToken && { access_token: await decryptV2(accessToken.token) }),
+      ...(refreshToken && { refresh_token: await decryptV2(refreshToken.token) }),
+    };
+  }
+
   /**
    * Retrieves OAuth tokens for an MCP server
    */

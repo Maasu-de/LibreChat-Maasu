@@ -1,4 +1,4 @@
-const mockGetTokens = jest.fn();
+const mockGetTokensForRevocation = jest.fn();
 const mockDeleteUserTokens = jest.fn();
 const mockGetClientInfoAndMetadata = jest.fn();
 const mockRevokeOAuthToken = jest.fn();
@@ -49,7 +49,9 @@ jest.mock('@librechat/api', () => {
       },
     },
     MCPTokenStorage: {
-      getTokens: (...args) => mockGetTokens(...args),
+      getTokens: (...args) =>
+        jest.requireActual('@librechat/api').MCPTokenStorage.getTokens(...args),
+      getTokensForRevocation: (...args) => mockGetTokensForRevocation(...args),
       getClientInfoAndMetadata: (...args) => mockGetClientInfoAndMetadata(...args),
       deleteUserTokens: (...args) => mockDeleteUserTokens(...args),
     },
@@ -178,7 +180,7 @@ describe('maybeUninstallOAuthMCP', () => {
     'returns provider HTTP %s separately after local deletion',
     async (status) => {
       setupOAuthServerFound();
-      mockGetTokens.mockResolvedValue({
+      mockGetTokensForRevocation.mockResolvedValue({
         access_token: 'private-access',
         refresh_token: 'private-refresh',
       });
@@ -207,7 +209,10 @@ describe('maybeUninstallOAuthMCP', () => {
     setupOAuthServerFound();
     const binding = 'current-connection-binding';
     mockGetGovernanceMCPOAuthBinding.mockReturnValue(binding);
-    mockGetTokens.mockResolvedValue({ access_token: 'access', refresh_token: 'refresh' });
+    mockGetTokensForRevocation.mockResolvedValue({
+      access_token: 'access',
+      refresh_token: 'refresh',
+    });
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(true);
     mockRevokeOAuthToken.mockResolvedValue(undefined);
@@ -218,7 +223,7 @@ describe('maybeUninstallOAuthMCP', () => {
     expect(mockGetClientInfoAndMetadata).toHaveBeenCalledWith(
       expect.objectContaining({ userId, serverName, binding }),
     );
-    expect(mockGetTokens).toHaveBeenCalledWith(
+    expect(mockGetTokensForRevocation).toHaveBeenCalledWith(
       expect.objectContaining({ userId, serverName, binding }),
     );
     expect(mockDeleteUserTokens).toHaveBeenCalledWith(
@@ -238,7 +243,10 @@ describe('maybeUninstallOAuthMCP', () => {
     'commits governed local revocation before provider calls; commit failure: %s',
     async (failCommit) => {
       setupOAuthServerFound();
-      mockGetTokens.mockResolvedValue({ access_token: 'access', refresh_token: 'refresh' });
+      mockGetTokensForRevocation.mockResolvedValue({
+        access_token: 'access',
+        refresh_token: 'refresh',
+      });
       mockDeleteUserTokens.mockResolvedValue(undefined);
       mockDeleteFlow.mockResolvedValue(undefined);
       let committed = false;
@@ -276,7 +284,7 @@ describe('maybeUninstallOAuthMCP', () => {
       const previous = process.env.GOVERNANCE_PILOT_ENABLED;
       process.env.GOVERNANCE_PILOT_ENABLED = 'true';
       setupOAuthServerFound();
-      mockGetTokens.mockResolvedValue(null);
+      mockGetTokensForRevocation.mockResolvedValue(null);
       mockDeleteUserTokens.mockResolvedValue(undefined);
       mockDeleteFlow.mockResolvedValue(undefined);
       if (failure === 'tokens')
@@ -309,7 +317,7 @@ describe('maybeUninstallOAuthMCP', () => {
     await flowManager.completeFlow(flowId, 'mcp_get_tokens', tokens);
     const deletion = jest.spyOn(store, 'delete').mockRejectedValue(new Error('cache unavailable'));
     setupOAuthServerFound();
-    mockGetTokens.mockResolvedValue(tokens);
+    mockGetTokensForRevocation.mockResolvedValue(tokens);
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockImplementation((...args) => flowManager.deleteFlow(...args));
     mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
@@ -342,7 +350,7 @@ describe('maybeUninstallOAuthMCP', () => {
     const previous = process.env.GOVERNANCE_PILOT_ENABLED;
     process.env.GOVERNANCE_PILOT_ENABLED = 'false';
     setupOAuthServerFound();
-    mockGetTokens.mockResolvedValue({ access_token: 'cached-access-token' });
+    mockGetTokensForRevocation.mockResolvedValue({ access_token: 'cached-access-token' });
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(false);
     mockRevokeOAuthToken.mockRejectedValue(new Error('provider unavailable'));
@@ -366,7 +374,7 @@ describe('maybeUninstallOAuthMCP', () => {
     await maybeUninstallOAuthMCP(userId, 'plugin_google_calendar', appConfig);
 
     expect(mockGetServerConfig).not.toHaveBeenCalled();
-    expect(mockGetTokens).not.toHaveBeenCalled();
+    expect(mockGetTokensForRevocation).not.toHaveBeenCalled();
     expect(mockDeleteUserTokens).not.toHaveBeenCalled();
     expect(mockDeleteFlow).not.toHaveBeenCalled();
   });
@@ -378,7 +386,7 @@ describe('maybeUninstallOAuthMCP', () => {
     await maybeUninstallOAuthMCP(userId, pluginKey, appConfig);
 
     expect(mockGetClientInfoAndMetadata).not.toHaveBeenCalled();
-    expect(mockGetTokens).not.toHaveBeenCalled();
+    expect(mockGetTokensForRevocation).not.toHaveBeenCalled();
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
     expect(mockDeleteUserTokens.mock.calls[0][0]).toMatchObject({ userId, serverName });
     expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
@@ -390,7 +398,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
     await maybeUninstallOAuthMCP(userId, pluginKey, appConfig);
 
-    expect(mockGetTokens).not.toHaveBeenCalled();
+    expect(mockGetTokensForRevocation).not.toHaveBeenCalled();
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
     expect(mockDeleteUserTokens.mock.calls[0][0]).toMatchObject({ userId, serverName });
     expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
@@ -404,7 +412,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
     await maybeUninstallOAuthMCP(userId, pluginKey, appConfig);
 
-    expect(mockGetTokens).not.toHaveBeenCalled();
+    expect(mockGetTokensForRevocation).not.toHaveBeenCalled();
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
     expect(mockDeleteUserTokens.mock.calls[0][0]).toMatchObject({ userId, serverName });
     expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
@@ -430,7 +438,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
   test('revokes both tokens and runs cleanup on happy path', async () => {
     setupOAuthServerFound();
-    mockGetTokens.mockResolvedValue({
+    mockGetTokensForRevocation.mockResolvedValue({
       access_token: 'access-abc',
       refresh_token: 'refresh-xyz',
     });
@@ -456,7 +464,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
   test('skips revocation but still runs cleanup when token retrieval fails', async () => {
     setupOAuthServerFound();
-    mockGetTokens.mockRejectedValue(new Error('missing'));
+    mockGetTokensForRevocation.mockRejectedValue(new Error('missing'));
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(undefined);
 
@@ -475,7 +483,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
   test('skips revocation, logs warn, and still runs cleanup on unexpected token-retrieval error', async () => {
     setupOAuthServerFound();
-    mockGetTokens.mockRejectedValue(new Error('boom: unreachable'));
+    mockGetTokensForRevocation.mockRejectedValue(new Error('boom: unreachable'));
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(undefined);
 
@@ -494,7 +502,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
   test('continues cleanup when only one token type is present', async () => {
     setupOAuthServerFound();
-    mockGetTokens.mockResolvedValue({ access_token: 'only-access' });
+    mockGetTokensForRevocation.mockResolvedValue({ access_token: 'only-access' });
     mockRevokeOAuthToken.mockResolvedValue(undefined);
     mockDeleteUserTokens.mockResolvedValue(undefined);
     mockDeleteFlow.mockResolvedValue(undefined);
@@ -509,7 +517,7 @@ describe('maybeUninstallOAuthMCP', () => {
 
   test('still runs cleanup even when both revocation calls fail', async () => {
     setupOAuthServerFound();
-    mockGetTokens.mockResolvedValue({
+    mockGetTokensForRevocation.mockResolvedValue({
       access_token: 'a',
       refresh_token: 'r',
     });
@@ -525,5 +533,145 @@ describe('maybeUninstallOAuthMCP', () => {
     expect(mockDeleteUserTokens).toHaveBeenCalledTimes(1);
     expect(mockDeleteFlow).toHaveBeenCalledTimes(2);
     expect(mockLoggerError).toHaveBeenCalled();
+  });
+
+  describe('revocation with encrypted token storage', () => {
+    const mongoose = require('mongoose');
+    const { MongoMemoryReplSet } = require('mongodb-memory-server');
+    const schemas = jest.requireActual('@librechat/data-schemas');
+    const { MCPTokenStorage } = jest.requireActual('@librechat/api');
+    const models = schemas.createModels(mongoose);
+    const methods = schemas.createMethods(mongoose);
+    let replica;
+
+    beforeAll(async () => {
+      replica = await MongoMemoryReplSet.create({
+        binary: { version: '8.2.1' },
+        replSet: { count: 1 },
+      });
+      await mongoose.connect(replica.getUri());
+      await models.Token.createCollection();
+    }, 60000);
+
+    afterAll(async () => {
+      await mongoose.disconnect();
+      await replica.stop();
+    });
+
+    test.each([
+      { access: 'expired', governed: true },
+      { access: 'missing', governed: true },
+      { access: 'expired', governed: false },
+      { access: 'missing', governed: false },
+    ])(
+      'revokes a stored refresh token with $access access in governed mode $governed',
+      async ({ access, governed }) => {
+        const previous = process.env.GOVERNANCE_PILOT_ENABLED;
+        process.env.GOVERNANCE_PILOT_ENABLED = String(governed);
+        const actorId = new mongoose.Types.ObjectId().toString();
+        const otherActorId = new mongoose.Types.ObjectId().toString();
+        const binding = 'current-connection';
+        const identifier = `mcp:${serverName}:${binding}`;
+        const read = jest.spyOn(MCPTokenStorage, 'getTokens');
+        const refresh = jest.spyOn(MCPTokenStorage, 'forceRefreshTokens');
+        try {
+          await schemas.runAsSystem(async () => {
+            await models.Token.deleteMany({});
+            for (const scope of [
+              { userId: actorId, binding },
+              { userId: otherActorId, binding },
+              { userId: actorId, binding: 'previous-connection' },
+            ]) {
+              await MCPTokenStorage.storeTokens({
+                ...scope,
+                serverName,
+                tokens: {
+                  access_token: `access-${scope.userId}-${scope.binding}`,
+                  refresh_token: `refresh-${scope.userId}-${scope.binding}`,
+                  token_type: 'Bearer',
+                  expires_in: 3600,
+                },
+                clientInfo,
+                createToken: methods.createToken,
+              });
+            }
+            const accessQuery = { userId: actorId, type: 'mcp_oauth', identifier };
+            if (access === 'missing') await models.Token.deleteOne(accessQuery);
+            else
+              await models.Token.updateOne(accessQuery, {
+                expiresAt: new Date(Date.now() - 1000),
+              });
+            expect(
+              await methods.findToken({
+                ...accessQuery,
+                type: 'mcp_oauth_refresh',
+                identifier: `${identifier}:refresh`,
+              }),
+            ).toBeTruthy();
+            expect(JSON.stringify(await models.Token.find().lean())).not.toContain('refresh-');
+
+            setupOAuthServerFound();
+            mockGetGovernanceMCPOAuthBinding.mockReturnValue(binding);
+            mockFindToken.mockImplementation(methods.findToken);
+            mockDeleteTokens.mockImplementation(methods.deleteTokens);
+            mockGetClientInfoAndMetadata.mockImplementation((args) =>
+              MCPTokenStorage.getClientInfoAndMetadata(args),
+            );
+            mockGetTokensForRevocation.mockImplementation((args) =>
+              MCPTokenStorage.getTokensForRevocation(args),
+            );
+            mockDeleteUserTokens.mockImplementation((args) =>
+              MCPTokenStorage.deleteUserTokens(args),
+            );
+            mockDeleteFlow.mockResolvedValue(true);
+            mockRevokeOAuthToken.mockImplementation(async () => {
+              if (governed)
+                expect(await models.Token.countDocuments({ userId: actorId, identifier })).toBe(0);
+            });
+            const commit = jest.fn(async (operation) => {
+              const session = await mongoose.startSession();
+              try {
+                await session.withTransaction(() => operation(session));
+              } finally {
+                await session.endSession();
+              }
+            });
+
+            await expect(
+              maybeUninstallOAuthMCP(actorId, pluginKey, appConfig, governed ? commit : undefined),
+            ).resolves.toEqual({ outcome: 'success' });
+
+            expect(mockRevokeOAuthToken).toHaveBeenCalledWith(
+              serverName,
+              `refresh-${actorId}-${binding}`,
+              'refresh',
+              expect.objectContaining({ clientId: clientInfo.client_id }),
+              serverConfig.oauth_headers,
+              undefined,
+              undefined,
+            );
+            expect(mockRevokeOAuthToken).toHaveBeenCalledTimes(access === 'expired' ? 2 : 1);
+            expect(read).not.toHaveBeenCalled();
+            expect(refresh).not.toHaveBeenCalled();
+            expect(mockGetTokensForRevocation.mock.invocationCallOrder[0]).toBeLessThan(
+              mockDeleteUserTokens.mock.invocationCallOrder[0],
+            );
+            expect(commit).toHaveBeenCalledTimes(governed ? 1 : 0);
+            expect(
+              await models.Token.countDocuments({
+                userId: actorId,
+                identifier: { $regex: `${identifier}(?::|$)` },
+              }),
+            ).toBe(0);
+            expect(await models.Token.countDocuments()).toBe(6);
+          });
+        } finally {
+          read.mockRestore();
+          refresh.mockRestore();
+          if (previous === undefined) delete process.env.GOVERNANCE_PILOT_ENABLED;
+          else process.env.GOVERNANCE_PILOT_ENABLED = previous;
+        }
+      },
+    );
   });
 });

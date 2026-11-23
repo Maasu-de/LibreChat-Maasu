@@ -549,7 +549,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig, commitTokenD
   // 2. get decrypted tokens before deletion
   let tokens = null;
   try {
-    tokens = await MCPTokenStorage.getTokens({
+    tokens = await MCPTokenStorage.getTokensForRevocation({
       userId,
       serverName,
       findToken: db.findToken,
