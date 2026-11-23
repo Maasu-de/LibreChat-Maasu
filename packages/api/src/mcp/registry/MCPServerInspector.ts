@@ -92,13 +92,15 @@ export class MCPServerInspector {
         });
       }
 
-      await Promise.allSettled([
-        this.fetchServerInstructions(),
-        this.fetchServerCapabilities(),
-        this.fetchToolFunctions(),
-      ]);
-
-      if (tempConnection) await this.connection.disconnect();
+      try {
+        await Promise.allSettled([
+          this.fetchServerInstructions(),
+          this.fetchServerCapabilities(),
+          this.fetchToolFunctions(),
+        ]);
+      } finally {
+        if (tempConnection) await this.connection.dispose();
+      }
     }
   }
 
