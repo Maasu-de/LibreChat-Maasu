@@ -10,6 +10,7 @@ import type { MCPOptions } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { ParsedServerConfig } from '~/mcp/types';
 import type { MCPOAuthTokens } from '~/mcp/oauth';
+import type { ServerRequest } from '~/types/http';
 import { trackSockets } from '~/mcp/__tests__/helpers/oauthTestServer';
 
 let mongo: MongoMemoryReplSet;
@@ -19,6 +20,7 @@ let methods: ReturnType<typeof schemas.createMethods>;
 let bindingFor: typeof import('../authorization').getGovernanceMCPOAuthBinding;
 let storeAuthorization: typeof import('../mcp').storeGovernanceMCPOAuth;
 let getGeneration: typeof import('../oauth').getGovernanceMCPOAuthGeneration;
+let createMutation: typeof import('../audit').createGovernanceMCPMutation;
 let Storage: typeof import('~/mcp/oauth').MCPTokenStorage;
 let OAuth: typeof import('~/mcp/oauth').MCPOAuthHandler;
 let Factory: typeof import('~/mcp/MCPConnectionFactory').MCPConnectionFactory;
@@ -86,6 +88,7 @@ beforeAll(async () => {
     CREDS_IV: '0123456789abcdef0123456789abcdef',
   };
   schemas = await import('@librechat/data-schemas');
+  createMutation = (await import('../audit')).createGovernanceMCPMutation;
   models = schemas.createModels(mongoose);
   methods = schemas.createMethods(mongoose);
   bindingFor = (await import('../authorization')).getGovernanceMCPOAuthBinding;
@@ -119,7 +122,13 @@ beforeEach(async () => {
       openidId: 'author',
       openidIssuer: 'https://identity.example',
     },
-    { email: 'editor@test.example', provider: 'openid', role: 'GOVERNANCE_ADMIN' },
+    {
+      email: 'editor@test.example',
+      provider: 'openid',
+      role: 'GOVERNANCE_ADMIN',
+      openidId: 'editor',
+      openidIssuer: 'https://identity.example',
+    },
   ]);
 });
 
@@ -157,6 +166,48 @@ async function inspect(
   await result.connection?.disconnect();
   return result;
 }
+
+it.each([false, true])(
+  'reads current connections after another administrator mutates them (separate registry: %s)',
+  async (separateRegistry) => {
+    const remote = await createRemote();
+    try {
+      const database = new Database(mongoose);
+      const reader = new Registry(mongoose, [remote.origin]);
+      const writer = separateRegistry ? new Registry(mongoose, [remote.origin]) : reader;
+      const config: ParsedServerConfig = {
+        type: 'streamable-http',
+        url: `${remote.origin}/original`,
+        title: 'Managed',
+        oauth: {},
+        requiresOAuth: true,
+      };
+      const created = await database.add('original', config, author.id);
+      const name = created.serverName;
+      const request = { user: editor } as ServerRequest;
+      expect((await reader.getServerConfig(name, author.id))?.url).toBe(config.url);
+      expect((await reader.getAllServerConfigs(author.id))[name]?.url).toBe(config.url);
+
+      const updated = { ...config, url: `${remote.origin}/changed` };
+      await writer.updateServer(
+        name,
+        updated,
+        'DB',
+        editor.id,
+        createMutation(request, 'mcp.updated'),
+      );
+      expect((await reader.getServerConfig(name, author.id))?.url).toBe(updated.url);
+      expect((await reader.getAllServerConfigs(author.id))[name]?.url).toBe(updated.url);
+
+      await writer.removeServer(name, 'DB', editor.id, createMutation(request, 'mcp.deleted'));
+      expect(await reader.getServerConfig(name, author.id)).toBeUndefined();
+      expect(await reader.getAllServerConfigs(author.id)).not.toHaveProperty(name);
+      expect(remote.getToolCalls()).toBe(0);
+    } finally {
+      await remote.close();
+    }
+  },
+);
 
 it.each(['endpoint update', 'delete and recreate'])(
   'does not reuse another connection authorization after %s, including cached tokens',

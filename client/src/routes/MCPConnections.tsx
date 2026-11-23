@@ -23,22 +23,6 @@ export default function MCPConnections({ embedded = false }: { embedded?: boolea
       }
       return;
     }
-    const root = document.documentElement;
-    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
-    const synchronizeTheme = () => {
-      const theme = localStorage.getItem('theme');
-      const dark = theme === 'dark' || (theme !== 'light' && systemTheme.matches);
-      if (root.classList.contains('dark') === dark && root.classList.contains('light') !== dark) {
-        return;
-      }
-      root.classList.remove(dark ? 'light' : 'dark');
-      root.classList.add(dark ? 'dark' : 'light');
-    };
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key === 'theme') {
-        synchronizeTheme();
-      }
-    };
     const forwardSidebarShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
         event.preventDefault();
@@ -52,16 +36,8 @@ export default function MCPConnections({ embedded = false }: { embedded?: boolea
         );
       }
     };
-    synchronizeTheme();
-    const themeObserver = new MutationObserver(synchronizeTheme);
-    themeObserver.observe(root, { attributes: true, attributeFilter: ['class'] });
-    systemTheme.addEventListener('change', synchronizeTheme);
-    window.addEventListener('storage', handleStorage);
     document.addEventListener('keydown', forwardSidebarShortcut);
     return () => {
-      themeObserver.disconnect();
-      systemTheme.removeEventListener('change', synchronizeTheme);
-      window.removeEventListener('storage', handleStorage);
       document.removeEventListener('keydown', forwardSidebarShortcut);
     };
   }, [embedded, isAuthenticated]);

@@ -13,6 +13,7 @@ import {
 } from './cache/ServerConfigsCacheFactory';
 import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/errors';
 import { preserveGovernanceMCPSecrets } from '~/governance/mcp';
+import { isGovernancePilotEnabled } from '~/governance/mode';
 import { sanitizeMCPErrorForLogging } from '~/mcp/utils';
 import { MCPServerInspector } from './MCPServerInspector';
 import { ServerConfigsDB } from './db/ServerConfigsDB';
@@ -281,6 +282,7 @@ export class MCPServersRegistry {
     userId?: string,
     configServers?: Record<string, t.ParsedServerConfig>,
   ): Promise<t.ParsedServerConfig | undefined> {
+    if (isGovernancePilotEnabled()) return this.dbConfigsRepo.get(serverName, userId);
     const candidate = configServers?.[serverName];
 
     const cacheKey = this.getReadThroughCacheKey(serverName, userId);
@@ -320,6 +322,7 @@ export class MCPServersRegistry {
     configServers?: Record<string, t.ParsedServerConfig>,
     role?: string,
   ): Promise<Record<string, t.ParsedServerConfig>> {
+    if (isGovernancePilotEnabled()) return this.dbConfigsRepo.getAll(userId, role);
     if (configServers == null || !Object.keys(configServers).length) {
       return this.getBaseServerConfigs(userId, role);
     }

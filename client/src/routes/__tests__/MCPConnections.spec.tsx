@@ -1,6 +1,7 @@
 import 'test/matchMedia.mock';
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { ThemeProvider } from '@librechat/client';
 import { getMCPAdministrationHost, SystemRoles } from 'librechat-data-provider';
 import MCPConnections from '../MCPConnections';
 
@@ -35,6 +36,10 @@ describe('standalone MCP administration', () => {
     mockRole = SystemRoles.GOVERNANCE_ADMIN;
   });
 
+  afterEach(() => {
+    document.cookie = 'aimo-theme=; Path=/; Max-Age=0';
+  });
+
   it('shows management in a standalone view for the OIDC governance role', () => {
     render(<MCPConnections />);
     expect(screen.getByRole('main')).toContainElement(screen.getByTestId('mcp-management'));
@@ -57,7 +62,7 @@ describe('standalone MCP administration', () => {
     expect(screen.getByRole('main')).not.toHaveClass('min-h-screen');
   });
 
-  it('synchronizes the Gateway theme and forwards its sidebar shortcut in an embed', () => {
+  it('forwards the Gateway sidebar shortcut in an embed', () => {
     const dispatchEvent = jest.fn();
     jest.mocked(getMCPAdministrationHost).mockReturnValue({
       location: {
@@ -68,15 +73,7 @@ describe('standalone MCP administration', () => {
       document: { dispatchEvent },
       top: null,
     });
-    localStorage.setItem('color-theme', 'system');
-    localStorage.setItem('theme', 'dark');
     const { unmount } = render(<MCPConnections embedded />);
-    expect(document.documentElement).toHaveClass('dark');
-    expect(localStorage.getItem('color-theme')).toBe('system');
-    localStorage.setItem('theme', 'light');
-    fireEvent(window, new StorageEvent('storage', { key: 'theme', newValue: 'light' }));
-    expect(document.documentElement).toHaveClass('light');
-    expect(localStorage.getItem('color-theme')).toBe('system');
     fireEvent.keyDown(document, { key: 'b', ctrlKey: true });
     expect(dispatchEvent).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'b', ctrlKey: true }),
@@ -85,6 +82,49 @@ describe('standalone MCP administration', () => {
     dispatchEvent.mockClear();
     fireEvent.keyDown(document, { key: 'b', ctrlKey: true });
     expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it('keeps the embedded manager on the shared cookie theme despite obsolete storage', async () => {
+    jest.mocked(getMCPAdministrationHost).mockReturnValue({
+      location: {
+        origin: window.location.origin,
+        pathname: '/chat/governance/mcp',
+        assign: jest.fn(),
+      },
+      document: { dispatchEvent: jest.fn() },
+      top: null,
+    });
+    document.cookie = 'aimo-theme=dark; Path=/';
+    localStorage.setItem('theme', 'light');
+    await act(async () => {
+      render(
+        <ThemeProvider>
+          <MCPConnections embedded />
+        </ThemeProvider>,
+      );
+    });
+    const manager = screen.getByTestId('mcp-management');
+    expect(document.documentElement).toHaveClass('dark');
+
+    await act(async () => {
+      document.cookie = 'aimo-theme=light; Path=/';
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(document.documentElement).toHaveClass('light');
+
+    await act(async () => {
+      document.cookie = 'aimo-theme=dark; Path=/';
+      window.dispatchEvent(new Event('pageshow'));
+    });
+    expect(document.documentElement).toHaveClass('dark');
+
+    await act(async () => {
+      localStorage.setItem('theme', 'dark');
+      document.cookie = 'aimo-theme=; Path=/; Max-Age=0';
+      window.dispatchEvent(new Event('pageshow'));
+    });
+    expect(document.documentElement).toHaveClass('light');
+    expect(screen.getByTestId('mcp-management')).toBe(manager);
   });
 
   it.each([SystemRoles.USER, SystemRoles.ADMIN])('denies the %s role', (role) => {
