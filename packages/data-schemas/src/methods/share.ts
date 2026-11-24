@@ -440,7 +440,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         .populate({
           path: 'messages',
           select: '-_id -__v -user',
-          retainNullValues: true,
+          options: { retainNullValues: true },
         })
         .select('-__v')
         .lean()) as (Omit<t.ISharedLink, 'messages'> & { messages: (t.IMessage | null)[] }) | null;
@@ -964,7 +964,11 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         shareId,
         ...activeExpirationFilter<t.ISharedLink>(),
       })
-        .populate({ path: 'messages', select: '-_id -__v -user', retainNullValues: true })
+        .populate({
+          path: 'messages',
+          select: '-_id -__v -user',
+          options: { retainNullValues: true },
+        })
         .lean()) as (Omit<t.ISharedLink, 'messages'> & { messages: (t.IMessage | null)[] }) | null;
 
       if (!share) {
