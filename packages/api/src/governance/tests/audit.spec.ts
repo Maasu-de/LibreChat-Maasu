@@ -2,6 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
 import { createModels, createMethods, runAsSystem } from '@librechat/data-schemas';
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
@@ -342,11 +343,17 @@ it('recovers abandoned delivery leases and excludes active leases across workers
 });
 
 async function seedHistory(conversationId: string, user: string, messageId: string) {
-  await models.Conversation.create({ conversationId, user, title: 'Private title' });
+  await models.Conversation.create({
+    conversationId,
+    user,
+    endpoint: GOVERNANCE_ENDPOINT,
+    title: 'Private title',
+  });
   await models.Message.create({ conversationId, user, messageId, text: 'Private text' });
 }
 
 it('audits only the authenticated user’s single-message deletion and skips repeats', async () => {
+  actor.role = 'USER';
   await runAsSystem(async () => {
     await seedHistory('mine', actor.id, 'owned-message');
     await models.Message.create({
