@@ -47,6 +47,7 @@ export default {
   //     lines: 57,
   //   },
   // },
+  globalSetup: '<rootDir>/jest.globalSetup.cjs',
   setupFiles: ['<rootDir>/jest.setup.cjs'],
   maxWorkers: '50%',
   restoreMocks: true,

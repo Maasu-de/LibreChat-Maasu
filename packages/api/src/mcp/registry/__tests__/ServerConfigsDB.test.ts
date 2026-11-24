@@ -72,7 +72,7 @@ beforeAll(async () => {
   await dbMethods.seedDefaultRoles();
 
   serverConfigsDB = new ServerConfigsDB(mongoose);
-});
+}, 60000);
 
 afterAll(async () => {
   await mongoose.disconnect();
