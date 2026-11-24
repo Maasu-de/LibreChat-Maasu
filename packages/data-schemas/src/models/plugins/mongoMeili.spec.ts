@@ -221,7 +221,7 @@ describe('Meilisearch Mongoose plugin', () => {
     );
   });
 
-  test('removes a message when a post-commit index write arrives after deletion', async () => {
+  test('retries a failed removal task after a late post-commit index write', async () => {
     const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
     const messageId = new mongoose.Types.ObjectId().toString();
     const message = await mongoose.connection.transaction(
@@ -252,12 +252,21 @@ describe('Meilisearch Mongoose plugin', () => {
       await writeReleased;
       indexedMessages.add(messageId);
     });
-    mockDeleteDocuments.mockImplementationOnce(async (ids: string[]) => {
-      ids.forEach((id) => indexedMessages.delete(id));
-      return { taskUid: 1 };
+    mockDeleteDocuments
+      .mockResolvedValueOnce({ taskUid: 1 })
+      .mockResolvedValueOnce({ taskUid: 2 })
+      .mockResolvedValueOnce({ taskUid: 3 });
+    mockWaitForTask.mockImplementationOnce(async () => {
+      indexedMessages.delete(messageId);
+      return { status: 'succeeded' };
     });
-    mockDeleteDocument.mockImplementationOnce(async (id: string) => {
-      indexedMessages.delete(id);
+    mockWaitForTask.mockImplementationOnce(async () => {
+      expect(indexedMessages.has(messageId)).toBe(true);
+      return { status: 'failed' };
+    });
+    mockWaitForTask.mockImplementationOnce(async () => {
+      indexedMessages.delete(messageId);
+      return { status: 'succeeded' };
     });
 
     const pendingIndex = Message.indexAfterCommit(message);
@@ -273,8 +282,8 @@ describe('Meilisearch Mongoose plugin', () => {
       await pendingIndex;
     }
 
-    expect(mockDeleteDocuments).toHaveBeenCalledWith([messageId]);
-    expect(mockDeleteDocument).toHaveBeenCalledWith(messageId);
+    expect(mockDeleteDocuments.mock.calls).toEqual([[[messageId]], [[messageId]], [[messageId]]]);
+    expect(mockWaitForTask.mock.calls.map(([taskUid]) => taskUid)).toEqual([1, 2, 3]);
     expect(indexedMessages.has(messageId)).toBe(false);
   });
 

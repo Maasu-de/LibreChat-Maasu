@@ -15,6 +15,8 @@ import type { IConversation, IMessage } from '~/types';
 import logger from '~/config/meiliLogger';
 import { buildRetentionVisibilityFilter, legacyPermanentExpirationFilter } from '~/utils/retention';
 
+const COMPENSATING_DELETE_ATTEMPTS = 3;
+
 interface MongoMeiliOptions {
   host: string;
   apiKey: string;
@@ -53,7 +55,7 @@ interface _DocumentWithMeiliIndex extends Document {
 export type DocumentWithMeiliIndex = _DocumentWithMeiliIndex & IConversation & Partial<IMessage>;
 
 export interface SchemaWithMeiliMethods extends Model<DocumentWithMeiliIndex> {
-  deleteFromMeili(ids: string[]): Promise<void>;
+  deleteFromMeili(ids: string[], attempts?: number): Promise<void>;
   indexAfterCommit(doc: Document): Promise<void>;
   syncWithMeili(): Promise<void>;
   getSyncProgress(): Promise<SyncProgress>;
@@ -315,7 +317,7 @@ const createMeiliMongooseModel = ({
               : [String(doc[primaryKey])],
           );
           if (deletedKeys.length) {
-            await this.deleteFromMeili(deletedKeys);
+            await this.deleteFromMeili(deletedKeys, COMPENSATING_DELETE_ATTEMPTS);
           }
         }
 
@@ -725,6 +727,29 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
   );
 
   if (meiliEnabled) {
+    async function deleteFromMeili(ids: string[], attempts = 1): Promise<void> {
+      await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            const enqueued = await index.deleteDocuments(batch);
+            const task = await client.waitForTask(enqueued.taskUid, {
+              timeOutMs: 10000,
+              intervalMs: 100,
+            });
+            if (task.status !== 'succeeded') {
+              throw new Error(`Meili cleanup task ${enqueued.taskUid} ended with ${task.status}`);
+            }
+            return;
+          } catch (error) {
+            if (attempt >= attempts) {
+              throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, attempt * 100));
+          }
+        }
+      });
+    }
+
     schema.static('indexAfterCommit', async (doc: DocumentWithMeiliIndex) => {
       if (doc.unfinished || !doc.postSaveHook) {
         return;
@@ -738,7 +763,7 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
         const model = doc.constructor as Model<DocumentWithMeiliIndex>;
         if (!(await model.exists({ _id: doc._id }).read('primary'))) {
           const indexedId = doc.preprocessObjectForIndex!()[primaryKey];
-          await index.deleteDocument(String(indexedId));
+          await deleteFromMeili([String(indexedId)], COMPENSATING_DELETE_ATTEMPTS);
         }
       } catch (error) {
         logger.error(
@@ -747,18 +772,7 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
         );
       }
     });
-    schema.static('deleteFromMeili', async (ids: string[]) => {
-      await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
-        const enqueued = await index.deleteDocuments(batch);
-        const task = await client.waitForTask(enqueued.taskUid, {
-          timeOutMs: 10000,
-          intervalMs: 100,
-        });
-        if (task.status !== 'succeeded') {
-          throw new Error(`Meili cleanup task ${enqueued.taskUid} ended with ${task.status}`);
-        }
-      });
-    });
+    schema.static('deleteFromMeili', deleteFromMeili);
   }
 
   // Register Mongoose hooks
