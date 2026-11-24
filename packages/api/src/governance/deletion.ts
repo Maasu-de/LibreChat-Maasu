@@ -18,14 +18,19 @@ export async function deleteGovernanceMessage(
   const user = req.user?.id;
   if (!user) throw new Error('Authenticated user is required');
   const cleanupSearch = await commitAuditedChatDeletion(req, async (session) => {
-    const cleanupSearch = await db.deleteMessageAndReconnectReplies(
+    const deleted = await db.deleteMessageAndReconnectReplies(
       { user, conversationId, messageId },
       session,
     );
     return {
-      result: cleanupSearch,
-      deletedCount: Number(cleanupSearch !== null),
-      resource: { scope: 'message', conversation_id: conversationId, message_id: messageId },
+      result: deleted?.cleanupSearch,
+      deletedCount: Number(deleted !== null),
+      resource: {
+        scope: 'message',
+        conversation_id: conversationId,
+        message_id: messageId,
+        ...(deleted?.requestMessageId ? { request_message_id: deleted.requestMessageId } : {}),
+      },
     };
   });
   try {

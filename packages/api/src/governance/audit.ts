@@ -38,7 +38,7 @@ interface GroupAuditDelivery extends AuditDeliveryState {
 }
 
 type ChatDeletionScope =
-  | { scope: 'message'; conversation_id: string; message_id: string }
+  | { scope: 'message'; conversation_id: string; message_id: string; request_message_id?: string }
   | { scope: 'conversation'; conversation_id: string }
   | { scope: 'all_conversations'; conversation_ids: string[] };
 
@@ -304,7 +304,10 @@ async function deliverPendingAudit(kind: AuditKind): Promise<void> {
   if (Date.now() - lastQuarantineAlert[kind] >= 60000) {
     const quarantined = await collection.countDocuments({ status: 'quarantined' });
     if (quarantined)
-      logger.error('[Governance audit] Quarantined events require replay', { kind, count: quarantined });
+      logger.error('[Governance audit] Quarantined events require replay', {
+        kind,
+        count: quarantined,
+      });
     lastQuarantineAlert[kind] = Date.now();
   }
 }

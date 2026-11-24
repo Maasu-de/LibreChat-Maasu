@@ -397,6 +397,47 @@ it('audits only the authenticated user’s single-message deletion and skips rep
   });
 });
 
+it.each([false, true])(
+  'correlates a deleted assistant reply with the original request (prompt deleted first: %s)',
+  async (deletePromptFirst) => {
+    await runAsSystem(async () => {
+      const conversationId = 'multi-turn';
+      const user = actor.id;
+      await seedHistory(conversationId, user, 'first-prompt');
+      await models.Message.create([
+        {
+          conversationId,
+          user,
+          messageId: 'prompt',
+          isCreatedByUser: true,
+          parentMessageId: 'first-prompt',
+        },
+        { conversationId, user, messageId: 'reply', parentMessageId: 'prompt' },
+      ]);
+      if (deletePromptFirst) {
+        await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'prompt');
+        expect(await models.Message.exists({ user, messageId: 'prompt' })).toBeNull();
+      }
+
+      await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'reply');
+
+      expect(await models.Message.exists({ user, messageId: 'reply' })).toBeNull();
+      expect(
+        await deletionOutbox().findOne({ 'payload.resource.message_id': 'reply' }),
+      ).toMatchObject({
+        payload: {
+          resource: {
+            scope: 'message',
+            conversation_id: conversationId,
+            message_id: 'reply',
+            request_message_id: 'prompt',
+          },
+        },
+      });
+    });
+  },
+);
+
 it('audits one conversation and reports cleanup failure after commit', async () => {
   await runAsSystem(async () => {
     await seedHistory('mine', actor.id, 'owned-message');

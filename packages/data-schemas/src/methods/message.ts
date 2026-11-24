@@ -88,7 +88,10 @@ export interface MessageMethods {
   deleteMessageAndReconnectReplies(
     filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
     session: ClientSession,
-  ): Promise<(() => Promise<void>) | null>;
+  ): Promise<{
+    cleanupSearch: () => Promise<void>;
+    requestMessageId?: string;
+  } | null>;
   deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession): Promise<DeleteResult>;
 }
 
@@ -535,26 +538,48 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   async function deleteMessageAndReconnectReplies(
     filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
     session: ClientSession,
-  ): Promise<(() => Promise<void>) | null> {
+  ): ReturnType<MessageMethods['deleteMessageAndReconnectReplies']> {
     const Message = mongoose.models.Message as Model<IMessage> &
       Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
-    const deleted = await Message.findOneAndDelete(filter, {
-      session,
-      projection: { parentMessageId: 1 },
-    });
+    const deleted = await Message.findOneAndDelete(filter, { session }).select(
+      'parentMessageId isCreatedByUser +governanceRequestMessageId',
+    );
     if (!deleted) return null;
 
+    const { user, conversationId, messageId } = filter;
+    const replyFilter = { user, conversationId, parentMessageId: messageId };
+    const parentMessageId = deleted.parentMessageId || Constants.NO_PARENT;
+    let requestMessageId: string | undefined;
+    if (deleted.isCreatedByUser) {
+      await Message.updateMany(
+        { ...replyFilter, isCreatedByUser: false, governanceRequestMessageId: { $exists: false } },
+        { $set: { governanceRequestMessageId: messageId } },
+        { session, timestamps: false },
+      );
+    } else if (deleted.governanceRequestMessageId) {
+      requestMessageId = deleted.governanceRequestMessageId;
+    } else if (
+      parentMessageId !== Constants.NO_PARENT &&
+      (await Message.exists({
+        user,
+        conversationId,
+        messageId: parentMessageId,
+        isCreatedByUser: true,
+      }).session(session))
+    ) {
+      requestMessageId = parentMessageId;
+    }
+
     await Message.updateMany(
-      {
-        user: filter.user,
-        conversationId: filter.conversationId,
-        parentMessageId: filter.messageId,
-      },
-      { $set: { parentMessageId: deleted.parentMessageId || Constants.NO_PARENT } },
+      replyFilter,
+      { $set: { parentMessageId } },
       { session, timestamps: false },
     );
-    return async () => {
-      await Message.deleteFromMeili?.([filter.messageId]);
+    return {
+      requestMessageId,
+      cleanupSearch: async () => {
+        await Message.deleteFromMeili?.([messageId]);
+      },
     };
   }
 
