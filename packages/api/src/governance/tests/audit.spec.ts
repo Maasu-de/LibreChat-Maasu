@@ -596,7 +596,7 @@ it('audits one conversation and reports cleanup failure after commit', async () 
   });
 });
 
-it('queues search cleanup only after the matching deletion audit is durable', async () => {
+it.each([false, true])('cleans up search after commit (search task fails: %s)', async (fails) => {
   await runAsSystem(async () => {
     await seedHistory('message-chat', actor.id, 'single-message');
     await seedHistory('conversation-chat', actor.id, 'conversation-message');
@@ -607,6 +607,7 @@ it('queues search cleanup only after the matching deletion audit is durable', as
     const deleteIndexedConversations = jest.fn(async (ids: string[]) => {
       expect(await models.Conversation.countDocuments({ conversationId: { $in: ids } })).toBe(0);
       expect(await deletionOutbox().countDocuments()).toBe(2);
+      if (fails) throw new Error('Meili cleanup task ended with failed');
     });
     Object.assign(models.Message, { deleteFromMeili: deleteIndexedMessages });
     Object.assign(models.Conversation, { deleteFromMeili: deleteIndexedConversations });
@@ -618,7 +619,13 @@ it('queues search cleanup only after the matching deletion audit is durable', as
         'conversation-chat',
       );
 
-      expect(result.cleanupFailures).toBeUndefined();
+      expect(result).toMatchObject({ deletedCount: 1, messages: { deletedCount: 1 } });
+      expect(result.cleanupFailures).toEqual(fails ? ['search_index'] : undefined);
+      expect(
+        await deletionOutbox().findOne({
+          'payload.resource.conversation_id': 'conversation-chat',
+        }),
+      ).toMatchObject({ payload: { outcome: 'success' } });
       expect(deleteIndexedMessages.mock.calls).toEqual([
         [['single-message']],
         [['conversation-message']],

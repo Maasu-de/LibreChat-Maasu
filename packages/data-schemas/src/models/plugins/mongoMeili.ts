@@ -301,10 +301,27 @@ const createMeiliMongooseModel = ({
         // Add documents to MeiliSearch
         await index.addDocumentsInBatches(formattedDocs, undefined, { primaryKey });
 
+        const docsIds = documents.map((doc) => doc._id);
+        if (this.deleteFromMeili) {
+          // A deletion may have enqueued cleanup while the batch was in flight.
+          const existing = await this.find({ _id: { $in: docsIds } })
+            .select('_id')
+            .read('primary')
+            .lean();
+          const existingIds = new Set(existing.map(({ _id }) => String(_id)));
+          const deletedKeys = documents.flatMap((doc) =>
+            existingIds.has(String(doc._id)) || doc[primaryKey] == null
+              ? []
+              : [String(doc[primaryKey])],
+          );
+          if (deletedKeys.length) {
+            await this.deleteFromMeili(deletedKeys);
+          }
+        }
+
         // Update MongoDB to mark documents as indexed.
         // { timestamps: false } prevents Mongoose from touching updatedAt, preserving
         // original conversation/message timestamps (fixes sidebar chronological sort).
-        const docsIds = documents.map((doc) => doc._id);
         await this.updateMany(
           { _id: { $in: docsIds } },
           { $set: { _meiliIndex: true } },
@@ -732,7 +749,14 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
     });
     schema.static('deleteFromMeili', async (ids: string[]) => {
       await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
-        await index.deleteDocuments(batch);
+        const enqueued = await index.deleteDocuments(batch);
+        const task = await client.waitForTask(enqueued.taskUid, {
+          timeOutMs: 10000,
+          intervalMs: 100,
+        });
+        if (task.status !== 'succeeded') {
+          throw new Error(`Meili cleanup task ${enqueued.taskUid} ended with ${task.status}`);
+        }
       });
     });
   }

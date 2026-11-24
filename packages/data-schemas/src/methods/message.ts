@@ -124,7 +124,10 @@ export function createMessageMethods(
 
       if (
         !conversation &&
-        (await deletedConversations(mongoose).findOne({ _id: { user, conversationId } }, { session }))
+        (await deletedConversations(mongoose).findOne(
+          { _id: { user, conversationId } },
+          { session },
+        ))
       ) {
         return null;
       }

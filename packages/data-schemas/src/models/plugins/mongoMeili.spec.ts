@@ -59,7 +59,8 @@ const mockAddDocuments = jest.fn();
 const mockAddDocumentsInBatches = jest.fn();
 const mockUpdateDocuments = jest.fn();
 const mockDeleteDocument = jest.fn();
-const mockDeleteDocuments = jest.fn();
+const mockDeleteDocuments = jest.fn().mockResolvedValue({ taskUid: 1 });
+const mockWaitForTask = jest.fn().mockResolvedValue({ status: 'succeeded' });
 const mockGetDocument = jest.fn();
 const mockIndex = jest.fn().mockReturnValue({
   getRawInfo: jest.fn(),
@@ -77,6 +78,7 @@ jest.mock('meilisearch', () => {
     MeiliSearch: jest.fn().mockImplementation(() => {
       return {
         index: mockIndex,
+        waitForTask: mockWaitForTask,
       };
     }),
   };
@@ -107,6 +109,7 @@ describe('Meilisearch Mongoose plugin', () => {
     mockUpdateDocuments.mockClear();
     mockDeleteDocument.mockClear();
     mockDeleteDocuments.mockClear();
+    mockWaitForTask.mockClear();
     mockGetDocument.mockClear();
   });
 
@@ -251,6 +254,7 @@ describe('Meilisearch Mongoose plugin', () => {
     });
     mockDeleteDocuments.mockImplementationOnce(async (ids: string[]) => {
       ids.forEach((id) => indexedMessages.delete(id));
+      return { taskUid: 1 };
     });
     mockDeleteDocument.mockImplementationOnce(async (id: string) => {
       indexedMessages.delete(id);
@@ -781,6 +785,65 @@ describe('Meilisearch Mongoose plugin', () => {
   });
 
   describe('New batch processing and retry functionality', () => {
+    test.each(['failed', 'canceled'])(
+      'reports a %s deletion task after submission',
+      async (status) => {
+        const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
+        mockWaitForTask.mockResolvedValueOnce({ status });
+
+        await expect(Message.deleteFromMeili(['deleted-message'])).rejects.toThrow(
+          `Meili cleanup task 1 ended with ${status}`,
+        );
+        expect(mockDeleteDocuments).toHaveBeenCalledWith(['deleted-message']);
+        expect(mockWaitForTask).toHaveBeenCalledWith(1, { timeOutMs: 10000, intervalMs: 100 });
+      },
+    );
+
+    test('removes a deleted message submitted by an in-flight sync batch', async () => {
+      const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
+      const user = new mongoose.Types.ObjectId().toString();
+      const conversationId = new mongoose.Types.ObjectId().toString();
+      const [removed, kept] = ['removed', 'kept'].map((label) => ({
+        _id: new mongoose.Types.ObjectId(),
+        messageId: `${conversationId}-${label}`,
+        conversationId,
+        user,
+      }));
+      await Message.collection.insertMany([removed, kept]);
+
+      const indexedMessages = new Set([removed.messageId, kept.messageId]);
+      const removeIndexed = async (ids: string[]) => {
+        ids.forEach((id) => indexedMessages.delete(id));
+        return { taskUid: 1 };
+      };
+      mockDeleteDocuments
+        .mockImplementationOnce(removeIndexed)
+        .mockImplementationOnce(removeIndexed);
+
+      // Commit deletion and finish its cleanup before the stale batch reaches MeiliSearch.
+      mockAddDocumentsInBatches.mockImplementationOnce(async () => {
+        await mongoose.connection.transaction(async (session) => {
+          await Message.deleteMany({ _id: removed._id }, { session });
+        });
+        await Message.deleteFromMeili([removed.messageId]);
+        indexedMessages.add(removed.messageId);
+      });
+      try {
+        await Message.processSyncBatch(mockIndex(), [removed, kept]);
+
+        expect(mockDeleteDocuments.mock.calls).toEqual([
+          [[removed.messageId]],
+          [[removed.messageId]],
+        ]);
+        expect([...indexedMessages]).toEqual([kept.messageId]);
+        expect(await Message.collection.findOne({ _id: kept._id })).toMatchObject({
+          _meiliIndex: true,
+        });
+      } finally {
+        await Message.collection.deleteMany({ _id: { $in: [removed._id, kept._id] } });
+      }
+    });
+
     test('processSyncBatch uses addDocumentsInBatches', async () => {
       const conversationModel = createConversationModel(
         mongoose,
