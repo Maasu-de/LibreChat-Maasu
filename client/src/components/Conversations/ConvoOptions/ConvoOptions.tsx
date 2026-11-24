@@ -86,15 +86,21 @@ function ConvoOptions({
   const pinConvoMutation = usePinConversationMutation();
 
   const deleteMutation = useDeleteConversationMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
       if (currentConvoId === conversationId || currentConvoId === 'new') {
         newConversation();
         navigate('/c/new', { replace: true });
       }
       retainView();
       showToast({
-        message: localize('com_ui_convo_delete_success'),
-        severity: NotificationSeverity.SUCCESS,
+        message: localize(
+          result?.cleanupFailures?.length
+            ? 'com_ui_chat_delete_cleanup_warning'
+            : 'com_ui_convo_delete_success',
+        ),
+        severity: result?.cleanupFailures?.length
+          ? NotificationSeverity.WARNING
+          : NotificationSeverity.SUCCESS,
         showIcon: true,
       });
     },

@@ -91,12 +91,18 @@ export default function ArchivedChatsTable({
   }, [data?.pages]);
 
   const deleteMutation = useDeleteConversationMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setIsDeleteOpen(false);
       await refetch();
       showToast({
-        message: localize('com_ui_convo_delete_success'),
-        severity: NotificationSeverity.SUCCESS,
+        message: localize(
+          result?.cleanupFailures?.length
+            ? 'com_ui_chat_delete_cleanup_warning'
+            : 'com_ui_convo_delete_success',
+        ),
+        severity: result?.cleanupFailures?.length
+          ? NotificationSeverity.WARNING
+          : NotificationSeverity.SUCCESS,
         showIcon: true,
       });
     },

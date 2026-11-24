@@ -1,10 +1,12 @@
 import React, { useState, useMemo, memo } from 'react';
 import { useRecoilState } from 'recoil';
+import { Constants } from 'librechat-data-provider';
 import { EditIcon, Clipboard, CheckMark, ContinueIcon, RegenerateIcon } from '@librechat/client';
 import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider';
 import { useGenerationsByLatest, useLocalize } from '~/hooks';
 import { useGetStartupConfig } from '~/data-provider';
 import { Fork } from '~/components/Conversations';
+import DeleteMessage from './DeleteMessage';
 import MessageAudio from './MessageAudio';
 import Feedback from './Feedback';
 import { cn } from '~/utils';
@@ -166,6 +168,18 @@ const HoverButtons = ({
     return null;
   }
 
+  const deleteAction =
+    governancePilot &&
+    !isEditing &&
+    !isSubmitting &&
+    !message.searchResult &&
+    message.conversationId &&
+    message.conversationId !== Constants.NEW_CONVO &&
+    message.conversationId !== Constants.PENDING_CONVO &&
+    message.messageId ? (
+      <DeleteMessage conversationId={message.conversationId} messageId={message.messageId} />
+    ) : null;
+
   const { isCreatedByUser, error } = message;
 
   if (error === true) {
@@ -180,6 +194,7 @@ const HoverButtons = ({
             dataTestId={isLast ? 'regenerate-generation-button' : undefined}
           />
         )}
+        {deleteAction}
       </div>
     );
   }
@@ -231,6 +246,8 @@ const HoverButtons = ({
         )}
         dataTestId={!isCreatedByUser ? 'copy-response-button' : undefined}
       />
+
+      {deleteAction}
 
       {/* Edit Button */}
       {isEditableEndpoint && (

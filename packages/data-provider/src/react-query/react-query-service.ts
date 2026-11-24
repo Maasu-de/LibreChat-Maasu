@@ -130,15 +130,16 @@ export const useUpdateUserKeysMutation = (): UseMutationResult<
   });
 };
 
-export const useClearConversationsMutation = (): UseMutationResult<unknown> => {
-  const queryClient = useQueryClient();
-  return useMutation(() => dataService.clearAllConversations(), {
-    onSuccess: () => {
-      queryClient.invalidateQueries([QueryKeys.allConversations]);
-      queryClient.invalidateQueries([QueryKeys.conversationTags]);
-    },
-  });
-};
+export const useClearConversationsMutation =
+  (): UseMutationResult<t.TDeleteConversationResponse> => {
+    const queryClient = useQueryClient();
+    return useMutation(() => dataService.clearAllConversations(), {
+      onSuccess: () => {
+        queryClient.invalidateQueries([QueryKeys.allConversations]);
+        queryClient.invalidateQueries([QueryKeys.conversationTags]);
+      },
+    });
+  };
 
 export const useRevokeUserKeyMutation = (name: string): UseMutationResult<unknown> => {
   const queryClient = useQueryClient();

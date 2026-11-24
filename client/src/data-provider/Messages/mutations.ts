@@ -3,6 +3,26 @@ import { dataService, QueryKeys, Constants } from 'librechat-data-provider';
 import type { UseMutationResult, UseMutationOptions } from '@tanstack/react-query';
 import type * as t from 'librechat-data-provider';
 
+export function useDeleteMessageMutation(conversationId: string) {
+  const queryClient = useQueryClient();
+  const queryKey = [QueryKeys.messages, conversationId];
+  return useMutation((messageId: string) => dataService.deleteMessage(conversationId, messageId), {
+    onSuccess: async (_data, messageId) => {
+      await queryClient.cancelQueries(queryKey, { exact: true });
+      queryClient.setQueryData<t.TMessage[]>(queryKey, (messages) => {
+        const deleted = messages?.find((message) => message.messageId === messageId);
+        if (!deleted) return messages;
+        return messages?.flatMap((message) => {
+          if (message.messageId === messageId) return [];
+          if (message.parentMessageId !== messageId) return [message];
+          return [{ ...message, parentMessageId: deleted.parentMessageId || Constants.NO_PARENT }];
+        });
+      });
+      void queryClient.invalidateQueries(queryKey, { exact: true });
+    },
+  });
+}
+
 type EditArtifactContext = {
   previousMessages: Record<string, t.TMessage[] | undefined>;
   updatedConversationId: string | null;
