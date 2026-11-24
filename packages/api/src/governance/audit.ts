@@ -37,7 +37,7 @@ interface GroupAuditDelivery extends AuditDeliveryState {
   };
 }
 
-export type ChatDeletionScope =
+type ChatDeletionScope =
   | { scope: 'message'; conversation_id: string; message_id: string }
   | { scope: 'conversation'; conversation_id: string }
   | { scope: 'all_conversations'; conversation_ids: string[] };
@@ -46,6 +46,7 @@ interface ChatDeletionDelivery extends AuditDeliveryState {
   kind: 'chat_deletion';
   payload: {
     occurred_at: string;
+    outcome: 'success';
     actor: { issuer: string; user_id: string };
     resource: ChatDeletionScope & { type: 'chat_deletion'; id: string; deleted_count: number };
   };
@@ -206,6 +207,7 @@ export async function commitAuditedChatDeletion<T>(
               nextAttemptAt: occurredAt,
               payload: {
                 occurred_at: occurredAt.toISOString(),
+                outcome: 'success',
                 actor: identity,
                 resource: { ...resource, type: 'chat_deletion', id, deleted_count: deletedCount },
               },

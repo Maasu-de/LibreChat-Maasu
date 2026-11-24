@@ -283,7 +283,10 @@ export async function deleteConvoSharedLinksWithCleanup(
   return deleteConversationSharedLinks(user, conversationId);
 }
 
-export async function deleteAuditScopedSharedLinks(user: string, conversationIds: string[]) {
+export async function deleteSharedLinksForConversations(
+  user: string,
+  conversationIds: string[],
+): Promise<{ message: string; deletedCount: number }> {
   return deleteConversationSharedLinks(user, { $in: conversationIds });
 }
 

@@ -1,17 +1,20 @@
 import { logger } from '@librechat/data-schemas';
 import type { ConversationMethods, MessageMethods, ToolCallMethods } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
-import { deleteAuditScopedSharedLinks } from '~/shared-links/service';
+import { deleteSharedLinksForConversations } from '~/shared-links/service';
 import { commitAuditedChatDeletion } from './audit';
 
 type DeletionRequest = Pick<ServerRequest, 'user'>;
+type ConversationDeletionResponse = Awaited<ReturnType<ConversationMethods['deleteConvos']>> & {
+  cleanupFailures?: string[];
+};
 
 export async function deleteGovernanceMessage(
   req: DeletionRequest,
   db: Pick<MessageMethods, 'deleteMessageAndReconnectReplies'>,
   conversationId: string,
   messageId: string,
-) {
+): Promise<void> {
   const user = req.user?.id;
   if (!user) throw new Error('Authenticated user is required');
   await commitAuditedChatDeletion(req, async (session) => {
@@ -31,7 +34,7 @@ export async function deleteGovernanceConversations(
   req: DeletionRequest,
   db: Pick<ConversationMethods, 'deleteConvos'> & Pick<ToolCallMethods, 'deleteToolCalls'>,
   conversationId?: string,
-) {
+): Promise<ConversationDeletionResponse> {
   const user = req.user?.id;
   if (!user) throw new Error('Authenticated user is required');
   const { conversationIds, cleanup, ...result } = await commitAuditedChatDeletion(
@@ -52,7 +55,7 @@ export async function deleteGovernanceConversations(
   const tasks = {
     conversation_metadata: cleanup,
     tool_calls: () => db.deleteToolCalls(user, conversationIds),
-    shared_links: () => deleteAuditScopedSharedLinks(user, conversationIds),
+    shared_links: () => deleteSharedLinksForConversations(user, conversationIds),
   };
   const entries = Object.entries(tasks);
   const outcomes = await Promise.allSettled(entries.map(async ([, run]) => run()));

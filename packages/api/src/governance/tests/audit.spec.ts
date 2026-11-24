@@ -372,6 +372,7 @@ it('audits only the authenticated user’s single-message deletion and skips rep
     expect(await outbox().countDocuments()).toBe(1);
     expect(event.payload).toEqual({
       occurred_at: event.createdAt.toISOString(),
+      outcome: 'success',
       actor: { issuer: 'https://identity.example', user_id: 'stable-subject' },
       resource: {
         type: 'chat_deletion',
