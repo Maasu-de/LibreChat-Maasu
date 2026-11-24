@@ -681,6 +681,16 @@ export function createMessageMethods(
   async function deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
+      const { user, conversationId, messageId } = filter;
+      if (
+        !session &&
+        typeof user === 'string' &&
+        typeof conversationId === 'string' &&
+        typeof messageId === 'string' &&
+        (await Message.exists(filter))
+      ) {
+        await preserveSharedMessageBoundaries(mongoose, { user, conversationId });
+      }
       return await Message.deleteMany(filter, { session });
     } catch (err) {
       logger.error('Error deleting messages:', err);

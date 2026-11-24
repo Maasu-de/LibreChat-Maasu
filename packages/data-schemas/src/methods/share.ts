@@ -382,7 +382,7 @@ function getMessagesUpToTarget<T extends Pick<t.IMessage, 'messageId' | 'parentM
 export async function preserveSharedMessageBoundaries(
   mongoose: typeof import('mongoose'),
   filter: { user: string; conversationId: string },
-  session: ClientSession,
+  session?: ClientSession,
 ): Promise<void> {
   const SharedLink = mongoose.models.SharedLink as Model<t.ISharedLink>;
   type SharedMessageRef = Pick<t.IMessage, 'messageId' | 'parentMessageId'> & {

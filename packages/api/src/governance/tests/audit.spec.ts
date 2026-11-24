@@ -399,38 +399,48 @@ it('audits only the authenticated user’s single-message deletion and skips rep
   });
 });
 
-it('preserves a shared snapshot when an excluded message is deleted and its child moves', async () => {
-  await runAsSystem(async () => {
-    const user = actor.id;
-    const conversationId = 'e6ea9659-e339-4482-a490-81fb13841008';
-    await seedHistory(conversationId, user, 'root');
-    const root = await models.Message.findOne({ user, conversationId, messageId: 'root' });
-    const [target, excluded, child] = await models.Message.create(
-      [
-        { messageId: 'target', parentMessageId: 'root' },
-        { messageId: 'excluded', parentMessageId: 'target' },
-        { messageId: 'child', parentMessageId: 'excluded' },
-      ].map((message) => ({ ...message, user, conversationId, text: message.messageId })),
-    );
-    const shareId = 'branch-snapshot';
-    await models.SharedLink.create({
-      user,
-      conversationId,
-      shareId,
-      targetMessageId: 'target',
-      messages: [root!._id, target._id, excluded._id, child._id],
-    });
-    const contents = async () =>
-      (await methods.getSharedMessages(shareId))?.messages.map(({ text }) => text);
+it.each(['audited', 'ordinary'])(
+  'preserves a shared snapshot after %s message deletion',
+  async (mode) => {
+    await runAsSystem(async () => {
+      const user = actor.id;
+      const conversationId = 'e6ea9659-e339-4482-a490-81fb13841008';
+      await seedHistory(conversationId, user, 'root');
+      const root = await models.Message.findOne({ user, conversationId, messageId: 'root' });
+      const [target, excluded, child] = await models.Message.create(
+        [
+          { messageId: 'target', parentMessageId: 'root' },
+          { messageId: 'excluded', parentMessageId: 'target' },
+          { messageId: 'child', parentMessageId: 'excluded' },
+        ].map((message) => ({ ...message, user, conversationId, text: message.messageId })),
+      );
+      const shareId = 'branch-snapshot';
+      await models.SharedLink.create({
+        user,
+        conversationId,
+        shareId,
+        targetMessageId: 'target',
+        messages: [root!._id, target._id, excluded._id, child._id],
+      });
+      const contents = async () =>
+        (await methods.getSharedMessages(shareId))?.messages.map(({ text }) => text);
+      const deleteMessage = (messageId: string) =>
+        mode === 'audited'
+          ? deleteGovernanceMessage({ user: actor }, methods, conversationId, messageId)
+          : methods.deleteMessages({ user, conversationId, messageId });
 
-    const original = await contents();
-    expect(original).toHaveLength(2);
-    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'excluded');
-    expect(await contents()).toEqual(original);
-    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'target');
-    expect(await contents()).toEqual([]);
-  });
-});
+      const original = await contents();
+      expect(original).toHaveLength(2);
+      await deleteMessage('excluded');
+      expect(
+        await models.Message.exists({ user, conversationId, messageId: 'excluded' }),
+      ).toBeNull();
+      expect(await contents()).toEqual(original);
+      await deleteMessage('target');
+      expect(await contents()).toEqual([]);
+    });
+  },
+);
 
 it('reconnects late generation writes through deleted parents without restoring deleted messages', async () => {
   await runAsSystem(async () => {
