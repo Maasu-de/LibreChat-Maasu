@@ -35,6 +35,7 @@ export interface ISharedLink {
   messages?: Types.ObjectId[];
   shareId?: string;
   targetMessageId?: string;
+  branchSnapshotNarrowed?: boolean;
   expiredAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;

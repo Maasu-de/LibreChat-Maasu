@@ -313,16 +313,23 @@ function anonymizeMessages(
  * Similar to getMessagesUpToTargetLevel from fork utilities
  */
 function getMessagesUpToTarget<T extends Pick<t.IMessage, 'messageId' | 'parentMessageId'>>(
-  messages: (T | null)[],
+  references: (T | null)[],
   targetMessageId: string,
+  branchSnapshotNarrowed?: boolean,
 ): T[] {
-  // Reconnecting replies after deletion can change which messages are within the target's level.
-  if (!messages?.length || !messages.every((message): message is T => message != null)) {
+  const messages = (references ?? []).filter((message): message is T => message != null);
+  const hasMissingReferences = messages.length !== (references?.length ?? 0);
+  // Every reference in a narrowed snapshot was visible before deletion.
+  if (messages.length === 0 || (branchSnapshotNarrowed && hasMissingReferences)) {
     return [];
   }
 
   // If only one message and it's the target, return it
-  if (messages.length === 1 && messages[0]?.messageId === targetMessageId) {
+  if (
+    !hasMissingReferences &&
+    messages.length === 1 &&
+    messages[0]?.messageId === targetMessageId
+  ) {
     return messages;
   }
 
@@ -345,6 +352,9 @@ function getMessagesUpToTarget<T extends Pick<t.IMessage, 'messageId' | 'parentM
 
   const visited = new Set<string>();
   const rootMessages = parentToChildrenMap.get(Constants.NO_PARENT) || [];
+  if (rootMessages.length === 0 && hasMissingReferences) {
+    return [];
+  }
   let currentLevel = rootMessages.length > 0 ? [...rootMessages] : [targetMessage];
   const results = new Set<T>(currentLevel);
 
@@ -389,7 +399,7 @@ export async function preserveSharedMessageBoundaries(
     _id: Types.ObjectId;
   };
   const shares = await SharedLink.find(
-    { ...filter, targetMessageId: { $type: 'string' } },
+    { ...filter, targetMessageId: { $type: 'string' }, branchSnapshotNarrowed: { $ne: true } },
     'messages targetMessageId',
     { session },
   ).populate<{ messages: (SharedMessageRef | null)[] }>({
@@ -401,10 +411,10 @@ export async function preserveSharedMessageBoundaries(
   for (const share of shares) {
     if (!share.targetMessageId) continue;
     const visible = getMessagesUpToTarget(share.messages, share.targetMessageId);
-    if (visible.length === 0 || visible.length === share.messages.length) continue;
+    if (visible.length === 0) continue;
     await SharedLink.updateOne(
       { _id: share._id, ...filter },
-      { $set: { messages: visible.map(({ _id }) => _id) } },
+      { $set: { messages: visible.map(({ _id }) => _id), branchSnapshotNarrowed: true } },
       { session, timestamps: false },
     );
   }
@@ -486,7 +496,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
 
       /** Filtered messages based on targetMessageId if present (branch-specific sharing) */
       const messagesToShare = share.targetMessageId
-        ? getMessagesUpToTarget(share.messages, share.targetMessageId)
+        ? getMessagesUpToTarget(share.messages, share.targetMessageId, share.branchSnapshotNarrowed)
         : (share.messages ?? []).filter((message) => message != null);
 
       const newConvoId = anonymizeConvoId(share.conversationId);
@@ -872,6 +882,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
       // Clear any prior snapshot when snapshotting is off so a disabled-feature
       // update can't keep serving stale file ids that the update dropped.
       const unset = {
+        branchSnapshotNarrowed: 1,
         ...(expiredAt === null ? { expiredAt: 1 } : {}),
         ...(snapshotFiles ? {} : { fileSnapshots: 1 }),
       };
@@ -1011,7 +1022,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
       }
 
       const messages = share.targetMessageId
-        ? getMessagesUpToTarget(share.messages, share.targetMessageId)
+        ? getMessagesUpToTarget(share.messages, share.targetMessageId, share.branchSnapshotNarrowed)
         : (share.messages ?? []).filter((message) => message != null);
 
       const fileSnapshots = await buildFileSnapshots(mongoose, messages, share.user);

@@ -8,6 +8,7 @@ export interface ISharedLink extends Document {
   messages?: Types.ObjectId[];
   shareId?: string;
   targetMessageId?: string;
+  branchSnapshotNarrowed?: boolean;
   expiredAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
@@ -64,6 +65,7 @@ const shareSchema: Schema<ISharedLink> = new Schema(
       required: false,
       index: true,
     },
+    branchSnapshotNarrowed: Boolean,
     tenantId: {
       type: String,
       index: true,
