@@ -280,18 +280,34 @@ export async function deleteConvoSharedLinksWithCleanup(
   user: string,
   conversationId: string,
 ): Promise<{ message: string; deletedCount: number }> {
+  return deleteConversationSharedLinks(user, conversationId);
+}
+
+export async function deleteAuditScopedSharedLinks(user: string, conversationIds: string[]) {
+  return deleteConversationSharedLinks(user, { $in: conversationIds });
+}
+
+async function deleteConversationSharedLinks(
+  user: string,
+  conversationId: string | { $in: string[] },
+): Promise<{ message: string; deletedCount: number }> {
   const SharedLink = mongoose.models.SharedLink as Model<ISharedLink>;
   const links = await SharedLink.find({ user, conversationId }).select('_id').lean();
   const ids = links.map((l) => l._id);
   const result = await SharedLink.deleteMany({ user, conversationId });
 
   if (ids.length > 0) {
-    cleanupBulkSharedLinkPermissions(ids).catch((err) => {
-      logger.error('[deleteConvoSharedLinksWithCleanup] ACL cleanup failed', {
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
+    const cleanup = cleanupBulkSharedLinkPermissions(ids);
+    if (typeof conversationId !== 'string') {
+      await cleanup;
+    } else {
+      void cleanup.catch((err) => {
+        logger.error('[deleteConvoSharedLinksWithCleanup] ACL cleanup failed', {
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
-    });
+    }
   }
 
   return {

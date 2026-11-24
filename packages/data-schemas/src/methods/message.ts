@@ -1,5 +1,5 @@
 import { RetentionMode } from 'librechat-data-provider';
-import type { DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
+import type { ClientSession, DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
 import type { TMinimalFeedback } from 'librechat-data-provider';
 import type { AppConfig, IMessage } from '~/types';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
@@ -84,7 +84,7 @@ export interface MessageMethods {
     searchOptions: Partial<IMessage>,
     hydrate?: boolean,
   ): Promise<unknown>;
-  deleteMessages(filter: FilterQuery<IMessage>): Promise<DeleteResult>;
+  deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession): Promise<DeleteResult>;
 }
 
 export function createMessageMethods(mongoose: typeof import('mongoose')): MessageMethods {
@@ -530,10 +530,10 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   /**
    * Deletes messages from the database.
    */
-  async function deleteMessages(filter: FilterQuery<IMessage>) {
+  async function deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
-      return await Message.deleteMany(filter);
+      return await Message.deleteMany(filter, { session });
     } catch (err) {
       logger.error('Error deleting messages:', err);
       throw err;

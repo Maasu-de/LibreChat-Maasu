@@ -8,6 +8,8 @@ const {
 } = require('librechat-data-provider');
 const {
   unescapeLaTeX,
+  isGovernancePilotEnabled,
+  deleteGovernanceMessage,
   countTokens,
   sendFeedbackScore,
   traceIdForMessage,
@@ -464,7 +466,11 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
 router.delete('/:conversationId/:messageId', validateMessageReq, async (req, res) => {
   try {
     const { conversationId, messageId } = req.params;
-    await db.deleteMessages({ messageId, conversationId, user: req.user.id });
+    if (isGovernancePilotEnabled()) {
+      await deleteGovernanceMessage(req, db, conversationId, messageId);
+    } else {
+      await db.deleteMessages({ messageId, conversationId, user: req.user.id });
+    }
     res.status(204).send();
   } catch (error) {
     logger.error('Error deleting message:', error);

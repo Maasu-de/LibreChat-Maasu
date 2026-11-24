@@ -1,5 +1,5 @@
 import { RetentionMode } from 'librechat-data-provider';
-import type { FilterQuery, Model, SortOrder } from 'mongoose';
+import type { ClientSession, FilterQuery, Model, SortOrder } from 'mongoose';
 import type { DeleteResult } from 'mongoose';
 import type { AppConfig, IChatProjectDocument, IConversation } from '~/types';
 import type { MessageMethods } from './message';
@@ -13,6 +13,12 @@ import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { decrementTagCounts } from './conversationTag';
 import logger from '~/config/winston';
+
+type ConversationDeletionResult = DeleteResult & { messages: DeleteResult };
+type AuditedConversationDeletionResult = ConversationDeletionResult & {
+  conversationIds: string[];
+  cleanup: () => Promise<void>;
+};
 
 export interface ConversationMethods {
   getConvoFiles(conversationId: string): Promise<string[]>;
@@ -64,7 +70,12 @@ export interface ConversationMethods {
   deleteConvos(
     user: string,
     filter: FilterQuery<IConversation>,
-  ): Promise<DeleteResult & { messages: DeleteResult }>;
+    session: ClientSession,
+  ): Promise<AuditedConversationDeletionResult>;
+  deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+  ): Promise<ConversationDeletionResult>;
 }
 
 export function createConversationMethods(
@@ -743,14 +754,27 @@ export function createConversationMethods(
   /**
    * Deletes conversations and their associated messages for a given user and filter.
    */
-  async function deleteConvos(user: string, filter: FilterQuery<IConversation>) {
+  function deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+    session: ClientSession,
+  ): Promise<AuditedConversationDeletionResult>;
+  function deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+  ): Promise<ConversationDeletionResult>;
+  async function deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+    session?: ClientSession,
+  ): Promise<ConversationDeletionResult | AuditedConversationDeletionResult> {
     try {
       const Conversation = mongoose.models.Conversation as Model<IConversation>;
       const { deleteMessages } = getMessageMethods();
       const userFilter = { ...filter, user };
-      const conversations = await Conversation.find(userFilter).select(
-        'conversationId chatProjectId tags',
-      );
+      const conversations = await Conversation.find(userFilter, 'conversationId chatProjectId tags', {
+        session,
+      });
       const conversationIds = conversations.map((c) => c.conversationId);
       const projectIds = new Set(
         conversations
@@ -774,43 +798,53 @@ export function createConversationMethods(
       }
 
       if (!conversationIds.length) {
-        throw new Error('Conversation not found or already deleted.');
+        if (!session) {
+          throw new Error('Conversation not found or already deleted.');
+        }
+        const empty: DeleteResult = { acknowledged: true, deletedCount: 0 };
+        return { ...empty, messages: empty, conversationIds, cleanup: async () => {} };
       }
 
-      const deleteConvoResult = await Conversation.deleteMany(userFilter);
+      const deleteConvoResult = await Conversation.deleteMany(
+        session ? { ...userFilter, _id: { $in: conversations.map((convo) => convo._id) } } : userFilter,
+        { session },
+      );
       const deleted = deleteConvoResult.deletedCount > 0;
 
-      /**
-       * Reconcile bookmark counts from the deletion before message cleanup: if
-       * `deleteMessages` later throws, the conversation is already gone and a retry
-       * finds nothing, so the count must be reconciled here or it would stay stale.
-       * The decrement is best-effort and never throws, so it cannot block message
-       * cleanup. The `deletedCount` guard skips a losing concurrent delete whose
-       * pre-delete snapshot would otherwise decrement a conversation it did not
-       * actually remove.
-       */
-      if (deleted) {
+      const refreshProjects = async () => {
+        if (deleted && projectIds.size > 0) {
+          await Promise.all(
+            [...projectIds].map((projectId) =>
+              refreshChatProjectStatsForUser(mongoose, user, projectId),
+            ),
+          );
+        }
+      };
+
+      if (session && deleteConvoResult.deletedCount !== conversationIds.length) {
+        throw new Error('Conversation deletion count did not match its transaction snapshot');
+      }
+      if (deleted && !session) {
         await decrementTagCounts(mongoose, user, tagDecrements);
       }
 
-      const deleteMessagesResult = await deleteMessages({
-        conversationId: { $in: conversationIds },
-        user,
-      });
-
-      /**
-       * Refresh project stats after message cleanup so a stats-refresh error cannot
-       * prevent `deleteMessages` from running, which would orphan the deleted
-       * conversations' messages.
-       */
-      if (deleted && projectIds.size > 0) {
-        await Promise.all(
-          [...projectIds].map((projectId) =>
-            refreshChatProjectStatsForUser(mongoose, user, projectId),
-          ),
-        );
+      const messageFilter = { conversationId: { $in: conversationIds }, user };
+      const deleteMessagesResult = session
+        ? await deleteMessages(messageFilter, session)
+        : await deleteMessages(messageFilter);
+      if (session) {
+        return {
+          ...deleteConvoResult,
+          messages: deleteMessagesResult,
+          conversationIds,
+          cleanup: async () => {
+            await decrementTagCounts(mongoose, user, tagDecrements);
+            await refreshProjects();
+          },
+        };
       }
 
+      await refreshProjects();
       return { ...deleteConvoResult, messages: deleteMessagesResult };
     } catch (error) {
       logger.error('[deleteConvos] Error deleting conversations and messages', error);

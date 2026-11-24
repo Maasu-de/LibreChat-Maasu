@@ -9,6 +9,8 @@ jest.mock('@librechat/agents', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  isGovernancePilotEnabled: jest.fn(),
+  deleteGovernanceMessage: jest.fn(),
   unescapeLaTeX: jest.fn((x) => x),
   countTokens: jest.fn().mockResolvedValue(10),
 }));

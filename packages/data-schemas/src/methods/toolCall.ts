@@ -193,13 +193,13 @@ export function createToolCallMethods(mongoose: typeof import('mongoose')): {
    */
   async function deleteToolCalls(
     userId: string,
-    conversationId?: string,
+    conversationId?: string | string[],
   ): Promise<import('mongodb').DeleteResult> {
     try {
       const ToolCall = mongoose.models.ToolCall as Model<IToolCallData>;
-      const query: Record<string, string> = { user: userId };
+      const query: { user: string; conversationId?: string | { $in: string[] } } = { user: userId };
       if (conversationId) {
-        query.conversationId = conversationId;
+        query.conversationId = Array.isArray(conversationId) ? { $in: conversationId } : conversationId;
       }
       return await ToolCall.deleteMany(query);
     } catch (error) {
