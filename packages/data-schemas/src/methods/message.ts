@@ -15,8 +15,8 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 interface MessageQueryOptions {
   limit?: number;
   sort?: Record<string, 1 | -1> | false;
-}
   session?: ClientSession;
+}
 
 interface MessageTextStatsOptions {
   limit?: number;
@@ -121,7 +121,6 @@ export function createMessageMethods(
         .select({ governanceMessageRedirects: 1 })
         .lean();
 
-      const redirects = new Map(
       if (
         !conversation &&
         (await deletedConversations(mongoose).findOne({ _id: { user, conversationId } }, { session }))
@@ -129,6 +128,7 @@ export function createMessageMethods(
         return null;
       }
 
+      const redirects = new Map(
         conversation?.governanceMessageRedirects?.map((entry) => [entry.messageId, entry]),
       );
       if (

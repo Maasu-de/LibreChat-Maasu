@@ -495,6 +495,38 @@ it.each([false, true])(
   },
 );
 
+it.each(['single', 'bulk'])('blocks late generation saves after %s deletion', async (scope) => {
+  await runAsSystem(async () => {
+    const deletedId = '33a1e6d7-823a-44e0-a800-deacc274226d';
+    const newId = 'e9c9538e-1f22-401d-a2a1-45ab27b5d5b8';
+    const ctx = { userId: actor.id };
+    await seedHistory(deletedId, actor.id, 'prompt');
+    await deleteGovernanceConversations(
+      { user: actor },
+      methods,
+      scope === 'single' ? deletedId : undefined,
+    );
+
+    expect(
+      await methods.saveMessage(ctx, {
+        conversationId: deletedId,
+        messageId: 'late-reply',
+        parentMessageId: 'prompt',
+      }),
+    ).toBeNull();
+    expect(await methods.saveConvo(ctx, { conversationId: deletedId, title: 'Late' })).toBeNull();
+    expect(await models.Message.exists({ conversationId: deletedId })).toBeNull();
+    expect(await models.Conversation.exists({ conversationId: deletedId })).toBeNull();
+
+    expect(
+      await methods.saveMessage(ctx, { conversationId: newId, messageId: 'first-message' }),
+    ).toMatchObject({ conversationId: newId });
+    expect(await methods.saveConvo(ctx, { conversationId: newId, title: 'New' })).toMatchObject({
+      conversationId: newId,
+    });
+  });
+});
+
 it('audits one conversation and reports cleanup failure after commit', async () => {
   await runAsSystem(async () => {
     await seedHistory('mine', actor.id, 'owned-message');
@@ -529,38 +561,6 @@ it('queues search cleanup only after the matching deletion audit is durable', as
       expect(await deletionOutbox().countDocuments()).toBeGreaterThan(0);
     });
     const deleteIndexedConversations = jest.fn(async (ids: string[]) => {
-it.each(['single', 'bulk'])('blocks late generation saves after %s deletion', async (scope) => {
-  await runAsSystem(async () => {
-    const deletedId = '33a1e6d7-823a-44e0-a800-deacc274226d';
-    const newId = 'e9c9538e-1f22-401d-a2a1-45ab27b5d5b8';
-    const ctx = { userId: actor.id };
-    await seedHistory(deletedId, actor.id, 'prompt');
-    await deleteGovernanceConversations(
-      { user: actor },
-      methods,
-      scope === 'single' ? deletedId : undefined,
-    );
-
-    expect(
-      await methods.saveMessage(ctx, {
-        conversationId: deletedId,
-        messageId: 'late-reply',
-        parentMessageId: 'prompt',
-      }),
-    ).toBeNull();
-    expect(await methods.saveConvo(ctx, { conversationId: deletedId, title: 'Late' })).toBeNull();
-    expect(await models.Message.exists({ conversationId: deletedId })).toBeNull();
-    expect(await models.Conversation.exists({ conversationId: deletedId })).toBeNull();
-
-    expect(
-      await methods.saveMessage(ctx, { conversationId: newId, messageId: 'first-message' }),
-    ).toMatchObject({ conversationId: newId });
-    expect(await methods.saveConvo(ctx, { conversationId: newId, title: 'New' })).toMatchObject({
-      conversationId: newId,
-    });
-  });
-});
-
       expect(await models.Conversation.countDocuments({ conversationId: { $in: ids } })).toBe(0);
       expect(await deletionOutbox().countDocuments()).toBe(2);
     });
