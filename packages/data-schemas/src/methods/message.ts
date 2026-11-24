@@ -6,6 +6,7 @@ import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { createFallbackRetentionDate } from '~/utils/retention';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import { deletedConversations } from './deletedConversation';
 import logger from '~/config/winston';
 
 /** Simple UUID v4 regex to replace zod validation */
@@ -15,6 +16,7 @@ interface MessageQueryOptions {
   limit?: number;
   sort?: Record<string, 1 | -1> | false;
 }
+  session?: ClientSession;
 
 interface MessageTextStatsOptions {
   limit?: number;
@@ -120,6 +122,13 @@ export function createMessageMethods(
         .lean();
 
       const redirects = new Map(
+      if (
+        !conversation &&
+        (await deletedConversations(mongoose).findOne({ _id: { user, conversationId } }, { session }))
+      ) {
+        return null;
+      }
+
         conversation?.governanceMessageRedirects?.map((entry) => [entry.messageId, entry]),
       );
       if (
@@ -482,7 +491,7 @@ export function createMessageMethods(
   ) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
-      const query = Message.find(filter);
+      const query = Message.find(filter, null, { session: options.session });
       if (select) {
         query.select(select);
       }

@@ -193,10 +193,11 @@ export function createMethods(
 
   const messageMethods = createMessageMethods(mongoose, deps.coordinateMessageDeletion);
 
-  const conversationMethods = createConversationMethods(mongoose, {
-    getMessages: messageMethods.getMessages,
-    deleteMessages: messageMethods.deleteMessages,
-  });
+  const conversationMethods = createConversationMethods(
+    mongoose,
+    { getMessages: messageMethods.getMessages, deleteMessages: messageMethods.deleteMessages },
+    deps.coordinateMessageDeletion,
+  );
 
   // ACL entry methods (used internally for removeAllPermissions)
   const aclEntryMethods = createAclEntryMethods(mongoose);

@@ -12,6 +12,7 @@ import { buildRetentionVisibilityFilter, createFallbackRetentionDate } from '~/u
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
+import { deletedConversations } from './deletedConversation';
 import { decrementTagCounts } from './conversationTag';
 import logger from '~/config/winston';
 
@@ -83,6 +84,7 @@ export interface ConversationMethods {
 export function createConversationMethods(
   mongoose: typeof import('mongoose'),
   messageMethods?: Pick<MessageMethods, 'getMessages' | 'deleteMessages'>,
+  coordinateConversationDeletion?: () => boolean,
 ): ConversationMethods {
   function getMessageMethods() {
     if (!messageMethods) {
@@ -219,15 +221,15 @@ export function createConversationMethods(
     },
   ) {
     try {
-      const Conversation = mongoose.models.Conversation as Model<IConversation>;
+      const Conversation = mongoose.models.Conversation as Model<IConversation> &
+        Partial<Pick<SchemaWithMeiliMethods, 'indexAfterCommit'>>;
       const { getMessages } = getMessageMethods();
 
       if (metadata?.context) {
         logger.debug(`[saveConvo] ${metadata.context}`);
       }
 
-      const messages = await getMessages({ conversationId, user: userId }, '_id');
-      const update: Record<string, unknown> = { ...convo, messages, user: userId };
+      const update: Record<string, unknown> = { ...convo, user: userId };
       const unsetFields: Record<string, number> = { ...(metadata?.unsetFields ?? {}) };
 
       if (Object.prototype.hasOwnProperty.call(update, 'chatProjectId') && update.chatProjectId) {
@@ -307,33 +309,51 @@ export function createConversationMethods(
         updateOperation.$setOnInsert = { createdAt: createdAtOnInsert };
       }
 
-      const conversationResult = (await Conversation.findOneAndUpdate(
-        { conversationId, user: userId },
-        updateOperation,
-        {
-          new: true,
-          upsert: metadata?.noUpsert !== true,
-          includeResultMetadata: true,
-          ...(createdAtOnInsert ? { timestamps: false } : {}),
-        },
-      )) as unknown as {
-        value:
-          | (IConversation & {
-              _id: unknown;
-              $isDefault: (path: string) => boolean;
-              toObject: () => IConversation;
-            })
-          | null;
-        lastErrorObject?: {
-          updatedExisting?: boolean;
-        };
+      const save = async (session?: ClientSession) => {
+        if (
+          session &&
+          (await deletedConversations(mongoose).findOne(
+            {
+              _id: {
+                $in: [
+                  { user: userId, conversationId },
+                  ...(newConversationId ? [{ user: userId, conversationId: newConversationId }] : []),
+                ],
+              },
+            },
+            { session },
+          ))
+        ) {
+          return null;
+        }
+        const filter = { conversationId, user: userId };
+        const messages = session
+          ? await getMessages(filter, '_id', { session })
+          : await getMessages(filter, '_id');
+        return Conversation.findOneAndUpdate(
+          { conversationId, user: userId },
+          { ...updateOperation, $set: { ...update, messages } },
+          {
+            new: true,
+            upsert: metadata?.noUpsert !== true,
+            includeResultMetadata: true,
+            ...(createdAtOnInsert ? { timestamps: false } : {}),
+            session,
+          },
+        );
       };
-      const conversation = conversationResult.value;
+      const coordinated = coordinateConversationDeletion?.() === true;
+      const conversationResult = coordinated
+        ? await mongoose.connection.transaction((session) => save(session))
+        : await save();
+      const conversation = conversationResult?.value;
 
       if (!conversation) {
         logger.debug('[saveConvo] Conversation not found, skipping update');
         return null;
       }
+
+      if (coordinated) await Conversation.indexAfterCommit?.(conversation);
 
       if (
         interfaceConfig?.retentionMode === RetentionMode.ALL &&
@@ -397,7 +417,7 @@ export function createConversationMethods(
             userId,
             conversation.chatProjectId,
             conversation,
-            conversationResult.lastErrorObject?.updatedExisting === false,
+            conversationResult?.lastErrorObject?.updatedExisting === false,
           );
         }
       }
@@ -840,6 +860,12 @@ export function createConversationMethods(
 
       if (session && deleteConvoResult.deletedCount !== conversationIds.length) {
         throw new Error('Conversation deletion count did not match its transaction snapshot');
+      }
+      if (session) {
+        await deletedConversations(mongoose).insertMany(
+          conversationIds.map((conversationId) => ({ _id: { user, conversationId } })),
+          { session },
+        );
       }
       if (deleted && !session) {
         await decrementTagCounts(mongoose, user, tagDecrements);
