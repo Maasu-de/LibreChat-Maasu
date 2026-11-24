@@ -81,6 +81,7 @@ beforeEach(async () => {
   await runAsSystem(async () => {
     await models.Conversation.deleteMany({});
     await models.Message.deleteMany({});
+    await models.SharedLink.deleteMany({});
     await models.Group.deleteMany({});
     await models.User.deleteMany({});
     await outbox().deleteMany({});
@@ -395,6 +396,39 @@ it('audits only the authenticated user’s single-message deletion and skips rep
         deleted_count: 1,
       },
     });
+  });
+});
+
+it('preserves a shared snapshot when an excluded message is deleted and its child moves', async () => {
+  await runAsSystem(async () => {
+    const user = actor.id;
+    const conversationId = 'e6ea9659-e339-4482-a490-81fb13841008';
+    await seedHistory(conversationId, user, 'root');
+    const root = await models.Message.findOne({ user, conversationId, messageId: 'root' });
+    const [target, excluded, child] = await models.Message.create(
+      [
+        { messageId: 'target', parentMessageId: 'root' },
+        { messageId: 'excluded', parentMessageId: 'target' },
+        { messageId: 'child', parentMessageId: 'excluded' },
+      ].map((message) => ({ ...message, user, conversationId, text: message.messageId })),
+    );
+    const shareId = 'branch-snapshot';
+    await models.SharedLink.create({
+      user,
+      conversationId,
+      shareId,
+      targetMessageId: 'target',
+      messages: [root!._id, target._id, excluded._id, child._id],
+    });
+    const contents = async () =>
+      (await methods.getSharedMessages(shareId))?.messages.map(({ text }) => text);
+
+    const original = await contents();
+    expect(original).toHaveLength(2);
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'excluded');
+    expect(await contents()).toEqual(original);
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'target');
+    expect(await contents()).toEqual([]);
   });
 });
 

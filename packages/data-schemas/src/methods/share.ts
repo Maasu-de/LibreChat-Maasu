@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { Constants, FileSources } from 'librechat-data-provider';
-import type { FilterQuery, Model } from 'mongoose';
+import type { ClientSession, FilterQuery, Model, Types } from 'mongoose';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type * as t from '~/types';
 import { activeExpirationFilter } from '~/utils/retention';
@@ -312,12 +312,12 @@ function anonymizeMessages(
  * Filter messages up to and including the target message (branch-specific)
  * Similar to getMessagesUpToTargetLevel from fork utilities
  */
-function getMessagesUpToTarget(
-  messages: (t.IMessage | null)[],
+function getMessagesUpToTarget<T extends Pick<t.IMessage, 'messageId' | 'parentMessageId'>>(
+  messages: (T | null)[],
   targetMessageId: string,
-): t.IMessage[] {
+): T[] {
   // Reconnecting replies after deletion can change which messages are within the target's level.
-  if (!messages?.length || !messages.every((message): message is t.IMessage => message != null)) {
+  if (!messages?.length || !messages.every((message): message is T => message != null)) {
     return [];
   }
 
@@ -327,7 +327,7 @@ function getMessagesUpToTarget(
   }
 
   // Create a map of parentMessageId to children messages
-  const parentToChildrenMap = new Map<string, t.IMessage[]>();
+  const parentToChildrenMap = new Map<string, T[]>();
   for (const message of messages) {
     const parentId = message.parentMessageId || Constants.NO_PARENT;
     if (!parentToChildrenMap.has(parentId)) {
@@ -346,12 +346,12 @@ function getMessagesUpToTarget(
   const visited = new Set<string>();
   const rootMessages = parentToChildrenMap.get(Constants.NO_PARENT) || [];
   let currentLevel = rootMessages.length > 0 ? [...rootMessages] : [targetMessage];
-  const results = new Set<t.IMessage>(currentLevel);
+  const results = new Set<T>(currentLevel);
 
   // Iterate level by level until the target is found
   let targetFound = currentLevel.some((msg) => msg.messageId === targetMessageId);
   while (!targetFound && currentLevel.length > 0) {
-    const nextLevel: t.IMessage[] = [];
+    const nextLevel: T[] = [];
     for (const node of currentLevel) {
       if (visited.has(node.messageId)) {
         continue;
@@ -373,6 +373,41 @@ function getMessagesUpToTarget(
   }
 
   return targetFound ? Array.from(results) : [];
+}
+
+/**
+ * Keep branch snapshots bounded by their original message set before replies move.
+ * Keeping visible references also lets readers invalidate a snapshot if one disappears.
+ */
+export async function preserveSharedMessageBoundaries(
+  mongoose: typeof import('mongoose'),
+  filter: { user: string; conversationId: string },
+  session: ClientSession,
+): Promise<void> {
+  const SharedLink = mongoose.models.SharedLink as Model<t.ISharedLink>;
+  type SharedMessageRef = Pick<t.IMessage, 'messageId' | 'parentMessageId'> & {
+    _id: Types.ObjectId;
+  };
+  const shares = await SharedLink.find(
+    { ...filter, targetMessageId: { $type: 'string' } },
+    'messages targetMessageId',
+    { session },
+  ).populate<{ messages: (SharedMessageRef | null)[] }>({
+    path: 'messages',
+    select: 'messageId parentMessageId',
+    options: { session, retainNullValues: true },
+  });
+
+  for (const share of shares) {
+    if (!share.targetMessageId) continue;
+    const visible = getMessagesUpToTarget(share.messages, share.targetMessageId);
+    if (visible.length === 0 || visible.length === share.messages.length) continue;
+    await SharedLink.updateOne(
+      { _id: share._id, ...filter },
+      { $set: { messages: visible.map(({ _id }) => _id) } },
+      { session, timestamps: false },
+    );
+  }
 }
 
 /** Factory function that takes mongoose instance and returns the methods */

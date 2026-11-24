@@ -6,6 +6,7 @@ import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { createFallbackRetentionDate } from '~/utils/retention';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import { preserveSharedMessageBoundaries } from './share';
 import { deletedConversations } from './deletedConversation';
 import logger from '~/config/winston';
 
@@ -615,12 +616,15 @@ export function createMessageMethods(
   ): ReturnType<MessageMethods['deleteMessageAndReconnectReplies']> {
     const Message = mongoose.models.Message as Model<IMessage> &
       Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
-    const deleted = await Message.findOneAndDelete(filter, { session }).select(
+    const deleted = await Message.findOne(filter, null, { session }).select(
       'parentMessageId isCreatedByUser +governanceRequestMessageId',
     );
     if (!deleted) return null;
 
     const { user, conversationId, messageId } = filter;
+    await preserveSharedMessageBoundaries(mongoose, { user, conversationId }, session);
+    await Message.deleteOne({ ...filter, _id: deleted._id }, { session });
+
     const replyFilter = { user, conversationId, parentMessageId: messageId };
     const parentMessageId = deleted.parentMessageId || Constants.NO_PARENT;
     const Conversation = mongoose.models.Conversation as Model<IConversation>;
