@@ -160,6 +160,7 @@ export interface CreateMethodsDeps {
   removeAllPermissions?: (params: { resourceType: string; resourceId: unknown }) => Promise<void>;
   /** Returns a cache store for the given key. From getLogStores. */
   getCache?: RoleDeps['getCache'];
+  coordinateMessageDeletion?: () => boolean;
 }
 
 /**
@@ -190,7 +191,7 @@ export function createMethods(
     createStructuredTransaction: transactionMethods.createStructuredTransaction,
   });
 
-  const messageMethods = createMessageMethods(mongoose);
+  const messageMethods = createMessageMethods(mongoose, deps.coordinateMessageDeletion);
 
   const conversationMethods = createConversationMethods(mongoose, {
     getMessages: messageMethods.getMessages,

@@ -2,11 +2,12 @@ import express from 'express';
 import request from 'supertest';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
-import { GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
+import { Constants, GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
 import { createModels, createMethods, runAsSystem } from '@librechat/data-schemas';
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import { deleteGovernanceConversations, deleteGovernanceMessage } from '../deletion';
+import { isGovernancePilotEnabled } from '../mode';
 import { createAdminGroupsHandlers } from '../../admin/groups';
 import {
   flushGovernanceGroupAudit,
@@ -18,7 +19,7 @@ const environment = process.env;
 let replica: MongoMemoryReplSet;
 let actor: IUser;
 const models = createModels(mongoose);
-const methods = createMethods(mongoose);
+const methods = createMethods(mongoose, { coordinateMessageDeletion: isGovernancePilotEnabled });
 const handlers = createAdminGroupsHandlers({
   ...methods,
   listGroups: (filter = {}) =>
@@ -394,6 +395,62 @@ it('audits only the authenticated user’s single-message deletion and skips rep
         deleted_count: 1,
       },
     });
+  });
+});
+
+it('reconnects late generation writes through deleted parents without restoring deleted messages', async () => {
+  await runAsSystem(async () => {
+    const conversationId = '906dcd21-f1cd-4aa2-9b45-3e50a9f4c64c';
+    const user = actor.id;
+    const ctx = { userId: user };
+    await seedHistory(conversationId, user, 'root');
+    const prompt = {
+      conversationId,
+      messageId: 'prompt',
+      parentMessageId: 'earlier',
+      isCreatedByUser: true,
+    };
+    await methods.saveMessage(ctx, {
+      conversationId,
+      messageId: 'earlier',
+      parentMessageId: 'root',
+    });
+    await methods.saveMessage(ctx, prompt);
+
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'prompt');
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'earlier');
+
+    expect(await methods.saveMessage(ctx, prompt)).toBeNull();
+    expect(await models.Message.exists({ user, messageId: 'prompt' })).toBeNull();
+    const reply = { conversationId, messageId: 'late-reply', parentMessageId: 'prompt' };
+    expect(await methods.saveMessage(ctx, reply)).toMatchObject({ parentMessageId: 'root' });
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'late-reply');
+    expect(
+      await deletionOutbox().findOne({ 'payload.resource.message_id': 'late-reply' }),
+    ).toMatchObject({
+      payload: { resource: { request_message_id: 'prompt' } },
+    });
+  });
+});
+
+it('serializes concurrent reply persistence and deletion of its parent', async () => {
+  await runAsSystem(async () => {
+    const conversationId = '77a33a4e-77e4-43e4-ad0e-c044abf2ff9e';
+    const user = actor.id;
+    await seedHistory(conversationId, user, 'parent');
+    await Promise.all([
+      methods.saveMessage(
+        { userId: user },
+        { conversationId, messageId: 'reply', parentMessageId: 'parent' },
+      ),
+      deleteGovernanceMessage({ user: actor }, methods, conversationId, 'parent'),
+    ]);
+
+    expect(await methods.getMessage({ user, messageId: 'reply' })).toMatchObject({
+      parentMessageId: Constants.NO_PARENT,
+    });
+    expect(await models.Message.exists({ user, messageId: 'parent' })).toBeNull();
+    expect(await deletionOutbox().countDocuments()).toBe(1);
   });
 });
 

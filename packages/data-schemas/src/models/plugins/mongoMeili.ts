@@ -54,6 +54,7 @@ export type DocumentWithMeiliIndex = _DocumentWithMeiliIndex & IConversation & P
 
 export interface SchemaWithMeiliMethods extends Model<DocumentWithMeiliIndex> {
   deleteFromMeili(ids: string[]): Promise<void>;
+  indexAfterCommit(doc: Document): Promise<void>;
   syncWithMeili(): Promise<void>;
   getSyncProgress(): Promise<SyncProgress>;
   processSyncBatch(
@@ -707,6 +708,11 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
   );
 
   if (meiliEnabled) {
+    schema.static('indexAfterCommit', async (doc: DocumentWithMeiliIndex) => {
+      if (!doc.unfinished && doc.postSaveHook) {
+        await new Promise<void>((resolve) => doc.postSaveHook!(() => resolve()));
+      }
+    });
     schema.static('deleteFromMeili', async (ids: string[]) => {
       await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
         await index.deleteDocuments(batch);
@@ -791,7 +797,7 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
 
   // Post-findOneAndUpdate hook
   schema.post('findOneAndUpdate', async function (doc: DocumentWithMeiliIndex, next) {
-    if (!meiliEnabled) {
+    if (!meiliEnabled || this.getOptions().session?.inTransaction()) {
       return next();
     }
 
