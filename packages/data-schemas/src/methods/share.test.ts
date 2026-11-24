@@ -4,7 +4,7 @@ import { Constants } from 'librechat-data-provider';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type * as t from '~/types';
-import { createShareMethods, type ShareMethods } from './share';
+import { createShareMethods, preserveSharedMessageBoundaries, type ShareMethods } from './share';
 
 describe('Share Methods', () => {
   let mongoServer: MongoMemoryServer;
@@ -28,6 +28,7 @@ describe('Share Methods', () => {
         messages: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Message' }],
         shareId: { type: String, index: true },
         targetMessageId: { type: String, required: false, index: true },
+        branchSnapshotNarrowed: Boolean,
         expiredAt: { type: Date },
         snapshotFiles: { type: Boolean },
         fileSnapshots: { type: [mongoose.Schema.Types.Mixed], default: undefined },
@@ -330,6 +331,73 @@ describe('Share Methods', () => {
   });
 
   describe('getSharedMessages', () => {
+    test.each(['target', 'ancestor'])(
+      'keeps later messages private after deleting the shared %s',
+      async (deleted) => {
+        const user = new mongoose.Types.ObjectId().toString();
+        const conversationId = 'bounded-share';
+        const shareId = 'bounded-link';
+        const [ancestor, target, later] = await Message.create(
+          [
+            { messageId: 'ancestor', parentMessageId: Constants.NO_PARENT },
+            { messageId: 'target', parentMessageId: 'ancestor' },
+            { messageId: 'later', parentMessageId: 'target' },
+          ].map((message) => ({ ...message, text: message.messageId, user, conversationId })),
+        );
+        await SharedLink.create({
+          shareId,
+          conversationId,
+          user,
+          targetMessageId: target.messageId,
+          messages: [ancestor._id, target._id, later._id],
+        });
+
+        const original = await shareMethods.getSharedMessages(shareId);
+        expect(original?.messages.map((message) => message.text)).toEqual(['ancestor', 'target']);
+
+        const removed = deleted === 'target' ? target : ancestor;
+        await preserveSharedMessageBoundaries(mongoose, { user, conversationId });
+        await Message.deleteOne({ _id: removed._id });
+        await Message.updateMany(
+          { user, conversationId, parentMessageId: removed.messageId },
+          { $set: { parentMessageId: removed.parentMessageId } },
+        );
+
+        const updated = await shareMethods.getSharedMessages(shareId);
+        expect(updated?.messages).toEqual([]);
+      },
+    );
+
+    test.each([
+      ['excluded', ['root', 'target']],
+      ['target', []],
+      ['root', []],
+    ])('reads a legacy branch after its %s reference disappears', async (deleted, expected) => {
+      const user = new mongoose.Types.ObjectId().toString();
+      const conversationId = 'legacy-branch';
+      const shareId = 'legacy-link';
+      const messages = await Message.create(
+        [
+          { messageId: 'root', parentMessageId: Constants.NO_PARENT },
+          { messageId: 'target', parentMessageId: 'root' },
+          { messageId: 'excluded', parentMessageId: 'target' },
+        ].map((message) => ({ ...message, text: message.messageId, user, conversationId })),
+      );
+      await SharedLink.create({
+        shareId,
+        conversationId,
+        user,
+        targetMessageId: 'target',
+        messages: messages.map(({ _id }) => _id),
+      });
+
+      // The legacy route removed the document without rewriting stored snapshots or parents.
+      await Message.deleteOne({ user, conversationId, messageId: deleted });
+
+      const snapshot = await shareMethods.getSharedMessages(shareId);
+      expect(snapshot?.messages.map((message) => message.text)).toEqual(expected);
+    });
+
     test('should retrieve and anonymize shared messages', async () => {
       const userId = new mongoose.Types.ObjectId().toString();
       const conversationId = `conv_${nanoid()}`;

@@ -215,6 +215,8 @@ const messageSchema: Schema<IMessage> = new Schema(
   { timestamps: true },
 );
 
+messageSchema.add({ governanceRequestMessageId: { type: String, select: false } });
+
 messageSchema.index({ expiredAt: 1 }, { expireAfterSeconds: 0 });
 messageSchema.index({ createdAt: 1 });
 messageSchema.index({ messageId: 1, user: 1, tenantId: 1 }, { unique: true });

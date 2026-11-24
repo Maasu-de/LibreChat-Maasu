@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 import { EModelEndpoint } from 'librechat-data-provider';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import mongoMeili, { type SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
+import { createSharedLinkModel } from '~/models/sharedLink';
+import { createMessageMethods } from '~/methods/message';
 import { createConversationModel } from '~/models/convo';
 import { createMessageModel } from '~/models/message';
 
@@ -57,7 +59,8 @@ const mockAddDocuments = jest.fn();
 const mockAddDocumentsInBatches = jest.fn();
 const mockUpdateDocuments = jest.fn();
 const mockDeleteDocument = jest.fn();
-const mockDeleteDocuments = jest.fn();
+const mockDeleteDocuments = jest.fn().mockResolvedValue({ taskUid: 1 });
+const mockWaitForTask = jest.fn().mockResolvedValue({ status: 'succeeded' });
 const mockGetDocument = jest.fn();
 const mockIndex = jest.fn().mockReturnValue({
   getRawInfo: jest.fn(),
@@ -75,6 +78,7 @@ jest.mock('meilisearch', () => {
     MeiliSearch: jest.fn().mockImplementation(() => {
       return {
         index: mockIndex,
+        waitForTask: mockWaitForTask,
       };
     }),
   };
@@ -83,17 +87,18 @@ jest.mock('meilisearch', () => {
 describe('Meilisearch Mongoose plugin', () => {
   const OLD_ENV = process.env;
 
-  let mongoServer: MongoMemoryServer;
+  let mongoServer: MongoMemoryReplSet;
 
   beforeAll(async () => {
     process.env = {
       ...OLD_ENV,
+      SEARCH: 'true',
       // Set a fake meilisearch host/key so that we activate the meilisearch plugin
       MEILI_HOST: 'foo',
       MEILI_MASTER_KEY: 'bar',
     };
 
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const mongoUri = mongoServer.getUri();
     await mongoose.connect(mongoUri);
   });
@@ -104,6 +109,7 @@ describe('Meilisearch Mongoose plugin', () => {
     mockUpdateDocuments.mockClear();
     mockDeleteDocument.mockClear();
     mockDeleteDocuments.mockClear();
+    mockWaitForTask.mockClear();
     mockGetDocument.mockClear();
   });
 
@@ -125,6 +131,34 @@ describe('Meilisearch Mongoose plugin', () => {
       [expect.objectContaining({ conversationId: expect.anything() })],
       { primaryKey: 'conversationId' },
     );
+  });
+
+  test('commits a coordinated message deletion with the search plugin registered', async () => {
+    const Message = createMessageModel(mongoose);
+    const Conversation = createConversationModel(mongoose);
+    createSharedLinkModel(mongoose);
+    const methods = createMessageMethods(mongoose);
+    const filter = {
+      user: new mongoose.Types.ObjectId().toString(),
+      conversationId: new mongoose.Types.ObjectId().toString(),
+      messageId: new mongoose.Types.ObjectId().toString(),
+    };
+    await Conversation.create({
+      user: filter.user,
+      conversationId: filter.conversationId,
+      endpoint: EModelEndpoint.openAI,
+    });
+    await Message.create({ ...filter, isCreatedByUser: true });
+
+    const deletion = await mongoose.connection.transaction((session) =>
+      methods.deleteMessageAndReconnectReplies(filter, session),
+    );
+
+    expect(deletion).not.toBeNull();
+    expect(await Message.exists(filter)).toBeNull();
+    expect(mockDeleteDocument).not.toHaveBeenCalled();
+    expect(mockDeleteDocuments).not.toHaveBeenCalled();
+    await Conversation.collection.deleteOne({ conversationId: filter.conversationId });
   });
 
   test('saving conversation indexes with expiredAt=null w/ meilisearch', async () => {
@@ -185,6 +219,72 @@ describe('Meilisearch Mongoose plugin', () => {
       [expect.objectContaining({ messageId: expect.anything() })],
       { primaryKey: 'messageId' },
     );
+  });
+
+  test('retries a failed removal task after a late post-commit index write', async () => {
+    const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
+    const messageId = new mongoose.Types.ObjectId().toString();
+    const message = await mongoose.connection.transaction(
+      async (session) =>
+        await Message.findOneAndUpdate(
+          { messageId },
+          {
+            conversationId: new mongoose.Types.ObjectId().toString(),
+            user: new mongoose.Types.ObjectId().toString(),
+            isCreatedByUser: true,
+            text: 'Synthetic message',
+          },
+          { session, new: true, upsert: true },
+        ).orFail(),
+    );
+
+    const indexedMessages = new Set<string>();
+    let startWrite!: () => void;
+    let releaseWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      startWrite = resolve;
+    });
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    mockAddDocuments.mockImplementationOnce(async () => {
+      startWrite();
+      await writeReleased;
+      indexedMessages.add(messageId);
+    });
+    mockDeleteDocuments
+      .mockResolvedValueOnce({ taskUid: 1 })
+      .mockResolvedValueOnce({ taskUid: 2 })
+      .mockResolvedValueOnce({ taskUid: 3 });
+    mockWaitForTask.mockImplementationOnce(async () => {
+      indexedMessages.delete(messageId);
+      return { status: 'succeeded' };
+    });
+    mockWaitForTask.mockImplementationOnce(async () => {
+      expect(indexedMessages.has(messageId)).toBe(true);
+      return { status: 'failed' };
+    });
+    mockWaitForTask.mockImplementationOnce(async () => {
+      indexedMessages.delete(messageId);
+      return { status: 'succeeded' };
+    });
+
+    const pendingIndex = Message.indexAfterCommit(message);
+    try {
+      await writeStarted;
+      await mongoose.connection.transaction(
+        async (session) =>
+          await Message.findOneAndDelete({ _id: message._id }, { session }).orFail(),
+      );
+      await Message.deleteFromMeili([messageId]);
+    } finally {
+      releaseWrite();
+      await pendingIndex;
+    }
+
+    expect(mockDeleteDocuments.mock.calls).toEqual([[[messageId]], [[messageId]], [[messageId]]]);
+    expect(mockWaitForTask.mock.calls.map(([taskUid]) => taskUid)).toEqual([1, 2, 3]);
+    expect(indexedMessages.has(messageId)).toBe(false);
   });
 
   test('saving messages with expiredAt=null indexes w/ meilisearch', async () => {
@@ -335,6 +435,48 @@ describe('Meilisearch Mongoose plugin', () => {
     await conversationModel.syncWithMeili();
 
     expect(mockAddDocuments).not.toHaveBeenCalled();
+  });
+
+  test('transactional deletions leave search untouched until committed cleanup', async () => {
+    const conversationModel = createConversationModel(mongoose) as ReturnType<
+      typeof createConversationModel
+    > &
+      Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>;
+    const messageModel = createMessageModel(mongoose) as ReturnType<typeof createMessageModel> &
+      Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>;
+    const conversationId = new mongoose.Types.ObjectId().toString();
+    const messageId = new mongoose.Types.ObjectId().toString();
+    const user = new mongoose.Types.ObjectId().toString();
+    await conversationModel.create({ conversationId, user, endpoint: EModelEndpoint.openAI });
+    await messageModel.create({ messageId, conversationId, user, text: 'Searchable message' });
+
+    const session = await mongoose.startSession();
+    const remove = async () => {
+      await conversationModel.deleteMany({ conversationId, user }, { session });
+      await messageModel.deleteMany({ conversationId, user }, { session });
+      expect(mockDeleteDocument).not.toHaveBeenCalled();
+      expect(mockDeleteDocuments).not.toHaveBeenCalled();
+    };
+    try {
+      const rollback = new Error('outbox rejected');
+      await expect(
+        session.withTransaction(async () => {
+          await remove();
+          throw rollback;
+        }),
+      ).rejects.toThrow(rollback);
+      expect(await conversationModel.exists({ conversationId, user })).toBeTruthy();
+      expect(await messageModel.exists({ messageId, user })).toBeTruthy();
+      await session.withTransaction(remove);
+    } finally {
+      await session.endSession();
+    }
+
+    expect(await conversationModel.exists({ conversationId, user })).toBeNull();
+    expect(await messageModel.exists({ messageId, user })).toBeNull();
+    await conversationModel.deleteFromMeili([conversationId]);
+    await messageModel.deleteFromMeili([messageId]);
+    expect(mockDeleteDocuments.mock.calls).toEqual([[[conversationId]], [[messageId]]]);
   });
 
   test('sync w/ meili excludes legacy temporary conversations without isTemporary', async () => {
@@ -652,6 +794,65 @@ describe('Meilisearch Mongoose plugin', () => {
   });
 
   describe('New batch processing and retry functionality', () => {
+    test.each(['failed', 'canceled'])(
+      'reports a %s deletion task after submission',
+      async (status) => {
+        const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
+        mockWaitForTask.mockResolvedValueOnce({ status });
+
+        await expect(Message.deleteFromMeili(['deleted-message'])).rejects.toThrow(
+          `Meili cleanup task 1 ended with ${status}`,
+        );
+        expect(mockDeleteDocuments).toHaveBeenCalledWith(['deleted-message']);
+        expect(mockWaitForTask).toHaveBeenCalledWith(1, { timeOutMs: 10000, intervalMs: 100 });
+      },
+    );
+
+    test('removes a deleted message submitted by an in-flight sync batch', async () => {
+      const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
+      const user = new mongoose.Types.ObjectId().toString();
+      const conversationId = new mongoose.Types.ObjectId().toString();
+      const [removed, kept] = ['removed', 'kept'].map((label) => ({
+        _id: new mongoose.Types.ObjectId(),
+        messageId: `${conversationId}-${label}`,
+        conversationId,
+        user,
+      }));
+      await Message.collection.insertMany([removed, kept]);
+
+      const indexedMessages = new Set([removed.messageId, kept.messageId]);
+      const removeIndexed = async (ids: string[]) => {
+        ids.forEach((id) => indexedMessages.delete(id));
+        return { taskUid: 1 };
+      };
+      mockDeleteDocuments
+        .mockImplementationOnce(removeIndexed)
+        .mockImplementationOnce(removeIndexed);
+
+      // Commit deletion and finish its cleanup before the stale batch reaches MeiliSearch.
+      mockAddDocumentsInBatches.mockImplementationOnce(async () => {
+        await mongoose.connection.transaction(async (session) => {
+          await Message.deleteMany({ _id: removed._id }, { session });
+        });
+        await Message.deleteFromMeili([removed.messageId]);
+        indexedMessages.add(removed.messageId);
+      });
+      try {
+        await Message.processSyncBatch(mockIndex(), [removed, kept]);
+
+        expect(mockDeleteDocuments.mock.calls).toEqual([
+          [[removed.messageId]],
+          [[removed.messageId]],
+        ]);
+        expect([...indexedMessages]).toEqual([kept.messageId]);
+        expect(await Message.collection.findOne({ _id: kept._id })).toMatchObject({
+          _meiliIndex: true,
+        });
+      } finally {
+        await Message.collection.deleteMany({ _id: { $in: [removed._id, kept._id] } });
+      }
+    });
+
     test('processSyncBatch uses addDocumentsInBatches', async () => {
       const conversationModel = createConversationModel(
         mongoose,

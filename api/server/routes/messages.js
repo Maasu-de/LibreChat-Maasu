@@ -8,6 +8,8 @@ const {
 } = require('librechat-data-provider');
 const {
   unescapeLaTeX,
+  isGovernancePilotEnabled,
+  deleteGovernanceMessage,
   countTokens,
   sendFeedbackScore,
   traceIdForMessage,
@@ -69,24 +71,24 @@ router.get('/', async (req, res) => {
         messageId: { $in: messageIds },
       });
 
-      const dbMessageMap = {};
-      for (const dbMessage of dbMessages) {
-        dbMessageMap[dbMessage.messageId] = dbMessage;
-      }
+      const dbMessageMap = new Map(dbMessages.map((message) => [message.messageId, message]));
 
       const activeMessages = [];
       for (const message of cleanedMessages) {
         const convo = result.convoMap[message.conversationId];
-        const dbMessage = dbMessageMap[message.messageId];
+        const dbMessage = dbMessageMap.get(message.messageId);
+        if (!dbMessage || dbMessage.conversationId !== message.conversationId) {
+          continue;
+        }
 
         activeMessages.push({
           ...message,
           title: convo.title,
           conversationId: message.conversationId,
           model: convo.model,
-          isCreatedByUser: dbMessage?.isCreatedByUser,
-          endpoint: dbMessage?.endpoint,
-          iconURL: dbMessage?.iconURL,
+          isCreatedByUser: dbMessage.isCreatedByUser,
+          endpoint: dbMessage.endpoint,
+          iconURL: dbMessage.iconURL,
         });
       }
 
@@ -464,7 +466,11 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
 router.delete('/:conversationId/:messageId', validateMessageReq, async (req, res) => {
   try {
     const { conversationId, messageId } = req.params;
-    await db.deleteMessages({ messageId, conversationId, user: req.user.id });
+    if (isGovernancePilotEnabled()) {
+      await deleteGovernanceMessage(req, db, conversationId, messageId);
+    } else {
+      await db.deleteMessages({ messageId, conversationId, user: req.user.id });
+    }
     res.status(204).send();
   } catch (error) {
     logger.error('Error deleting message:', error);

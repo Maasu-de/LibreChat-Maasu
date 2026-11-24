@@ -13,7 +13,7 @@ export type GroupMutationAction =
   | 'membership.added'
   | 'membership.removed';
 
-interface GroupAuditDelivery {
+interface AuditDeliveryState {
   _id: string;
   createdAt: Date;
   status?: 'pending' | 'quarantined';
@@ -23,6 +23,10 @@ interface GroupAuditDelivery {
   leaseId?: string;
   lastError?: { kind: 'http' | 'network'; status?: number };
   quarantinedAt?: Date;
+}
+
+interface GroupAuditDelivery extends AuditDeliveryState {
+  kind?: 'group';
   payload: {
     mutation_id: string;
     occurred_at: string;
@@ -33,13 +37,35 @@ interface GroupAuditDelivery {
   };
 }
 
-function outbox() {
-  if (!mongoose.connection.db) throw new Error('Governance audit database unavailable');
-  return mongoose.connection.db.collection<GroupAuditDelivery>('governance_group_audit_outbox');
+type ChatDeletionScope =
+  | { scope: 'message'; conversation_id: string; message_id: string; request_message_id?: string }
+  | { scope: 'conversation'; conversation_id: string }
+  | { scope: 'all_conversations'; conversation_ids: string[] };
+
+interface ChatDeletionDelivery extends AuditDeliveryState {
+  kind: 'chat_deletion';
+  payload: {
+    occurred_at: string;
+    outcome: 'success';
+    actor: { issuer: string; user_id: string };
+    resource: ChatDeletionScope & { type: 'chat_deletion'; id: string; deleted_count: number };
+  };
 }
 
-function getGovernanceGroupAuditUrl(): string | undefined {
-  const explicit = process.env.GOVERNANCE_AUDIT_URL?.trim();
+type AuditDelivery = GroupAuditDelivery | ChatDeletionDelivery;
+const auditKinds = ['group', 'chat_deletion'] as const;
+type AuditKind = (typeof auditKinds)[number];
+
+function outbox(kind: AuditKind) {
+  if (!mongoose.connection.db) throw new Error('Governance audit database unavailable');
+  return mongoose.connection.db.collection<AuditDelivery>(`governance_${kind}_audit_outbox`);
+}
+
+function getGovernanceAuditUrl(kind?: AuditDelivery['kind']): string | undefined {
+  const chatDeletion = kind === 'chat_deletion';
+  const explicit = (
+    chatDeletion ? process.env.GOVERNANCE_CHAT_DELETION_AUDIT_URL : process.env.GOVERNANCE_AUDIT_URL
+  )?.trim();
   const configured = explicit || process.env.GOVERNANCE_API_BASE_URL?.trim();
   if (!configured) return;
   try {
@@ -55,7 +81,8 @@ function getGovernanceGroupAuditUrl(): string | undefined {
     if (!explicit) {
       const path = url.pathname.replace(/\/+$/, '');
       if (!path.endsWith('/v1')) return;
-      url.pathname = path.replace(/\/v1$/, '/api/v1/internal/group-audit');
+      const route = chatDeletion ? 'chat-deletion-audit' : 'group-audit';
+      url.pathname = path.replace(/\/v1$/, `/api/v1/internal/${route}`);
     }
     return url.href;
   } catch {
@@ -67,7 +94,7 @@ export function isGovernanceGroupAuditConfigured(req: ServerRequest): boolean {
   return (
     !isGovernancePilotEnabled() ||
     Boolean(
-      getGovernanceGroupAuditUrl() &&
+      getGovernanceAuditUrl() &&
         process.env.LIBRECHAT_SERVICE_CREDENTIAL &&
         req.user?.openidIssuer &&
         req.user.openidId,
@@ -134,7 +161,7 @@ export async function mutateGovernanceGroup(
             },
           };
         });
-        await outbox().insertMany(deliveries, { session });
+        await outbox('group').insertMany(deliveries, { session });
         return group;
       },
       { writeConcern: { w: 'majority' } },
@@ -145,21 +172,76 @@ export async function mutateGovernanceGroup(
   }
 }
 
+export async function commitAuditedChatDeletion<T>(
+  req: Pick<ServerRequest, 'user'>,
+  operation: (session: ClientSession) => Promise<{
+    result: T;
+    resource: ChatDeletionScope;
+    deletedCount: number;
+  }>,
+): Promise<T> {
+  const actor = req.user;
+  if (
+    !getGovernanceAuditUrl('chat_deletion') ||
+    !process.env.LIBRECHAT_SERVICE_CREDENTIAL ||
+    !actor?.openidIssuer ||
+    !actor.openidId
+  ) {
+    throw new Error('Governance chat deletion audit is not configured');
+  }
+
+  const identity = { issuer: actor.openidIssuer, user_id: actor.openidId };
+  const id = randomUUID();
+  const occurredAt = new Date();
+  const session = await mongoose.startSession();
+  try {
+    return await session.withTransaction(
+      async () => {
+        const { result, resource, deletedCount } = await operation(session);
+        if (deletedCount > 0) {
+          await outbox('chat_deletion').insertOne(
+            {
+              _id: id,
+              kind: 'chat_deletion',
+              createdAt: occurredAt,
+              status: 'pending',
+              retryCount: 0,
+              nextAttemptAt: occurredAt,
+              payload: {
+                occurred_at: occurredAt.toISOString(),
+                outcome: 'success',
+                actor: identity,
+                resource: { ...resource, type: 'chat_deletion', id, deleted_count: deletedCount },
+              },
+            },
+            { session },
+          );
+        }
+        return result;
+      },
+      { writeConcern: { w: 'majority' } },
+    );
+  } finally {
+    await session.endSession();
+  }
+}
+
 let delivery: Promise<void> | undefined;
 
 const RETRY_BASE_MS = 5000;
 const RETRY_MAX_MS = 5 * 60 * 1000;
 const LEASE_MS = 30000;
-let lastQuarantineAlert = 0;
+const lastQuarantineAlert: Record<AuditKind, number> = { group: 0, chat_deletion: 0 };
 
-async function deliverPendingAudit(): Promise<void> {
-  const endpoint = getGovernanceGroupAuditUrl();
+async function deliverPendingAudit(kind: AuditKind): Promise<void> {
+  const endpoint = getGovernanceAuditUrl(kind);
   const credential = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if (!endpoint || !credential || mongoose.connection.readyState !== 1) return;
+  const collection = outbox(kind);
   for (let i = 0; i < 100; i++) {
     const now = new Date();
     const leaseId = randomUUID();
-    const record = await outbox().findOneAndUpdate(
+    const record = await collection.findOneAndUpdate(
       {
         status: { $ne: 'quarantined' },
         $and: [
@@ -185,7 +267,7 @@ async function deliverPendingAudit(): Promise<void> {
       });
       status = response.status;
       if (response.ok) {
-        await outbox().deleteOne(filter);
+        await collection.deleteOne(filter);
         continue;
       }
     } catch {
@@ -194,9 +276,9 @@ async function deliverPendingAudit(): Promise<void> {
     const retryCount = (record.retryCount ?? 0) + 1;
     const rejected =
       status != null && status >= 400 && status < 500 && ![408, 425, 429].includes(status);
-    const lastError: NonNullable<GroupAuditDelivery['lastError']> =
+    const lastError: NonNullable<AuditDeliveryState['lastError']> =
       status == null ? { kind: 'network' } : { kind: 'http', status };
-    await outbox().updateOne(filter, {
+    await collection.updateOne(filter, {
       $set: {
         status: rejected ? 'quarantined' : 'pending',
         retryCount,
@@ -219,33 +301,42 @@ async function deliverPendingAudit(): Promise<void> {
         status,
       });
   }
-  if (Date.now() - lastQuarantineAlert >= 60000) {
-    const quarantined = await outbox().countDocuments({ status: 'quarantined' });
+  if (Date.now() - lastQuarantineAlert[kind] >= 60000) {
+    const quarantined = await collection.countDocuments({ status: 'quarantined' });
     if (quarantined)
-      logger.error('[Governance audit] Quarantined events require replay', { count: quarantined });
-    lastQuarantineAlert = Date.now();
+      logger.error('[Governance audit] Quarantined events require replay', {
+        kind,
+        count: quarantined,
+      });
+    lastQuarantineAlert[kind] = Date.now();
   }
 }
 
 /** Operator-only recovery after correcting the rejection; preserves identity and chronology. */
 export async function replayGovernanceGroupAudit(mutationIds: string[]): Promise<number> {
   if (!mutationIds.length) throw new Error('Specify quarantined mutation IDs to replay');
-  const result = await outbox().updateMany(
-    { _id: { $in: mutationIds }, status: 'quarantined' },
-    {
-      $set: { status: 'pending', retryCount: 0, nextAttemptAt: new Date() },
-      $unset: { quarantinedAt: '', lastError: '', leaseUntil: '', leaseId: '' },
-    },
+  const results = await Promise.all(
+    auditKinds.map((kind) =>
+      outbox(kind).updateMany(
+        { _id: { $in: mutationIds }, status: 'quarantined' },
+        {
+          $set: { status: 'pending', retryCount: 0, nextAttemptAt: new Date() },
+          $unset: { quarantinedAt: '', lastError: '', leaseUntil: '', leaseId: '' },
+        },
+      ),
+    ),
   );
-  return result.modifiedCount;
+  return results.reduce((count, result) => count + result.modifiedCount, 0);
 }
 
 /** Retain pending events on network failures; duplicate deliveries are deduplicated by the Gateway. */
 export function flushGovernanceGroupAudit(): Promise<void> {
   if (delivery) return delivery;
-  delivery = deliverPendingAudit()
-    .catch(() => {
-      logger.warn('[Governance audit] Delivery pending; durable events will be retried');
+  delivery = Promise.allSettled(auditKinds.map((kind) => deliverPendingAudit(kind)))
+    .then((results) => {
+      if (results.some((result) => result.status === 'rejected')) {
+        logger.warn('[Governance audit] Delivery pending; durable events will be retried');
+      }
     })
     .finally(() => {
       delivery = undefined;

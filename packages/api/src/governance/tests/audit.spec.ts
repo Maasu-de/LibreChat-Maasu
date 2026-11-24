@@ -2,9 +2,12 @@ import express from 'express';
 import request from 'supertest';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { Constants, GOVERNANCE_ENDPOINT } from 'librechat-data-provider';
 import { createModels, createMethods, runAsSystem } from '@librechat/data-schemas';
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
+import { deleteGovernanceConversations, deleteGovernanceMessage } from '../deletion';
+import { isGovernancePilotEnabled } from '../mode';
 import { createAdminGroupsHandlers } from '../../admin/groups';
 import {
   flushGovernanceGroupAudit,
@@ -16,7 +19,7 @@ const environment = process.env;
 let replica: MongoMemoryReplSet;
 let actor: IUser;
 const models = createModels(mongoose);
-const methods = createMethods(mongoose);
+const methods = createMethods(mongoose, { coordinateMessageDeletion: isGovernancePilotEnabled });
 const handlers = createAdminGroupsHandlers({
   ...methods,
   listGroups: (filter = {}) =>
@@ -48,6 +51,8 @@ app.delete('/groups/:id/members/:userId', async (req, res) => {
   await handlers.removeGroupMember(req as ServerRequest, res);
 });
 const outbox = () => mongoose.connection.db!.collection('governance_group_audit_outbox');
+const deletionOutbox = () =>
+  mongoose.connection.db!.collection('governance_chat_deletion_audit_outbox');
 
 beforeAll(async () => {
   replica = await MongoMemoryReplSet.create({
@@ -58,6 +63,7 @@ beforeAll(async () => {
   await models.Group.createCollection();
   await models.User.createCollection();
   await mongoose.connection.db!.createCollection('governance_group_audit_outbox');
+  await mongoose.connection.db!.createCollection('governance_chat_deletion_audit_outbox');
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -67,14 +73,19 @@ beforeEach(async () => {
   process.env = {
     ...environment,
     GOVERNANCE_PILOT_ENABLED: 'true',
+    GOVERNANCE_CHAT_DELETION_AUDIT_URL: 'https://gateway.example/internal/chat-deletion-audit',
     GOVERNANCE_AUDIT_URL: 'https://gateway.example/internal/group-audit',
     LIBRECHAT_SERVICE_CREDENTIAL: 'test-credential',
   };
   delete process.env.GOVERNANCE_API_BASE_URL;
   await runAsSystem(async () => {
+    await models.Conversation.deleteMany({});
+    await models.Message.deleteMany({});
+    await models.SharedLink.deleteMany({});
     await models.Group.deleteMany({});
     await models.User.deleteMany({});
     await outbox().deleteMany({});
+    await deletionOutbox().deleteMany({});
     actor = await models.User.create({
       email: 'admin@test.example',
       name: 'Admin',
@@ -335,4 +346,361 @@ it('recovers abandoned delivery leases and excludes active leases across workers
   await outbox().updateMany({}, { $set: { leaseUntil: new Date(0) } });
   await flushGovernanceGroupAudit();
   expect(await outbox().countDocuments()).toBe(0);
+});
+
+async function seedHistory(conversationId: string, user: string, messageId: string) {
+  await models.Conversation.create({
+    conversationId,
+    user,
+    endpoint: GOVERNANCE_ENDPOINT,
+    title: 'Private title',
+  });
+  await models.Message.create({ conversationId, user, messageId, text: 'Private text' });
+}
+
+it('audits only the authenticated user’s single-message deletion and skips repeats', async () => {
+  actor.role = 'USER';
+  await runAsSystem(async () => {
+    await seedHistory('mine', actor.id, 'owned-message');
+    await models.Message.create({
+      user: actor.id,
+      conversationId: 'mine',
+      messageId: 'reply',
+      parentMessageId: 'owned-message',
+    });
+    await seedHistory('theirs', 'other-user', 'other-message');
+    await deleteGovernanceMessage({ user: actor }, methods, 'theirs', 'other-message');
+    expect(await deletionOutbox().countDocuments()).toBe(0);
+
+    await deleteGovernanceMessage({ user: actor }, methods, 'mine', 'owned-message');
+    await deleteGovernanceMessage({ user: actor }, methods, 'mine', 'owned-message');
+
+    expect(await models.Message.exists({ messageId: 'owned-message' })).toBeNull();
+    expect(await models.Conversation.exists({ conversationId: 'mine' })).toBeTruthy();
+    expect(await models.Message.findOne({ messageId: 'reply' })).toMatchObject({
+      parentMessageId: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(await models.Message.exists({ messageId: 'other-message' })).toBeTruthy();
+    const [event] = await deletionOutbox().find().toArray();
+    expect(await deletionOutbox().countDocuments()).toBe(1);
+    expect(event.payload).toEqual({
+      occurred_at: event.createdAt.toISOString(),
+      outcome: 'success',
+      actor: { issuer: 'https://identity.example', user_id: 'stable-subject' },
+      resource: {
+        type: 'chat_deletion',
+        id: event._id,
+        scope: 'message',
+        conversation_id: 'mine',
+        message_id: 'owned-message',
+        deleted_count: 1,
+      },
+    });
+  });
+});
+
+it.each(['audited', 'ordinary'])(
+  'preserves a shared snapshot after %s message deletion',
+  async (mode) => {
+    await runAsSystem(async () => {
+      const user = actor.id;
+      const conversationId = 'e6ea9659-e339-4482-a490-81fb13841008';
+      await seedHistory(conversationId, user, 'root');
+      const root = await models.Message.findOne({ user, conversationId, messageId: 'root' });
+      const [target, excluded, child] = await models.Message.create(
+        [
+          { messageId: 'target', parentMessageId: 'root' },
+          { messageId: 'excluded', parentMessageId: 'target' },
+          { messageId: 'child', parentMessageId: 'excluded' },
+        ].map((message) => ({ ...message, user, conversationId, text: message.messageId })),
+      );
+      const shareId = 'branch-snapshot';
+      await models.SharedLink.create({
+        user,
+        conversationId,
+        shareId,
+        targetMessageId: 'target',
+        messages: [root!._id, target._id, excluded._id, child._id],
+      });
+      const contents = async () =>
+        (await methods.getSharedMessages(shareId))?.messages.map(({ text }) => text);
+      const deleteMessage = (messageId: string) =>
+        mode === 'audited'
+          ? deleteGovernanceMessage({ user: actor }, methods, conversationId, messageId)
+          : methods.deleteMessages({ user, conversationId, messageId });
+
+      const original = await contents();
+      expect(original).toHaveLength(2);
+      await deleteMessage('excluded');
+      expect(
+        await models.Message.exists({ user, conversationId, messageId: 'excluded' }),
+      ).toBeNull();
+      expect(await contents()).toEqual(original);
+      await deleteMessage('target');
+      expect(await contents()).toEqual([]);
+    });
+  },
+);
+
+it('reconnects late generation writes through deleted parents without restoring deleted messages', async () => {
+  await runAsSystem(async () => {
+    const conversationId = '906dcd21-f1cd-4aa2-9b45-3e50a9f4c64c';
+    const user = actor.id;
+    const ctx = { userId: user };
+    await seedHistory(conversationId, user, 'root');
+    const prompt = {
+      conversationId,
+      messageId: 'prompt',
+      parentMessageId: 'earlier',
+      isCreatedByUser: true,
+    };
+    await methods.saveMessage(ctx, {
+      conversationId,
+      messageId: 'earlier',
+      parentMessageId: 'root',
+    });
+    await methods.saveMessage(ctx, prompt);
+
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'prompt');
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'earlier');
+
+    expect(await methods.saveMessage(ctx, prompt)).toBeNull();
+    expect(await models.Message.exists({ user, messageId: 'prompt' })).toBeNull();
+    const reply = { conversationId, messageId: 'late-reply', parentMessageId: 'prompt' };
+    expect(await methods.saveMessage(ctx, reply)).toMatchObject({ parentMessageId: 'root' });
+    await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'late-reply');
+    expect(
+      await deletionOutbox().findOne({ 'payload.resource.message_id': 'late-reply' }),
+    ).toMatchObject({
+      payload: { resource: { request_message_id: 'prompt' } },
+    });
+  });
+});
+
+it('serializes concurrent reply persistence and deletion of its parent', async () => {
+  await runAsSystem(async () => {
+    const conversationId = '77a33a4e-77e4-43e4-ad0e-c044abf2ff9e';
+    const user = actor.id;
+    await seedHistory(conversationId, user, 'parent');
+    await Promise.all([
+      methods.saveMessage(
+        { userId: user },
+        { conversationId, messageId: 'reply', parentMessageId: 'parent' },
+      ),
+      deleteGovernanceMessage({ user: actor }, methods, conversationId, 'parent'),
+    ]);
+
+    expect(await methods.getMessage({ user, messageId: 'reply' })).toMatchObject({
+      parentMessageId: Constants.NO_PARENT,
+    });
+    expect(await models.Message.exists({ user, messageId: 'parent' })).toBeNull();
+    expect(await deletionOutbox().countDocuments()).toBe(1);
+  });
+});
+
+it.each([false, true])(
+  'correlates a deleted assistant reply with the original request (prompt deleted first: %s)',
+  async (deletePromptFirst) => {
+    await runAsSystem(async () => {
+      const conversationId = 'multi-turn';
+      const user = actor.id;
+      await seedHistory(conversationId, user, 'first-prompt');
+      await models.Message.create([
+        {
+          conversationId,
+          user,
+          messageId: 'prompt',
+          isCreatedByUser: true,
+          parentMessageId: 'first-prompt',
+        },
+        { conversationId, user, messageId: 'reply', parentMessageId: 'prompt' },
+      ]);
+      if (deletePromptFirst) {
+        await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'prompt');
+        expect(await models.Message.exists({ user, messageId: 'prompt' })).toBeNull();
+      }
+
+      await deleteGovernanceMessage({ user: actor }, methods, conversationId, 'reply');
+
+      expect(await models.Message.exists({ user, messageId: 'reply' })).toBeNull();
+      expect(
+        await deletionOutbox().findOne({ 'payload.resource.message_id': 'reply' }),
+      ).toMatchObject({
+        payload: {
+          resource: {
+            scope: 'message',
+            conversation_id: conversationId,
+            message_id: 'reply',
+            request_message_id: 'prompt',
+          },
+        },
+      });
+    });
+  },
+);
+
+it.each(['single', 'bulk'])('blocks late generation saves after %s deletion', async (scope) => {
+  await runAsSystem(async () => {
+    const deletedId = '33a1e6d7-823a-44e0-a800-deacc274226d';
+    const newId = 'e9c9538e-1f22-401d-a2a1-45ab27b5d5b8';
+    const ctx = { userId: actor.id };
+    await seedHistory(deletedId, actor.id, 'prompt');
+    await deleteGovernanceConversations(
+      { user: actor },
+      methods,
+      scope === 'single' ? deletedId : undefined,
+    );
+
+    expect(
+      await methods.saveMessage(ctx, {
+        conversationId: deletedId,
+        messageId: 'late-reply',
+        parentMessageId: 'prompt',
+      }),
+    ).toBeNull();
+    expect(await methods.saveConvo(ctx, { conversationId: deletedId, title: 'Late' })).toBeNull();
+    expect(await models.Message.exists({ conversationId: deletedId })).toBeNull();
+    expect(await models.Conversation.exists({ conversationId: deletedId })).toBeNull();
+
+    expect(
+      await methods.saveMessage(ctx, { conversationId: newId, messageId: 'first-message' }),
+    ).toMatchObject({ conversationId: newId });
+    expect(await methods.saveConvo(ctx, { conversationId: newId, title: 'New' })).toMatchObject({
+      conversationId: newId,
+    });
+  });
+});
+
+it('audits one conversation and reports cleanup failure after commit', async () => {
+  await runAsSystem(async () => {
+    await seedHistory('mine', actor.id, 'owned-message');
+    await seedHistory('theirs', 'other-user', 'other-message');
+    expect(await deleteGovernanceConversations({ user: actor }, methods, 'theirs')).toMatchObject({
+      deletedCount: 0,
+    });
+    const cleanup = jest.spyOn(methods, 'deleteToolCalls').mockRejectedValue(new Error('test'));
+    const result = await deleteGovernanceConversations({ user: actor }, methods, 'mine');
+    expect(result).toMatchObject({
+      deletedCount: 1,
+      messages: { deletedCount: 1 },
+      cleanupFailures: ['tool_calls'],
+    });
+    expect(cleanup).toHaveBeenCalledWith(actor.id, ['mine']);
+    expect(await models.Conversation.exists({ conversationId: 'mine' })).toBeNull();
+    expect(await models.Message.exists({ messageId: 'owned-message' })).toBeNull();
+    expect(await models.Conversation.exists({ conversationId: 'theirs' })).toBeTruthy();
+    expect(await deletionOutbox().countDocuments()).toBe(1);
+    expect(await deletionOutbox().findOne()).toMatchObject({
+      payload: { resource: { scope: 'conversation', conversation_id: 'mine', deleted_count: 1 } },
+    });
+  });
+});
+
+it.each([false, true])('cleans up search after commit (search task fails: %s)', async (fails) => {
+  await runAsSystem(async () => {
+    await seedHistory('message-chat', actor.id, 'single-message');
+    await seedHistory('conversation-chat', actor.id, 'conversation-message');
+    const deleteIndexedMessages = jest.fn(async (ids: string[]) => {
+      expect(await models.Message.countDocuments({ messageId: { $in: ids } })).toBe(0);
+      expect(await deletionOutbox().countDocuments()).toBeGreaterThan(0);
+    });
+    const deleteIndexedConversations = jest.fn(async (ids: string[]) => {
+      expect(await models.Conversation.countDocuments({ conversationId: { $in: ids } })).toBe(0);
+      expect(await deletionOutbox().countDocuments()).toBe(2);
+      if (fails) throw new Error('Meili cleanup task ended with failed');
+    });
+    Object.assign(models.Message, { deleteFromMeili: deleteIndexedMessages });
+    Object.assign(models.Conversation, { deleteFromMeili: deleteIndexedConversations });
+    try {
+      await deleteGovernanceMessage({ user: actor }, methods, 'message-chat', 'single-message');
+      const result = await deleteGovernanceConversations(
+        { user: actor },
+        methods,
+        'conversation-chat',
+      );
+
+      expect(result).toMatchObject({ deletedCount: 1, messages: { deletedCount: 1 } });
+      expect(result.cleanupFailures).toEqual(fails ? ['search_index'] : undefined);
+      expect(
+        await deletionOutbox().findOne({
+          'payload.resource.conversation_id': 'conversation-chat',
+        }),
+      ).toMatchObject({ payload: { outcome: 'success' } });
+      expect(deleteIndexedMessages.mock.calls).toEqual([
+        [['single-message']],
+        [['conversation-message']],
+      ]);
+      await Promise.all(deleteIndexedMessages.mock.results.map((result) => result.value));
+      expect(deleteIndexedConversations).toHaveBeenCalledWith(['conversation-chat']);
+    } finally {
+      Reflect.deleteProperty(models.Message, 'deleteFromMeili');
+      Reflect.deleteProperty(models.Conversation, 'deleteFromMeili');
+    }
+  });
+});
+
+it('retries a durable bulk deletion with exactly the IDs committed by MongoDB', async () => {
+  const sink = jest
+    .spyOn(global, 'fetch')
+    .mockRejectedValueOnce(new Error('connection lost'))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await runAsSystem(async () => {
+    await seedHistory('mine-a', actor.id, 'message-a');
+    await seedHistory('mine-b', actor.id, 'message-b');
+    await seedHistory('theirs', 'other-user', 'other-message');
+    const results = await Promise.all([
+      deleteGovernanceConversations({ user: actor }, methods),
+      deleteGovernanceConversations({ user: actor }, methods),
+    ]);
+    expect(results.map(({ deletedCount }) => deletedCount).sort()).toEqual([0, 2]);
+    expect(await models.Conversation.countDocuments()).toBe(1);
+    expect(await models.Message.countDocuments()).toBe(1);
+  });
+  expect(await outbox().countDocuments()).toBe(0);
+  await flushGovernanceGroupAudit();
+  expect(await deletionOutbox().findOne()).toMatchObject({
+    retryCount: 1,
+    lastError: { kind: 'network' },
+  });
+  await deletionOutbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
+  await mongoose.disconnect();
+  await mongoose.connect(replica.getUri());
+  await flushGovernanceGroupAudit();
+  expect(await deletionOutbox().countDocuments()).toBe(0);
+  const [first, retry] = sink.mock.calls;
+  expect(first[0]).toBe(process.env.GOVERNANCE_CHAT_DELETION_AUDIT_URL);
+  expect(retry[1]?.body).toEqual(first[1]?.body);
+  expect(JSON.parse(first[1]?.body as string)).toMatchObject({
+    resource: {
+      scope: 'all_conversations',
+      conversation_ids: expect.arrayContaining(['mine-a', 'mine-b']),
+      deleted_count: 2,
+    },
+  });
+});
+
+it('rolls back conversation and message deletion when the outbox rejects the event', async () => {
+  await mongoose.connection.db!.command({
+    collMod: 'governance_chat_deletion_audit_outbox',
+    validator: { $expr: { $literal: false } },
+  });
+  try {
+    await runAsSystem(async () => {
+      await seedHistory('mine', actor.id, 'owned-message');
+      await expect(
+        deleteGovernanceConversations({ user: actor }, methods, 'mine'),
+      ).rejects.toThrow();
+      await expect(
+        deleteGovernanceMessage({ user: actor }, methods, 'mine', 'owned-message'),
+      ).rejects.toThrow();
+      expect(await models.Conversation.exists({ conversationId: 'mine' })).toBeTruthy();
+      expect(await models.Message.exists({ messageId: 'owned-message' })).toBeTruthy();
+    });
+    expect(await deletionOutbox().countDocuments()).toBe(0);
+  } finally {
+    await mongoose.connection.db!.command({
+      collMod: 'governance_chat_deletion_audit_outbox',
+      validator: {},
+    });
+  }
 });

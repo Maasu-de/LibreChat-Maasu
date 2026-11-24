@@ -818,7 +818,7 @@ export function deleteConversation(payload: t.TDeleteConversationRequest) {
   return request.deleteWithOptions(endpoints.deleteConversation(), { data: { arg: payload } });
 }
 
-export function clearAllConversations(): Promise<unknown> {
+export function clearAllConversations(): Promise<t.TDeleteConversationResponse> {
   return request.delete(endpoints.deleteAllConversation());
 }
 
@@ -920,6 +920,15 @@ export const branchMessage = async (
 ): Promise<m.TBranchMessageResponse> => {
   return request.post(endpoints.messagesBranch(), payload);
 };
+
+export function deleteMessage(conversationId: string, messageId: string): Promise<void> {
+  return request.delete(
+    endpoints.messages({
+      conversationId: encodeURIComponent(conversationId),
+      messageId: encodeURIComponent(messageId),
+    }),
+  );
+}
 
 export function getMessagesByConvoId(conversationId: string): Promise<s.TMessage[]> {
   if (

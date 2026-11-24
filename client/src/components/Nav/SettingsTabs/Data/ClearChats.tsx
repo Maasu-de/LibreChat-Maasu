@@ -7,12 +7,15 @@ import {
   OGDialog,
   OGDialogTrigger,
   Spinner,
+  useToastContext,
 } from '@librechat/client';
 import { clearAllConversationStorage } from '~/utils';
 import { useLocalize, useNewConvo } from '~/hooks';
+import { NotificationSeverity } from '~/common';
 
 export const ClearChats = () => {
   const localize = useLocalize();
+  const { showToast } = useToastContext();
   const [open, setOpen] = useState(false);
   const { newConversation } = useNewConvo();
   const clearConvosMutation = useClearConversationsMutation();
@@ -21,7 +24,13 @@ export const ClearChats = () => {
     clearConvosMutation.mutate(
       {},
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
+          if (result?.cleanupFailures?.length) {
+            showToast({
+              message: localize('com_ui_chat_delete_cleanup_warning'),
+              severity: NotificationSeverity.WARNING,
+            });
+          }
           clearAllConversationStorage();
           newConversation();
         },

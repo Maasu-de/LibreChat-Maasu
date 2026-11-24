@@ -9,6 +9,8 @@ jest.mock('@librechat/agents', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  isGovernancePilotEnabled: jest.fn(),
+  deleteGovernanceMessage: jest.fn(),
   unescapeLaTeX: jest.fn((x) => x),
   countTokens: jest.fn().mockResolvedValue(10),
 }));
@@ -188,6 +190,21 @@ describe('DELETE /:conversationId/:messageId – route handler', () => {
     });
   });
 
+  it('uses the audited deletion path in governance mode', async () => {
+    const { isGovernancePilotEnabled, deleteGovernanceMessage } = require('@librechat/api');
+    isGovernancePilotEnabled.mockReturnValueOnce(true);
+    const response = await request(app).delete('/api/messages/convo-1/msg-owned');
+
+    expect(response.status).toBe(204);
+    expect(deleteMessages).not.toHaveBeenCalled();
+    expect(deleteGovernanceMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ user: { id: authenticatedUserId } }),
+      expect.any(Object),
+      'convo-1',
+      'msg-owned',
+    );
+  });
+
   it('should return 500 when deleteMessages throws', async () => {
     deleteMessages.mockRejectedValue(new Error('DB failure'));
 
@@ -200,7 +217,13 @@ describe('DELETE /:conversationId/:messageId – route handler', () => {
 
 describe('message route conversation ownership filters', () => {
   let app;
-  const { getMessages, saveConvo, saveMessage } = require('~/models');
+  const {
+    getConvosQueried,
+    getMessages,
+    saveConvo,
+    saveMessage,
+    searchMessages,
+  } = require('~/models');
 
   const authenticatedUserId = 'user-owner-123';
 
@@ -280,5 +303,27 @@ describe('message route conversation ownership filters', () => {
       { conversationId: 'convo-1', messageId: 'message-1', user: authenticatedUserId },
       '-_id -__v -user',
     );
+  });
+
+  it('omits deleted messages still present in the search index', async () => {
+    searchMessages.mockResolvedValue({
+      hits: [
+        { conversationId: 'chat', messageId: 'deleted', text: 'Deleted text' },
+        { conversationId: 'chat', messageId: 'live', text: 'Live text' },
+      ],
+    });
+    getConvosQueried.mockResolvedValue({ convoMap: { chat: { title: 'Live chat' } } });
+    getMessages.mockResolvedValue([{ conversationId: 'chat', messageId: 'live' }]);
+
+    const response = await request(app).get('/api/messages').query({ search: 'text' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.messages).toEqual([
+      { conversationId: 'chat', messageId: 'live', text: 'Live text', title: 'Live chat' },
+    ]);
+    expect(getMessages).toHaveBeenCalledWith({
+      user: authenticatedUserId,
+      messageId: { $in: ['deleted', 'live'] },
+    });
   });
 });

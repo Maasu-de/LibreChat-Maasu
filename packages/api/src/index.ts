@@ -62,6 +62,7 @@ export * from './governance/pilot';
 export { getGovernanceAgentRestoreError } from './governance/agents';
 export * from './governance/groups';
 export { getGovernanceGroupCapabilities } from './governance/authorization';
+export { deleteGovernanceConversations, deleteGovernanceMessage } from './governance/deletion';
 export { startGovernanceGroupAuditDelivery, replayGovernanceGroupAudit } from './governance/audit';
 export { createReviewEvent, createApprovalRetryEvent } from './governance/review';
 /* Files */

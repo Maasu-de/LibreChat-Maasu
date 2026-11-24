@@ -6,6 +6,11 @@ export interface IConversation extends Document {
   title?: string;
   user?: string;
   messages?: Types.ObjectId[];
+  governanceMessageRedirects?: {
+    messageId: string;
+    parentMessageId: string;
+    isCreatedByUser: boolean;
+  }[];
   isTemporary?: boolean;
   // Fields provided by conversationPreset (adjust types as needed)
   endpoint?: string;

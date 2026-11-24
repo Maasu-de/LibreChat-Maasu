@@ -3,6 +3,8 @@ const express = require('express');
 const { sleep } = require('@librechat/agents');
 const {
   isEnabled,
+  isGovernancePilotEnabled,
+  deleteGovernanceConversations,
   resolveImportMaxFileSize,
   restoreTenantContextFromReq,
   deleteAllSharedLinksWithCleanup,
@@ -115,6 +117,11 @@ router.delete('/', async (req, res) => {
   let filter = {};
   const { conversationId, source, thread_id, endpoint } = req.body?.arg ?? {};
 
+  const governed = isGovernancePilotEnabled();
+  if (governed && (typeof conversationId !== 'string' || !conversationId.trim())) {
+    return res.status(400).json({ error: 'conversationId is required' });
+  }
+
   // Prevent deletion of all conversations
   if (!conversationId && !source && !thread_id && !endpoint) {
     return res.status(400).json({
@@ -143,6 +150,9 @@ router.delete('/', async (req, res) => {
   }
 
   try {
+    if (governed) {
+      return res.status(201).json(await deleteGovernanceConversations(req, db, conversationId));
+    }
     const dbResponse = await db.deleteConvos(req.user.id, filter);
     if (filter.conversationId) {
       await db.deleteToolCalls(req.user.id, filter.conversationId);
@@ -157,6 +167,9 @@ router.delete('/', async (req, res) => {
 
 router.delete('/all', async (req, res) => {
   try {
+    if (isGovernancePilotEnabled()) {
+      return res.status(201).json(await deleteGovernanceConversations(req, db));
+    }
     const dbResponse = await db.deleteConvos(req.user.id, {});
     await db.deleteToolCalls(req.user.id);
     await deleteAllSharedLinksWithCleanup(req.user.id);

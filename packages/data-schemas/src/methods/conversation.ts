@@ -1,7 +1,8 @@
 import { RetentionMode } from 'librechat-data-provider';
-import type { FilterQuery, Model, SortOrder } from 'mongoose';
+import type { ClientSession, FilterQuery, Model, SortOrder } from 'mongoose';
 import type { DeleteResult } from 'mongoose';
-import type { AppConfig, IChatProjectDocument, IConversation } from '~/types';
+import type { AppConfig, IChatProjectDocument, IConversation, IMessage } from '~/types';
+import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type { MessageMethods } from './message';
 import {
   refreshChatProjectStatsForUser,
@@ -11,8 +12,16 @@ import { buildRetentionVisibilityFilter, createFallbackRetentionDate } from '~/u
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
+import { deletedConversations } from './deletedConversation';
 import { decrementTagCounts } from './conversationTag';
 import logger from '~/config/winston';
+
+type ConversationDeletionResult = DeleteResult & { messages: DeleteResult };
+type AuditedConversationDeletionResult = ConversationDeletionResult & {
+  conversationIds: string[];
+  cleanup: () => Promise<void>;
+  cleanupSearch: () => Promise<void>;
+};
 
 export interface ConversationMethods {
   getConvoFiles(conversationId: string): Promise<string[]>;
@@ -64,12 +73,18 @@ export interface ConversationMethods {
   deleteConvos(
     user: string,
     filter: FilterQuery<IConversation>,
-  ): Promise<DeleteResult & { messages: DeleteResult }>;
+    session: ClientSession,
+  ): Promise<AuditedConversationDeletionResult>;
+  deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+  ): Promise<ConversationDeletionResult>;
 }
 
 export function createConversationMethods(
   mongoose: typeof import('mongoose'),
   messageMethods?: Pick<MessageMethods, 'getMessages' | 'deleteMessages'>,
+  coordinateConversationDeletion?: () => boolean,
 ): ConversationMethods {
   function getMessageMethods() {
     if (!messageMethods) {
@@ -206,15 +221,15 @@ export function createConversationMethods(
     },
   ) {
     try {
-      const Conversation = mongoose.models.Conversation as Model<IConversation>;
+      const Conversation = mongoose.models.Conversation as Model<IConversation> &
+        Partial<Pick<SchemaWithMeiliMethods, 'indexAfterCommit'>>;
       const { getMessages } = getMessageMethods();
 
       if (metadata?.context) {
         logger.debug(`[saveConvo] ${metadata.context}`);
       }
 
-      const messages = await getMessages({ conversationId, user: userId }, '_id');
-      const update: Record<string, unknown> = { ...convo, messages, user: userId };
+      const update: Record<string, unknown> = { ...convo, user: userId };
       const unsetFields: Record<string, number> = { ...(metadata?.unsetFields ?? {}) };
 
       if (Object.prototype.hasOwnProperty.call(update, 'chatProjectId') && update.chatProjectId) {
@@ -294,33 +309,51 @@ export function createConversationMethods(
         updateOperation.$setOnInsert = { createdAt: createdAtOnInsert };
       }
 
-      const conversationResult = (await Conversation.findOneAndUpdate(
-        { conversationId, user: userId },
-        updateOperation,
-        {
-          new: true,
-          upsert: metadata?.noUpsert !== true,
-          includeResultMetadata: true,
-          ...(createdAtOnInsert ? { timestamps: false } : {}),
-        },
-      )) as unknown as {
-        value:
-          | (IConversation & {
-              _id: unknown;
-              $isDefault: (path: string) => boolean;
-              toObject: () => IConversation;
-            })
-          | null;
-        lastErrorObject?: {
-          updatedExisting?: boolean;
-        };
+      const save = async (session?: ClientSession) => {
+        if (
+          session &&
+          (await deletedConversations(mongoose).findOne(
+            {
+              _id: {
+                $in: [
+                  { user: userId, conversationId },
+                  ...(newConversationId ? [{ user: userId, conversationId: newConversationId }] : []),
+                ],
+              },
+            },
+            { session },
+          ))
+        ) {
+          return null;
+        }
+        const filter = { conversationId, user: userId };
+        const messages = session
+          ? await getMessages(filter, '_id', { session })
+          : await getMessages(filter, '_id');
+        return Conversation.findOneAndUpdate(
+          { conversationId, user: userId },
+          { ...updateOperation, $set: { ...update, messages } },
+          {
+            new: true,
+            upsert: metadata?.noUpsert !== true,
+            includeResultMetadata: true,
+            ...(createdAtOnInsert ? { timestamps: false } : {}),
+            session,
+          },
+        );
       };
-      const conversation = conversationResult.value;
+      const coordinated = coordinateConversationDeletion?.() === true;
+      const conversationResult = coordinated
+        ? await mongoose.connection.transaction((session) => save(session))
+        : await save();
+      const conversation = conversationResult?.value;
 
       if (!conversation) {
         logger.debug('[saveConvo] Conversation not found, skipping update');
         return null;
       }
+
+      if (coordinated) await Conversation.indexAfterCommit?.(conversation);
 
       if (
         interfaceConfig?.retentionMode === RetentionMode.ALL &&
@@ -384,7 +417,7 @@ export function createConversationMethods(
             userId,
             conversation.chatProjectId,
             conversation,
-            conversationResult.lastErrorObject?.updatedExisting === false,
+            conversationResult?.lastErrorObject?.updatedExisting === false,
           );
         }
       }
@@ -743,13 +776,33 @@ export function createConversationMethods(
   /**
    * Deletes conversations and their associated messages for a given user and filter.
    */
-  async function deleteConvos(user: string, filter: FilterQuery<IConversation>) {
+  function deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+    session: ClientSession,
+  ): Promise<AuditedConversationDeletionResult>;
+  function deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+  ): Promise<ConversationDeletionResult>;
+  async function deleteConvos(
+    user: string,
+    filter: FilterQuery<IConversation>,
+    session?: ClientSession,
+  ): Promise<ConversationDeletionResult | AuditedConversationDeletionResult> {
     try {
-      const Conversation = mongoose.models.Conversation as Model<IConversation>;
+      const Conversation = mongoose.models.Conversation as Model<IConversation> &
+        Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
+      const Message = mongoose.models.Message as Model<IMessage> &
+        Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
       const { deleteMessages } = getMessageMethods();
       const userFilter = { ...filter, user };
-      const conversations = await Conversation.find(userFilter).select(
+      const conversations = await Conversation.find(
+        userFilter,
         'conversationId chatProjectId tags',
+        {
+          session,
+        },
       );
       const conversationIds = conversations.map((c) => c.conversationId);
       const projectIds = new Set(
@@ -774,43 +827,79 @@ export function createConversationMethods(
       }
 
       if (!conversationIds.length) {
-        throw new Error('Conversation not found or already deleted.');
+        if (!session) {
+          throw new Error('Conversation not found or already deleted.');
+        }
+        const empty: DeleteResult = { acknowledged: true, deletedCount: 0 };
+        return {
+          ...empty,
+          messages: empty,
+          conversationIds,
+          cleanup: async () => {},
+          cleanupSearch: async () => {},
+        };
       }
 
-      const deleteConvoResult = await Conversation.deleteMany(userFilter);
+      const deleteConvoResult = await Conversation.deleteMany(
+        session
+          ? { ...userFilter, _id: { $in: conversations.map((convo) => convo._id) } }
+          : userFilter,
+        { session },
+      );
       const deleted = deleteConvoResult.deletedCount > 0;
 
-      /**
-       * Reconcile bookmark counts from the deletion before message cleanup: if
-       * `deleteMessages` later throws, the conversation is already gone and a retry
-       * finds nothing, so the count must be reconciled here or it would stay stale.
-       * The decrement is best-effort and never throws, so it cannot block message
-       * cleanup. The `deletedCount` guard skips a losing concurrent delete whose
-       * pre-delete snapshot would otherwise decrement a conversation it did not
-       * actually remove.
-       */
-      if (deleted) {
+      const refreshProjects = async () => {
+        if (deleted && projectIds.size > 0) {
+          await Promise.all(
+            [...projectIds].map((projectId) =>
+              refreshChatProjectStatsForUser(mongoose, user, projectId),
+            ),
+          );
+        }
+      };
+
+      if (session && deleteConvoResult.deletedCount !== conversationIds.length) {
+        throw new Error('Conversation deletion count did not match its transaction snapshot');
+      }
+      if (session) {
+        await deletedConversations(mongoose).insertMany(
+          conversationIds.map((conversationId) => ({ _id: { user, conversationId } })),
+          { session },
+        );
+      }
+      if (deleted && !session) {
         await decrementTagCounts(mongoose, user, tagDecrements);
       }
 
-      const deleteMessagesResult = await deleteMessages({
-        conversationId: { $in: conversationIds },
-        user,
-      });
-
-      /**
-       * Refresh project stats after message cleanup so a stats-refresh error cannot
-       * prevent `deleteMessages` from running, which would orphan the deleted
-       * conversations' messages.
-       */
-      if (deleted && projectIds.size > 0) {
-        await Promise.all(
-          [...projectIds].map((projectId) =>
-            refreshChatProjectStatsForUser(mongoose, user, projectId),
-          ),
-        );
+      const messageFilter = { conversationId: { $in: conversationIds }, user };
+      const searchMessages =
+        session && Message.deleteFromMeili
+          ? await Message.find(messageFilter, { messageId: 1 }, { session }).lean()
+          : [];
+      const deleteMessagesResult = session
+        ? await deleteMessages(messageFilter, session)
+        : await deleteMessages(messageFilter);
+      if (session) {
+        return {
+          ...deleteConvoResult,
+          messages: deleteMessagesResult,
+          conversationIds,
+          cleanup: async () => {
+            await decrementTagCounts(mongoose, user, tagDecrements);
+            await refreshProjects();
+          },
+          cleanupSearch: async () => {
+            const outcomes = await Promise.allSettled([
+              Conversation.deleteFromMeili?.(conversationIds),
+              Message.deleteFromMeili?.(searchMessages.map((message) => message.messageId)),
+            ]);
+            const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+            if (failure) throw failure.reason;
+          },
+        };
       }
 
+      await refreshProjects();
       return { ...deleteConvoResult, messages: deleteMessagesResult };
     } catch (error) {
       logger.error('[deleteConvos] Error deleting conversations and messages', error);

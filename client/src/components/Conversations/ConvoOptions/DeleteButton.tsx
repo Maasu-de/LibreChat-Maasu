@@ -53,7 +53,7 @@ export function DeleteConversationDialog({
   const currentConvoId = currentConversationId ?? routeConversationId;
 
   const deleteMutation = useDeleteConversationMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
       setShowDeleteDialog(false);
       if (currentConvoId === conversationId || currentConvoId === 'new') {
         newConversation();
@@ -62,8 +62,14 @@ export function DeleteConversationDialog({
       setMenuOpen?.(false);
       retainView();
       showToast({
-        message: localize('com_ui_convo_delete_success'),
-        severity: NotificationSeverity.SUCCESS,
+        message: localize(
+          result?.cleanupFailures?.length
+            ? 'com_ui_chat_delete_cleanup_warning'
+            : 'com_ui_convo_delete_success',
+        ),
+        severity: result?.cleanupFailures?.length
+          ? NotificationSeverity.WARNING
+          : NotificationSeverity.SUCCESS,
         showIcon: true,
       });
     },

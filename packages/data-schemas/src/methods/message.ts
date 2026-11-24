@@ -1,10 +1,13 @@
-import { RetentionMode } from 'librechat-data-provider';
-import type { DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
+import { Constants, RetentionMode } from 'librechat-data-provider';
+import type { ClientSession, DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
 import type { TMinimalFeedback } from 'librechat-data-provider';
-import type { AppConfig, IMessage } from '~/types';
+import type { AppConfig, IConversation, IMessage } from '~/types';
+import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { createFallbackRetentionDate } from '~/utils/retention';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import { preserveSharedMessageBoundaries } from './share';
+import { deletedConversations } from './deletedConversation';
 import logger from '~/config/winston';
 
 /** Simple UUID v4 regex to replace zod validation */
@@ -13,6 +16,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 interface MessageQueryOptions {
   limit?: number;
   sort?: Record<string, 1 | -1> | false;
+  session?: ClientSession;
 }
 
 interface MessageTextStatsOptions {
@@ -84,10 +88,90 @@ export interface MessageMethods {
     searchOptions: Partial<IMessage>,
     hydrate?: boolean,
   ): Promise<unknown>;
-  deleteMessages(filter: FilterQuery<IMessage>): Promise<DeleteResult>;
+  deleteMessageAndReconnectReplies(
+    filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
+    session: ClientSession,
+  ): Promise<{
+    cleanupSearch: () => Promise<void>;
+    requestMessageId?: string;
+  } | null>;
+  deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession): Promise<DeleteResult>;
 }
 
-export function createMessageMethods(mongoose: typeof import('mongoose')): MessageMethods {
+export function createMessageMethods(
+  mongoose: typeof import('mongoose'),
+  coordinateMessageDeletion?: () => boolean,
+): MessageMethods {
+  async function saveCoordinatedMessage(
+    user: string,
+    conversationId: string,
+    params: Partial<IMessage> & { newMessageId?: string },
+    update: Record<string, unknown>,
+  ) {
+    const Message = mongoose.models.Message as Model<IMessage> &
+      Partial<Pick<SchemaWithMeiliMethods, 'indexAfterCommit'>>;
+    const Conversation = mongoose.models.Conversation as Model<IConversation>;
+    const message = await mongoose.connection.transaction(async (session) => {
+      // The deletion transaction writes this same document before commit. A conflicting
+      // generation retries with the deletion's redirects, or commits before replies are moved.
+      const conversation = await Conversation.findOneAndUpdate(
+        { user, conversationId },
+        { $inc: { __v: 1 } },
+        { session, timestamps: false },
+      )
+        .select({ governanceMessageRedirects: 1 })
+        .lean();
+
+      if (
+        !conversation &&
+        (await deletedConversations(mongoose).findOne(
+          { _id: { user, conversationId } },
+          { session },
+        ))
+      ) {
+        return null;
+      }
+
+      const redirects = new Map(
+        conversation?.governanceMessageRedirects?.map((entry) => [entry.messageId, entry]),
+      );
+      if (
+        (params.messageId && redirects.has(params.messageId)) ||
+        (params.newMessageId && redirects.has(params.newMessageId))
+      ) {
+        return null;
+      }
+
+      const coordinatedUpdate = { ...update };
+      const originalParent = params.parentMessageId;
+      if (originalParent) {
+        const originalRedirect = redirects.get(originalParent);
+        let redirect = originalRedirect;
+        let parentMessageId = originalParent;
+        const visited = new Set<string>();
+        while (redirect) {
+          if (visited.has(parentMessageId)) {
+            throw new Error('Cyclic deleted-message ancestry');
+          }
+          visited.add(parentMessageId);
+          parentMessageId = redirect.parentMessageId;
+          redirect = redirects.get(parentMessageId);
+        }
+        coordinatedUpdate.parentMessageId = parentMessageId;
+        if (originalRedirect?.isCreatedByUser && !params.isCreatedByUser) {
+          coordinatedUpdate.governanceRequestMessageId = originalParent;
+        }
+      }
+      return Message.findOneAndUpdate({ messageId: params.messageId, user }, coordinatedUpdate, {
+        session,
+        upsert: true,
+        new: true,
+      });
+    });
+    if (message) await Message.indexAfterCommit?.(message);
+    return message;
+  }
+
   /**
    * Saves a message in the database.
    */
@@ -156,11 +240,13 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
         logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
         update.tokenCount = 0;
       }
-      const message = await Message.findOneAndUpdate(
-        { messageId: params.messageId, user: userId },
-        update,
-        { upsert: true, new: true },
-      );
+      const message = coordinateMessageDeletion?.()
+        ? await saveCoordinatedMessage(userId, conversationId, params, update)
+        : await Message.findOneAndUpdate({ messageId: params.messageId, user: userId }, update, {
+            upsert: true,
+            new: true,
+          });
+      if (!message) return null;
 
       if (
         interfaceConfig?.retentionMode === RetentionMode.ALL &&
@@ -409,7 +495,7 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   ) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
-      const query = Message.find(filter);
+      const query = Message.find(filter, null, { session: options.session });
       if (select) {
         query.select(select);
       }
@@ -527,13 +613,88 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     }
   }
 
+  async function deleteMessageAndReconnectReplies(
+    filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
+    session: ClientSession,
+  ): ReturnType<MessageMethods['deleteMessageAndReconnectReplies']> {
+    const Message = mongoose.models.Message as Model<IMessage> &
+      Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
+    const deleted = await Message.findOne(filter, null, { session }).select(
+      'parentMessageId isCreatedByUser +governanceRequestMessageId',
+    );
+    if (!deleted) return null;
+
+    const { user, conversationId, messageId } = filter;
+    await preserveSharedMessageBoundaries(mongoose, { user, conversationId }, session);
+    await Message.deleteOne({ ...filter, _id: deleted._id }, { session });
+
+    const replyFilter = { user, conversationId, parentMessageId: messageId };
+    const parentMessageId = deleted.parentMessageId || Constants.NO_PARENT;
+    const Conversation = mongoose.models.Conversation as Model<IConversation>;
+    await Conversation.updateOne(
+      { user, conversationId },
+      {
+        $push: {
+          governanceMessageRedirects: {
+            messageId,
+            parentMessageId,
+            isCreatedByUser: deleted.isCreatedByUser,
+          },
+        },
+      },
+      { session, timestamps: false },
+    );
+    let requestMessageId: string | undefined;
+    if (deleted.isCreatedByUser) {
+      await Message.updateMany(
+        { ...replyFilter, isCreatedByUser: false, governanceRequestMessageId: { $exists: false } },
+        { $set: { governanceRequestMessageId: messageId } },
+        { session, timestamps: false },
+      );
+    } else if (deleted.governanceRequestMessageId) {
+      requestMessageId = deleted.governanceRequestMessageId;
+    } else if (
+      parentMessageId !== Constants.NO_PARENT &&
+      (await Message.exists({
+        user,
+        conversationId,
+        messageId: parentMessageId,
+        isCreatedByUser: true,
+      }).session(session))
+    ) {
+      requestMessageId = parentMessageId;
+    }
+
+    await Message.updateMany(
+      replyFilter,
+      { $set: { parentMessageId } },
+      { session, timestamps: false },
+    );
+    return {
+      requestMessageId,
+      cleanupSearch: async () => {
+        await Message.deleteFromMeili?.([messageId]);
+      },
+    };
+  }
+
   /**
    * Deletes messages from the database.
    */
-  async function deleteMessages(filter: FilterQuery<IMessage>) {
+  async function deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
-      return await Message.deleteMany(filter);
+      const { user, conversationId, messageId } = filter;
+      if (
+        !session &&
+        typeof user === 'string' &&
+        typeof conversationId === 'string' &&
+        typeof messageId === 'string' &&
+        (await Message.exists(filter))
+      ) {
+        await preserveSharedMessageBoundaries(mongoose, { user, conversationId });
+      }
+      return await Message.deleteMany(filter, { session });
     } catch (err) {
       logger.error('Error deleting messages:', err);
       throw err;
@@ -606,5 +767,6 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     getMessagesByCursor,
     searchMessages,
     deleteMessages,
+    deleteMessageAndReconnectReplies,
   };
 }

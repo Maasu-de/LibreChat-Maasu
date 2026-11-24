@@ -21,6 +21,16 @@ const convoSchema: Schema<IConversation> = new Schema(
       meiliIndex: true,
     },
     messages: [{ type: Schema.Types.ObjectId, ref: 'Message' }],
+    governanceMessageRedirects: {
+      type: [
+        new Schema(
+          { messageId: String, parentMessageId: String, isCreatedByUser: Boolean },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+      select: false,
+    },
     isTemporary: {
       type: Boolean,
       default: false,

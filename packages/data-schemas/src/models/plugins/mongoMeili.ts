@@ -15,6 +15,8 @@ import type { IConversation, IMessage } from '~/types';
 import logger from '~/config/meiliLogger';
 import { buildRetentionVisibilityFilter, legacyPermanentExpirationFilter } from '~/utils/retention';
 
+const COMPENSATING_DELETE_ATTEMPTS = 3;
+
 interface MongoMeiliOptions {
   host: string;
   apiKey: string;
@@ -53,6 +55,8 @@ interface _DocumentWithMeiliIndex extends Document {
 export type DocumentWithMeiliIndex = _DocumentWithMeiliIndex & IConversation & Partial<IMessage>;
 
 export interface SchemaWithMeiliMethods extends Model<DocumentWithMeiliIndex> {
+  deleteFromMeili(ids: string[], attempts?: number): Promise<void>;
+  indexAfterCommit(doc: Document): Promise<void>;
   syncWithMeili(): Promise<void>;
   getSyncProgress(): Promise<SyncProgress>;
   processSyncBatch(
@@ -72,18 +76,6 @@ export interface SchemaWithMeiliMethods extends Model<DocumentWithMeiliIndex> {
     populate?: boolean,
   ): Promise<SearchResponse<MeiliIndexable, Record<string, unknown>>>;
 }
-
-// Environment flags
-/**
- * Flag to indicate if search is enabled based on environment variables.
- */
-const searchEnabled = process.env.SEARCH != null && process.env.SEARCH.toLowerCase() === 'true';
-
-/**
- * Flag to indicate if MeiliSearch is enabled based on required environment variables.
- */
-const meiliEnabled =
-  process.env.MEILI_HOST != null && process.env.MEILI_MASTER_KEY != null && searchEnabled;
 
 /**
  * Get sync configuration from environment variables
@@ -311,10 +303,27 @@ const createMeiliMongooseModel = ({
         // Add documents to MeiliSearch
         await index.addDocumentsInBatches(formattedDocs, undefined, { primaryKey });
 
+        const docsIds = documents.map((doc) => doc._id);
+        if (this.deleteFromMeili) {
+          // A deletion may have enqueued cleanup while the batch was in flight.
+          const existing = await this.find({ _id: { $in: docsIds } })
+            .select('_id')
+            .read('primary')
+            .lean();
+          const existingIds = new Set(existing.map(({ _id }) => String(_id)));
+          const deletedKeys = documents.flatMap((doc) =>
+            existingIds.has(String(doc._id)) || doc[primaryKey] == null
+              ? []
+              : [String(doc[primaryKey])],
+          );
+          if (deletedKeys.length) {
+            await this.deleteFromMeili(deletedKeys, COMPENSATING_DELETE_ATTEMPTS);
+          }
+        }
+
         // Update MongoDB to mark documents as indexed.
         // { timestamps: false } prevents Mongoose from touching updatedAt, preserving
         // original conversation/message timestamps (fixes sidebar chronological sort).
-        const docsIds = documents.map((doc) => doc._id);
         await this.updateMany(
           { _id: { $in: docsIds } },
           { $set: { _meiliIndex: true } },
@@ -622,6 +631,7 @@ const createMeiliMongooseModel = ({
 export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): void {
   const mongoose = options.mongoose;
   validateOptions(options);
+  const meiliEnabled = process.env.SEARCH?.toLowerCase() === 'true';
 
   // Add _meiliIndex field to the schema to track if a document has been indexed in MeiliSearch.
   schema.add({
@@ -716,6 +726,55 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
     }),
   );
 
+  if (meiliEnabled) {
+    async function deleteFromMeili(ids: string[], attempts = 1): Promise<void> {
+      await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            const enqueued = await index.deleteDocuments(batch);
+            const task = await client.waitForTask(enqueued.taskUid, {
+              timeOutMs: 10000,
+              intervalMs: 100,
+            });
+            if (task.status !== 'succeeded') {
+              throw new Error(`Meili cleanup task ${enqueued.taskUid} ended with ${task.status}`);
+            }
+            return;
+          } catch (error) {
+            if (attempt >= attempts) {
+              throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, attempt * 100));
+          }
+        }
+      });
+    }
+
+    schema.static('indexAfterCommit', async (doc: DocumentWithMeiliIndex) => {
+      if (doc.unfinished || !doc.postSaveHook) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => doc.postSaveHook!(() => resolve()));
+
+      // A deletion on any replica may have queued removal before this write reached Meili.
+      // Check the primary after submission so a second removal is queued after the stale write.
+      try {
+        const model = doc.constructor as Model<DocumentWithMeiliIndex>;
+        if (!(await model.exists({ _id: doc._id }).read('primary'))) {
+          const indexedId = doc.preprocessObjectForIndex!()[primaryKey];
+          await deleteFromMeili([String(indexedId)], COMPENSATING_DELETE_ATTEMPTS);
+        }
+      } catch (error) {
+        logger.error(
+          '[indexAfterCommit] Failed to reconcile a concurrently deleted document:',
+          error,
+        );
+      }
+    });
+    schema.static('deleteFromMeili', deleteFromMeili);
+  }
+
   // Register Mongoose hooks
   schema.pre('save', function (this: DocumentWithMeiliIndex, next) {
     if (hasSchemaPath(schema, 'isTemporary')) {
@@ -729,16 +788,22 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
   });
 
   schema.post('updateOne', function (doc: DocumentWithMeiliIndex, next) {
-    doc.postUpdateHook?.(next);
+    if (typeof doc.postUpdateHook === 'function') {
+      return doc.postUpdateHook(next);
+    }
+    return next();
   });
 
   schema.post('deleteOne', function (doc: DocumentWithMeiliIndex, next) {
-    doc.postRemoveHook?.(next);
+    if (typeof doc.postRemoveHook === 'function') {
+      return doc.postRemoveHook(next);
+    }
+    return next();
   });
 
   // Pre-deleteMany hook: remove corresponding documents from MeiliSearch when multiple documents are deleted.
   schema.pre('deleteMany', async function (next) {
-    if (!meiliEnabled) {
+    if (!meiliEnabled || this.getOptions().session?.inTransaction()) {
       return next();
     }
 
@@ -793,7 +858,7 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
 
   // Post-findOneAndUpdate hook
   schema.post('findOneAndUpdate', async function (doc: DocumentWithMeiliIndex, next) {
-    if (!meiliEnabled) {
+    if (!meiliEnabled || this.getOptions().session?.inTransaction()) {
       return next();
     }
 

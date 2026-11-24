@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { Constants, FileSources } from 'librechat-data-provider';
-import type { FilterQuery, Model } from 'mongoose';
+import type { ClientSession, FilterQuery, Model, Types } from 'mongoose';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type * as t from '~/types';
 import { activeExpirationFilter } from '~/utils/retention';
@@ -312,18 +312,29 @@ function anonymizeMessages(
  * Filter messages up to and including the target message (branch-specific)
  * Similar to getMessagesUpToTargetLevel from fork utilities
  */
-function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string): t.IMessage[] {
-  if (!messages || messages.length === 0) {
+function getMessagesUpToTarget<T extends Pick<t.IMessage, 'messageId' | 'parentMessageId'>>(
+  references: (T | null)[],
+  targetMessageId: string,
+  branchSnapshotNarrowed?: boolean,
+): T[] {
+  const messages = (references ?? []).filter((message): message is T => message != null);
+  const hasMissingReferences = messages.length !== (references?.length ?? 0);
+  // Every reference in a narrowed snapshot was visible before deletion.
+  if (messages.length === 0 || (branchSnapshotNarrowed && hasMissingReferences)) {
     return [];
   }
 
   // If only one message and it's the target, return it
-  if (messages.length === 1 && messages[0]?.messageId === targetMessageId) {
+  if (
+    !hasMissingReferences &&
+    messages.length === 1 &&
+    messages[0]?.messageId === targetMessageId
+  ) {
     return messages;
   }
 
   // Create a map of parentMessageId to children messages
-  const parentToChildrenMap = new Map<string, t.IMessage[]>();
+  const parentToChildrenMap = new Map<string, T[]>();
   for (const message of messages) {
     const parentId = message.parentMessageId || Constants.NO_PARENT;
     if (!parentToChildrenMap.has(parentId)) {
@@ -335,27 +346,22 @@ function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string):
   // Find the target message
   const targetMessage = messages.find((msg) => msg.messageId === targetMessageId);
   if (!targetMessage) {
-    // If target not found, return all messages for backwards compatibility
-    return messages;
+    // Fail closed when the selected sharing boundary no longer exists.
+    return [];
   }
 
   const visited = new Set<string>();
   const rootMessages = parentToChildrenMap.get(Constants.NO_PARENT) || [];
-  let currentLevel = rootMessages.length > 0 ? [...rootMessages] : [targetMessage];
-  const results = new Set<t.IMessage>(currentLevel);
-
-  // Check if the target message is at the root level
-  if (
-    currentLevel.some((msg) => msg.messageId === targetMessageId) &&
-    targetMessage.parentMessageId === Constants.NO_PARENT
-  ) {
-    return Array.from(results);
+  if (rootMessages.length === 0 && hasMissingReferences) {
+    return [];
   }
+  let currentLevel = rootMessages.length > 0 ? [...rootMessages] : [targetMessage];
+  const results = new Set<T>(currentLevel);
 
   // Iterate level by level until the target is found
-  let targetFound = false;
+  let targetFound = currentLevel.some((msg) => msg.messageId === targetMessageId);
   while (!targetFound && currentLevel.length > 0) {
-    const nextLevel: t.IMessage[] = [];
+    const nextLevel: T[] = [];
     for (const node of currentLevel) {
       if (visited.has(node.messageId)) {
         continue;
@@ -376,7 +382,42 @@ function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string):
     currentLevel = nextLevel;
   }
 
-  return Array.from(results);
+  return targetFound ? Array.from(results) : [];
+}
+
+/**
+ * Keep branch snapshots bounded by their original message set before replies move.
+ * Keeping visible references also lets readers invalidate a snapshot if one disappears.
+ */
+export async function preserveSharedMessageBoundaries(
+  mongoose: typeof import('mongoose'),
+  filter: { user: string; conversationId: string },
+  session?: ClientSession,
+): Promise<void> {
+  const SharedLink = mongoose.models.SharedLink as Model<t.ISharedLink>;
+  type SharedMessageRef = Pick<t.IMessage, 'messageId' | 'parentMessageId'> & {
+    _id: Types.ObjectId;
+  };
+  const shares = await SharedLink.find(
+    { ...filter, targetMessageId: { $type: 'string' }, branchSnapshotNarrowed: { $ne: true } },
+    'messages targetMessageId',
+    { session },
+  ).populate<{ messages: (SharedMessageRef | null)[] }>({
+    path: 'messages',
+    select: 'messageId parentMessageId',
+    options: { session, retainNullValues: true },
+  });
+
+  for (const share of shares) {
+    if (!share.targetMessageId) continue;
+    const visible = getMessagesUpToTarget(share.messages, share.targetMessageId);
+    if (visible.length === 0) continue;
+    await SharedLink.updateOne(
+      { _id: share._id, ...filter },
+      { $set: { messages: visible.map(({ _id }) => _id), branchSnapshotNarrowed: true } },
+      { session, timestamps: false },
+    );
+  }
 }
 
 /** Factory function that takes mongoose instance and returns the methods */
@@ -444,19 +485,19 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         .populate({
           path: 'messages',
           select: '-_id -__v -user',
+          options: { retainNullValues: true },
         })
         .select('-__v')
-        .lean()) as (t.ISharedLink & { messages: t.IMessage[] }) | null;
+        .lean()) as (Omit<t.ISharedLink, 'messages'> & { messages: (t.IMessage | null)[] }) | null;
 
       if (!share?.conversationId) {
         return null;
       }
 
       /** Filtered messages based on targetMessageId if present (branch-specific sharing) */
-      let messagesToShare: t.IMessage[] = share.messages;
-      if (share.targetMessageId) {
-        messagesToShare = getMessagesUpToTarget(share.messages, share.targetMessageId);
-      }
+      const messagesToShare = share.targetMessageId
+        ? getMessagesUpToTarget(share.messages, share.targetMessageId, share.branchSnapshotNarrowed)
+        : (share.messages ?? []).filter((message) => message != null);
 
       const newConvoId = anonymizeConvoId(share.conversationId);
       const resolvedShareId = share.shareId || shareId;
@@ -841,6 +882,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
       // Clear any prior snapshot when snapshotting is off so a disabled-feature
       // update can't keep serving stale file ids that the update dropped.
       const unset = {
+        branchSnapshotNarrowed: 1,
         ...(expiredAt === null ? { expiredAt: 1 } : {}),
         ...(snapshotFiles ? {} : { fileSnapshots: 1 }),
       };
@@ -968,17 +1010,20 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         shareId,
         ...activeExpirationFilter<t.ISharedLink>(),
       })
-        .populate({ path: 'messages', select: '-_id -__v -user' })
-        .lean()) as (t.ISharedLink & { messages: t.IMessage[] }) | null;
+        .populate({
+          path: 'messages',
+          select: '-_id -__v -user',
+          options: { retainNullValues: true },
+        })
+        .lean()) as (Omit<t.ISharedLink, 'messages'> & { messages: (t.IMessage | null)[] }) | null;
 
       if (!share) {
         return null;
       }
 
-      let messages: t.IMessage[] = share.messages ?? [];
-      if (share.targetMessageId) {
-        messages = getMessagesUpToTarget(messages, share.targetMessageId);
-      }
+      const messages = share.targetMessageId
+        ? getMessagesUpToTarget(share.messages, share.targetMessageId, share.branchSnapshotNarrowed)
+        : (share.messages ?? []).filter((message) => message != null);
 
       const fileSnapshots = await buildFileSnapshots(mongoose, messages, share.user);
       await SharedLink.updateOne({ shareId }, { $set: { fileSnapshots } });

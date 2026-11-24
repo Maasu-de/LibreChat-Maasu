@@ -342,6 +342,7 @@ export type TDeleteConversationRequest = {
 };
 
 export type TDeleteConversationResponse = {
+  cleanupFailures?: string[];
   acknowledged: boolean;
   deletedCount: number;
   messages: {
