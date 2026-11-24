@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { EModelEndpoint } from 'librechat-data-provider';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import mongoMeili, { type SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
+import { createSharedLinkModel } from '~/models/sharedLink';
+import { createMessageMethods } from '~/methods/message';
 import { createConversationModel } from '~/models/convo';
 import { createMessageModel } from '~/models/message';
 
@@ -126,6 +128,34 @@ describe('Meilisearch Mongoose plugin', () => {
       [expect.objectContaining({ conversationId: expect.anything() })],
       { primaryKey: 'conversationId' },
     );
+  });
+
+  test('commits a coordinated message deletion with the search plugin registered', async () => {
+    const Message = createMessageModel(mongoose);
+    const Conversation = createConversationModel(mongoose);
+    createSharedLinkModel(mongoose);
+    const methods = createMessageMethods(mongoose);
+    const filter = {
+      user: new mongoose.Types.ObjectId().toString(),
+      conversationId: new mongoose.Types.ObjectId().toString(),
+      messageId: new mongoose.Types.ObjectId().toString(),
+    };
+    await Conversation.create({
+      user: filter.user,
+      conversationId: filter.conversationId,
+      endpoint: EModelEndpoint.openAI,
+    });
+    await Message.create({ ...filter, isCreatedByUser: true });
+
+    const deletion = await mongoose.connection.transaction((session) =>
+      methods.deleteMessageAndReconnectReplies(filter, session),
+    );
+
+    expect(deletion).not.toBeNull();
+    expect(await Message.exists(filter)).toBeNull();
+    expect(mockDeleteDocument).not.toHaveBeenCalled();
+    expect(mockDeleteDocuments).not.toHaveBeenCalled();
+    await Conversation.collection.deleteOne({ conversationId: filter.conversationId });
   });
 
   test('saving conversation indexes with expiredAt=null w/ meilisearch', async () => {
