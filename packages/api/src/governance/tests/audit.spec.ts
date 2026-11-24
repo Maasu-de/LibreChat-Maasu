@@ -50,6 +50,7 @@ app.delete('/groups/:id/members/:userId', async (req, res) => {
   await handlers.removeGroupMember(req as ServerRequest, res);
 });
 const outbox = () => mongoose.connection.db!.collection('governance_group_audit_outbox');
+const deletionOutbox = () => mongoose.connection.db!.collection('governance_chat_deletion_audit_outbox');
 
 beforeAll(async () => {
   replica = await MongoMemoryReplSet.create({
@@ -60,6 +61,7 @@ beforeAll(async () => {
   await models.Group.createCollection();
   await models.User.createCollection();
   await mongoose.connection.db!.createCollection('governance_group_audit_outbox');
+  await mongoose.connection.db!.createCollection('governance_chat_deletion_audit_outbox');
 }, 60000);
 afterAll(async () => {
   await mongoose.disconnect();
@@ -80,6 +82,7 @@ beforeEach(async () => {
     await models.Group.deleteMany({});
     await models.User.deleteMany({});
     await outbox().deleteMany({});
+    await deletionOutbox().deleteMany({});
     actor = await models.User.create({
       email: 'admin@test.example',
       name: 'Admin',
@@ -364,7 +367,7 @@ it('audits only the authenticated user’s single-message deletion and skips rep
     });
     await seedHistory('theirs', 'other-user', 'other-message');
     await deleteGovernanceMessage({ user: actor }, methods, 'theirs', 'other-message');
-    expect(await outbox().countDocuments()).toBe(0);
+    expect(await deletionOutbox().countDocuments()).toBe(0);
 
     await deleteGovernanceMessage({ user: actor }, methods, 'mine', 'owned-message');
     await deleteGovernanceMessage({ user: actor }, methods, 'mine', 'owned-message');
@@ -375,8 +378,8 @@ it('audits only the authenticated user’s single-message deletion and skips rep
       parentMessageId: '00000000-0000-0000-0000-000000000000',
     });
     expect(await models.Message.exists({ messageId: 'other-message' })).toBeTruthy();
-    const [event] = await outbox().find().toArray();
-    expect(await outbox().countDocuments()).toBe(1);
+    const [event] = await deletionOutbox().find().toArray();
+    expect(await deletionOutbox().countDocuments()).toBe(1);
     expect(event.payload).toEqual({
       occurred_at: event.createdAt.toISOString(),
       outcome: 'success',
@@ -411,8 +414,8 @@ it('audits one conversation and reports cleanup failure after commit', async () 
     expect(await models.Conversation.exists({ conversationId: 'mine' })).toBeNull();
     expect(await models.Message.exists({ messageId: 'owned-message' })).toBeNull();
     expect(await models.Conversation.exists({ conversationId: 'theirs' })).toBeTruthy();
-    expect(await outbox().countDocuments()).toBe(1);
-    expect(await outbox().findOne()).toMatchObject({
+    expect(await deletionOutbox().countDocuments()).toBe(1);
+    expect(await deletionOutbox().findOne()).toMatchObject({
       payload: { resource: { scope: 'conversation', conversation_id: 'mine', deleted_count: 1 } },
     });
   });
@@ -435,13 +438,14 @@ it('retries a durable bulk deletion with exactly the IDs committed by MongoDB', 
     expect(await models.Conversation.countDocuments()).toBe(1);
     expect(await models.Message.countDocuments()).toBe(1);
   });
+  expect(await outbox().countDocuments()).toBe(0);
   await flushGovernanceGroupAudit();
-  expect(await outbox().findOne()).toMatchObject({ retryCount: 1, lastError: { kind: 'network' } });
-  await outbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
+  expect(await deletionOutbox().findOne()).toMatchObject({ retryCount: 1, lastError: { kind: 'network' } });
+  await deletionOutbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
   await mongoose.disconnect();
   await mongoose.connect(replica.getUri());
   await flushGovernanceGroupAudit();
-  expect(await outbox().countDocuments()).toBe(0);
+  expect(await deletionOutbox().countDocuments()).toBe(0);
   const [first, retry] = sink.mock.calls;
   expect(first[0]).toBe(process.env.GOVERNANCE_CHAT_DELETION_AUDIT_URL);
   expect(retry[1]?.body).toEqual(first[1]?.body);
@@ -456,7 +460,7 @@ it('retries a durable bulk deletion with exactly the IDs committed by MongoDB', 
 
 it('rolls back conversation and message deletion when the outbox rejects the event', async () => {
   await mongoose.connection.db!.command({
-    collMod: 'governance_group_audit_outbox',
+    collMod: 'governance_chat_deletion_audit_outbox',
     validator: { $expr: { $literal: false } },
   });
   try {
@@ -471,10 +475,10 @@ it('rolls back conversation and message deletion when the outbox rejects the eve
       expect(await models.Conversation.exists({ conversationId: 'mine' })).toBeTruthy();
       expect(await models.Message.exists({ messageId: 'owned-message' })).toBeTruthy();
     });
-    expect(await outbox().countDocuments()).toBe(0);
+    expect(await deletionOutbox().countDocuments()).toBe(0);
   } finally {
     await mongoose.connection.db!.command({
-      collMod: 'governance_group_audit_outbox',
+      collMod: 'governance_chat_deletion_audit_outbox',
       validator: {},
     });
   }

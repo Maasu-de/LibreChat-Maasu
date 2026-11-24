@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@librechat/data-schemas';
 import type { ClientSession } from 'mongoose';
 import type { IGroup } from '@librechat/data-schemas';
-import type { Filter } from 'mongodb';
 import type { ServerRequest } from '~/types/http';
 import { isGovernancePilotEnabled } from './mode';
 
@@ -54,10 +53,12 @@ interface ChatDeletionDelivery extends AuditDeliveryState {
 }
 
 type AuditDelivery = GroupAuditDelivery | ChatDeletionDelivery;
+const auditKinds = ['group', 'chat_deletion'] as const;
+type AuditKind = (typeof auditKinds)[number];
 
-function outbox() {
+function outbox(kind: AuditKind) {
   if (!mongoose.connection.db) throw new Error('Governance audit database unavailable');
-  return mongoose.connection.db.collection<AuditDelivery>('governance_group_audit_outbox');
+  return mongoose.connection.db.collection<AuditDelivery>(`governance_${kind}_audit_outbox`);
 }
 
 function getGovernanceAuditUrl(kind?: AuditDelivery['kind']): string | undefined {
@@ -160,7 +161,7 @@ export async function mutateGovernanceGroup(
             },
           };
         });
-        await outbox().insertMany(deliveries, { session });
+        await outbox('group').insertMany(deliveries, { session });
         return group;
       },
       { writeConcern: { w: 'majority' } },
@@ -198,7 +199,7 @@ export async function commitAuditedChatDeletion<T>(
       async () => {
         const { result, resource, deletedCount } = await operation(session);
         if (deletedCount > 0) {
-          await outbox().insertOne(
+          await outbox('chat_deletion').insertOne(
             {
               _id: id,
               kind: 'chat_deletion',
@@ -230,24 +231,18 @@ let delivery: Promise<void> | undefined;
 const RETRY_BASE_MS = 5000;
 const RETRY_MAX_MS = 5 * 60 * 1000;
 const LEASE_MS = 30000;
-let lastQuarantineAlert = 0;
+const lastQuarantineAlert: Record<AuditKind, number> = { group: 0, chat_deletion: 0 };
 
-async function deliverPendingAudit(): Promise<void> {
-  const groupEndpoint = getGovernanceAuditUrl();
-  const chatEndpoint = getGovernanceAuditUrl('chat_deletion');
+async function deliverPendingAudit(kind: AuditKind): Promise<void> {
+  const endpoint = getGovernanceAuditUrl(kind);
   const credential = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
-  if ((!groupEndpoint && !chatEndpoint) || !credential || mongoose.connection.readyState !== 1)
-    return;
-  const kindFilter: Filter<AuditDelivery> =
-    groupEndpoint && chatEndpoint
-      ? {}
-      : { kind: chatEndpoint ? 'chat_deletion' : { $ne: 'chat_deletion' } };
+  if (!endpoint || !credential || mongoose.connection.readyState !== 1) return;
+  const collection = outbox(kind);
   for (let i = 0; i < 100; i++) {
     const now = new Date();
     const leaseId = randomUUID();
-    const record = await outbox().findOneAndUpdate(
+    const record = await collection.findOneAndUpdate(
       {
-        ...kindFilter,
         status: { $ne: 'quarantined' },
         $and: [
           { $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: { $lte: now } }] },
@@ -259,8 +254,6 @@ async function deliverPendingAudit(): Promise<void> {
     );
     if (!record) break;
     const filter = { _id: record._id, leaseId };
-    const endpoint = record.kind === 'chat_deletion' ? chatEndpoint : groupEndpoint;
-    if (!endpoint) continue;
     let status: number | undefined;
     try {
       const response = await fetch(endpoint, {
@@ -274,7 +267,7 @@ async function deliverPendingAudit(): Promise<void> {
       });
       status = response.status;
       if (response.ok) {
-        await outbox().deleteOne(filter);
+        await collection.deleteOne(filter);
         continue;
       }
     } catch {
@@ -285,7 +278,7 @@ async function deliverPendingAudit(): Promise<void> {
       status != null && status >= 400 && status < 500 && ![408, 425, 429].includes(status);
     const lastError: NonNullable<AuditDeliveryState['lastError']> =
       status == null ? { kind: 'network' } : { kind: 'http', status };
-    await outbox().updateOne(filter, {
+    await collection.updateOne(filter, {
       $set: {
         status: rejected ? 'quarantined' : 'pending',
         retryCount,
@@ -308,33 +301,39 @@ async function deliverPendingAudit(): Promise<void> {
         status,
       });
   }
-  if (Date.now() - lastQuarantineAlert >= 60000) {
-    const quarantined = await outbox().countDocuments({ status: 'quarantined' });
+  if (Date.now() - lastQuarantineAlert[kind] >= 60000) {
+    const quarantined = await collection.countDocuments({ status: 'quarantined' });
     if (quarantined)
-      logger.error('[Governance audit] Quarantined events require replay', { count: quarantined });
-    lastQuarantineAlert = Date.now();
+      logger.error('[Governance audit] Quarantined events require replay', { kind, count: quarantined });
+    lastQuarantineAlert[kind] = Date.now();
   }
 }
 
 /** Operator-only recovery after correcting the rejection; preserves identity and chronology. */
 export async function replayGovernanceGroupAudit(mutationIds: string[]): Promise<number> {
   if (!mutationIds.length) throw new Error('Specify quarantined mutation IDs to replay');
-  const result = await outbox().updateMany(
-    { _id: { $in: mutationIds }, status: 'quarantined' },
-    {
-      $set: { status: 'pending', retryCount: 0, nextAttemptAt: new Date() },
-      $unset: { quarantinedAt: '', lastError: '', leaseUntil: '', leaseId: '' },
-    },
+  const results = await Promise.all(
+    auditKinds.map((kind) =>
+      outbox(kind).updateMany(
+        { _id: { $in: mutationIds }, status: 'quarantined' },
+        {
+          $set: { status: 'pending', retryCount: 0, nextAttemptAt: new Date() },
+          $unset: { quarantinedAt: '', lastError: '', leaseUntil: '', leaseId: '' },
+        },
+      ),
+    ),
   );
-  return result.modifiedCount;
+  return results.reduce((count, result) => count + result.modifiedCount, 0);
 }
 
 /** Retain pending events on network failures; duplicate deliveries are deduplicated by the Gateway. */
 export function flushGovernanceGroupAudit(): Promise<void> {
   if (delivery) return delivery;
-  delivery = deliverPendingAudit()
-    .catch(() => {
-      logger.warn('[Governance audit] Delivery pending; durable events will be retried');
+  delivery = Promise.allSettled(auditKinds.map((kind) => deliverPendingAudit(kind)))
+    .then((results) => {
+      if (results.some((result) => result.status === 'rejected')) {
+        logger.warn('[Governance audit] Delivery pending; durable events will be retried');
+      }
     })
     .finally(() => {
       delivery = undefined;
