@@ -4,8 +4,8 @@ const { Providers, Constants: AgentConstants } = require('@librechat/agents');
 const {
   sendEvent,
   isGovernancePilotEnabled,
-  isGovernanceRemoteMCP,
-  getGovernanceMCPOAuthBinding,
+  getGovernanceMCPConfigs,
+  getGovernanceMCPConnectionStatus,
   isGovernanceMCPOAuthAuthorized,
   PENDING_STALE_MS,
   MCPOAuthHandler,
@@ -162,10 +162,7 @@ async function resolveMcpConfigNames(req) {
 async function resolveAllMcpConfigs(userId, user) {
   const registry = getMCPServersRegistry();
   if (isGovernancePilotEnabled()) {
-    const configs = await registry.getAllServerConfigs(userId, undefined, user?.role);
-    return Object.fromEntries(
-      Object.entries(configs).filter(([, config]) => config.dbId && isGovernanceRemoteMCP(config)),
-    );
+    return getGovernanceMCPConfigs(registry, userId, user?.role);
   }
   const appConfig = await getAppConfigForUser(userId, user);
   let configServers = {};
@@ -1042,52 +1039,38 @@ async function getServerConnectionStatus(
 ) {
   const connection = appConnections.get(serverName) || userConnections.get(serverName);
   const isStaleOrDoNotExist = connection ? connection?.isStale(config.updatedAt) : true;
+  if (isGovernancePilotEnabled()) {
+    return getGovernanceMCPConnectionStatus(
+      userId,
+      serverName,
+      config,
+      { connectionState: connection?.connectionState, stale: isStaleOrDoNotExist },
+      oauthServers.has(serverName),
+      {
+        isAuthorized: isGovernanceMCPOAuthAuthorized,
+        isReconnecting: (...args) => getOAuthReconnectionManager().isReconnecting(...args),
+        checkFlowStatus: checkOAuthFlowStatus,
+      },
+    );
+  }
 
-  let baseConnectionState = isStaleOrDoNotExist
+  const baseConnectionState = isStaleOrDoNotExist
     ? 'disconnected'
     : connection?.connectionState || 'disconnected';
-  const authorizationComplete =
-    isGovernancePilotEnabled() && oauthServers.has(serverName) && config.dbId
-      ? await isGovernanceMCPOAuthAuthorized(
-          userId,
-          config.dbId,
-          getGovernanceMCPOAuthBinding(config),
-        )
-      : undefined;
-  if (authorizationComplete === false) baseConnectionState = 'disconnected';
   let finalConnectionState = baseConnectionState;
-
-  // connection state overrides specific to OAuth servers
-  if (
-    baseConnectionState === 'disconnected' &&
-    oauthServers.has(serverName) &&
-    !authorizationComplete
-  ) {
-    // check if server is actively being reconnected
+  if (baseConnectionState === 'disconnected' && oauthServers.has(serverName)) {
     const oauthReconnectionManager = getOAuthReconnectionManager();
     if (oauthReconnectionManager.isReconnecting(userId, serverName)) {
       finalConnectionState = 'connecting';
     } else {
-      const binding = getGovernanceMCPOAuthBinding(config);
-      const { hasActiveFlow, hasFailedFlow } = await checkOAuthFlowStatus(
-        userId,
-        serverName,
-        getTenantId(),
-        binding,
-      );
-
-      if (hasFailedFlow) {
-        finalConnectionState = 'error';
-      } else if (hasActiveFlow) {
-        finalConnectionState = 'connecting';
-      }
+      const { hasActiveFlow, hasFailedFlow } = await checkOAuthFlowStatus(userId, serverName);
+      if (hasFailedFlow) finalConnectionState = 'error';
+      else if (hasActiveFlow) finalConnectionState = 'connecting';
     }
   }
-
   return {
     requiresOAuth: oauthServers.has(serverName),
     connectionState: finalConnectionState,
-    ...(authorizationComplete != null ? { authorizationComplete } : {}),
   };
 }
 

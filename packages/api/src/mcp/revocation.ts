@@ -2,9 +2,10 @@ import type { MCPProviderRevocation } from 'librechat-data-provider';
 
 export function mergeMCPRevocationFailure(
   current: MCPProviderRevocation,
-  error: Error & { status?: number },
+  error: unknown,
 ): MCPProviderRevocation {
-  const status = error?.status;
+  const status =
+    error != null && typeof error === 'object' && 'status' in error ? error.status : undefined;
   const httpStatus =
     typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599
       ? status

@@ -9,10 +9,8 @@ const { logger, SystemCapabilities } = require('@librechat/data-schemas');
 const {
   checkAccess,
   isGovernancePilotEnabled,
+  createGovernanceMCPServerHandlers,
   isGovernanceRemoteMCP,
-  rejectGovernanceMCPUpdate,
-  createGovernanceMCPMutation,
-  recordGovernanceMCPFailure,
   isUserSourced,
   MCPErrorCodes,
   MCPApiKeyReentryRequiredError,
@@ -41,6 +39,11 @@ const { getResourcePermissionsMap } = require('~/server/services/PermissionServi
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getMCPManager, getMCPServersRegistry } = require('~/config');
 const db = require('~/models');
+
+const governanceMCPServers = createGovernanceMCPServerHandlers({
+  getRegistry: getMCPServersRegistry,
+  resolveReservedNames: resolveMcpConfigNames,
+});
 
 /**
  * Handles MCP-specific errors and sends appropriate HTTP responses.
@@ -354,25 +357,16 @@ async function callerCanConfigureObo(req) {
  * @route POST /api/mcp/servers
  */
 const createMCPServerController = async (req, res) => {
-  let connectionId;
-  let committed = false;
+  if (isGovernancePilotEnabled()) return governanceMCPServers.create(req, res);
   try {
     const userId = req.user?.id;
     const { config } = req.body;
 
     const validation = MCPServerUserInputSchema.safeParse(config);
     if (!validation.success) {
-      await recordGovernanceMCPFailure(req, 'mcp.created');
       return res.status(400).json({
         message: 'Invalid configuration',
         errors: validation.error.errors,
-      });
-    }
-    if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(validation.data)) {
-      await recordGovernanceMCPFailure(req, 'mcp.created');
-      return res.status(400).json({
-        error: 'MCP_INVALID_ADMIN_CONNECTION',
-        message: 'Only remote administrative MCP connections are supported',
       });
     }
     if (configHasObo(validation.data) && !(await callerCanConfigureObo(req))) {
@@ -384,31 +378,24 @@ const createMCPServerController = async (req, res) => {
         .json({ message: 'Forbidden: Insufficient permissions to configure OBO' });
     }
     const reservedServerNames = await resolveMcpConfigNames(req);
-    const mutation = createGovernanceMCPMutation(req, 'mcp.created');
     const result = await getMCPServersRegistry().addServer(
       'temp_server_name',
       validation.data,
       'DB',
       userId,
       reservedServerNames,
-      ...(mutation ? [mutation] : []),
     );
-    committed = true;
-    connectionId = result.config.dbId;
     res.status(201).json({
       serverName: result.serverName,
       ...redactServerSecrets(result.config, { canEdit: true }),
     });
   } catch (error) {
-    if (!committed) await recordGovernanceMCPFailure(req, 'mcp.created', connectionId);
-    logger.error('[createMCPServer]', isGovernancePilotEnabled() ? 'MCP operation failed' : error);
+    logger.error('[createMCPServer]', error);
     const mcpErrorResponse = handleMCPError(error, res);
     if (mcpErrorResponse) {
       return mcpErrorResponse;
     }
-    res.status(500).json({
-      message: isGovernancePilotEnabled() ? 'MCP connection operation failed' : error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -453,38 +440,18 @@ const getMCPServerById = async (req, res) => {
  * @route PATCH /api/mcp/servers/:serverName
  */
 const updateMCPServerController = async (req, res) => {
-  let connectionId;
-  let committed = false;
+  if (isGovernancePilotEnabled()) return governanceMCPServers.update(req, res);
   try {
     const userId = req.user?.id;
     const { serverName } = req.params;
     const { config } = req.body;
-    let existingConfig;
-    if (isGovernancePilotEnabled()) {
-      existingConfig = await getMCPServersRegistry().getServerConfig(serverName, userId);
-      connectionId = existingConfig?.dbId;
-    }
 
     const validation = MCPServerUserInputSchema.safeParse(config);
     if (!validation.success) {
-      return rejectGovernanceMCPUpdate(
-        req,
-        res,
-        { message: 'Invalid configuration', errors: validation.error.errors },
-        connectionId,
-      );
-    }
-
-    if (isGovernancePilotEnabled() && !isGovernanceRemoteMCP(validation.data)) {
-      return rejectGovernanceMCPUpdate(
-        req,
-        res,
-        {
-          error: 'MCP_INVALID_ADMIN_CONNECTION',
-          message: 'Only remote administrative MCP connections are supported',
-        },
-        connectionId,
-      );
+      return res.status(400).json({
+        message: 'Invalid configuration',
+        errors: validation.error.errors,
+      });
     }
 
     /**
@@ -495,8 +462,7 @@ const updateMCPServerController = async (req, res) => {
      * to point OBO-minted tokens at an attacker-controlled endpoint. Adds,
      * modifies, and removes are all caught.
      */
-    existingConfig ??= await getMCPServersRegistry().getServerConfig(serverName, userId);
-    connectionId = existingConfig?.dbId;
+    const existingConfig = await getMCPServersRegistry().getServerConfig(serverName, userId);
     if (configHasObo(existingConfig) && !(await callerCanConfigureObo(req))) {
       if (violatesOboLockdown(existingConfig, validation.data)) {
         logger.warn(
@@ -517,26 +483,21 @@ const updateMCPServerController = async (req, res) => {
         .json({ message: 'Forbidden: Insufficient permissions to configure OBO' });
     }
 
-    const mutation = createGovernanceMCPMutation(req, 'mcp.updated');
     const parsedConfig = await getMCPServersRegistry().updateServer(
       serverName,
       validation.data,
       'DB',
       userId,
-      ...(mutation ? [mutation] : []),
     );
-    committed = true;
+
     res.status(200).json(redactServerSecrets(parsedConfig, { canEdit: true }));
   } catch (error) {
-    if (!committed) await recordGovernanceMCPFailure(req, 'mcp.updated', connectionId);
-    logger.error('[updateMCPServer]', isGovernancePilotEnabled() ? 'MCP operation failed' : error);
+    logger.error('[updateMCPServer]', error);
     const mcpErrorResponse = handleMCPError(error, res);
     if (mcpErrorResponse) {
       return mcpErrorResponse;
     }
-    res.status(500).json({
-      message: isGovernancePilotEnabled() ? 'MCP connection operation failed' : error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -545,28 +506,15 @@ const updateMCPServerController = async (req, res) => {
  * @route DELETE /api/mcp/servers/:serverName
  */
 const deleteMCPServerController = async (req, res) => {
-  let connectionId;
-  let committed = false;
+  if (isGovernancePilotEnabled()) return governanceMCPServers.delete(req, res);
   try {
     const userId = req.user?.id;
     const { serverName } = req.params;
-    const existingConfig = await getMCPServersRegistry().getServerConfig(serverName, userId);
-    connectionId = existingConfig?.dbId;
-    const mutation = createGovernanceMCPMutation(req, 'mcp.deleted');
-    await getMCPServersRegistry().removeServer(
-      serverName,
-      'DB',
-      userId,
-      ...(mutation ? [mutation] : []),
-    );
-    committed = true;
+    await getMCPServersRegistry().removeServer(serverName, 'DB', userId);
     res.status(200).json({ message: 'MCP server deleted successfully' });
   } catch (error) {
-    if (!committed) await recordGovernanceMCPFailure(req, 'mcp.deleted', connectionId);
-    logger.error('[deleteMCPServer]', isGovernancePilotEnabled() ? 'MCP operation failed' : error);
-    res.status(500).json({
-      message: isGovernancePilotEnabled() ? 'MCP connection operation failed' : error.message,
-    });
+    logger.error('[deleteMCPServer]', error);
+    res.status(500).json({ message: error.message });
   }
 };
 

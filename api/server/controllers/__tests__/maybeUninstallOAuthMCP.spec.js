@@ -34,6 +34,7 @@ jest.mock('@librechat/data-schemas', () => {
 
 jest.mock('@librechat/api', () => {
   return {
+    createMCPOAuthDisconnect: jest.requireActual('@librechat/api').createMCPOAuthDisconnect,
     mergeMCPRevocationFailure: jest.requireActual('@librechat/api').mergeMCPRevocationFailure,
     MCPOAuthHandler: {
       revokeOAuthToken: (...args) => mockRevokeOAuthToken(...args),

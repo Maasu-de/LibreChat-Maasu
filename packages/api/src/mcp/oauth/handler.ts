@@ -848,7 +848,7 @@ export class MCPOAuthHandler {
   static async completeOAuthFlow(
     flowId: string,
     authorizationCode: string,
-    flowManager: FlowStateManager<MCPOAuthTokens>,
+    flowManager: FlowStateManager<MCPOAuthTokens | null>,
     oauthHeaders: Record<string, string>,
     completeFlow = true,
   ): Promise<MCPOAuthTokens> {

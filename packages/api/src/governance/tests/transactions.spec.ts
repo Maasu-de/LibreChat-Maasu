@@ -10,6 +10,7 @@ let mockRegistry: MCPServersRegistry;
 jest.mock('@librechat/api', () => ({
   ...jest.requireActual('~/governance/audit'),
   ...jest.requireActual('~/governance/mcp'),
+  ...jest.requireActual('~/governance/servers'),
   ...jest.requireActual('~/governance/mode'),
   ...jest.requireActual('~/mcp/utils'),
   ...jest.requireActual('~/mcp/errors'),

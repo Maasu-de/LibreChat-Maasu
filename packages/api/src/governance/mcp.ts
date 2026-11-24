@@ -76,7 +76,9 @@ export function isGovernanceMCPApi(method: string, path: string): boolean {
   return ['PATCH', 'DELETE'].includes(method) && /^\/mcp\/servers\/[^/]+$/.test(normalized);
 }
 
-export function isGovernanceRemoteMCP(config: MCPOptions | MCPServerUserInput): boolean {
+export function isGovernanceRemoteMCP(
+  config: MCPOptions | MCPServerUserInput,
+): config is MCPOptions {
   const candidate = config as MCPOptions;
   if (candidate.type !== 'streamable-http' && candidate.type !== 'http' && candidate.type !== 'sse')
     return false;

@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import mongoose from 'mongoose';
+import { Keyv } from 'keyv';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
@@ -84,6 +85,84 @@ afterEach(() => {
   process.env = environment;
   jest.restoreAllMocks();
 });
+
+it.each([false, true])(
+  'completes the typed callback atomically; audit failure: %s',
+  async (failAudit) => {
+    const { createGovernanceMCPOAuthCompletion } = await import('../callback');
+    const { getGovernanceMCPOAuthBinding } = await import('../authorization');
+    const { MCPOAuthHandler } = await import('~/mcp/oauth');
+    const { FlowStateManager } = await import('~/flow/manager');
+    const config = { type: 'sse' as const, url: 'https://mcp.example/server', dbId: connectionId };
+    const binding = getGovernanceMCPOAuthBinding(config)!;
+    const flowId = MCPOAuthHandler.generateFlowId(actor.id, serverName, undefined, binding);
+    const flowManager = new FlowStateManager<import('~/mcp/oauth').MCPOAuthTokens | null>(
+      new Keyv(),
+      { ttl: 60000, ci: true },
+    );
+    const flowState = {
+      userId: actor.id,
+      serverName,
+      serverUrl: config.url,
+      binding,
+      state: 'callback-state',
+      clientInfo: { client_id: 'client', client_secret: 'client-secret' },
+    };
+    await flowManager.initFlow(flowId, 'mcp_oauth', flowState);
+    const complete = createGovernanceMCPOAuthCompletion({
+      findUser: methods.findUser,
+      getServerConfig: async () => config,
+      tokenMethods: methods,
+      handler: {
+        completeOAuthFlow: async () => ({ ...tokenData().tokens, obtained_at: Date.now() }),
+        buildStoredClientMetadata: MCPOAuthHandler.buildStoredClientMetadata,
+        generateTokenFlowId: MCPOAuthHandler.generateTokenFlowId.bind(MCPOAuthHandler),
+      },
+      getGeneration: authorization.getGovernanceMCPOAuthGeneration,
+      storeAuthorization: administration.storeGovernanceMCPOAuth,
+      withGeneration: authorization.withGovernanceMCPOAuthGeneration,
+    });
+    const app = express();
+    app.get('/:serverName', (req, res) =>
+      complete(req, res, {
+        flowId,
+        code: 'authorization-code',
+        state: flowState.state,
+        flowState,
+        flowManager,
+        parsedFlowId: MCPOAuthHandler.parseFlowId(flowId)!,
+      }),
+    );
+    await schemas.runAsSystem(async () => {
+      const failure = failAudit ? failAuditWrites() : undefined;
+      const response = await request(app).get(`/${serverName}`);
+      failure?.mockRestore();
+      expect(response.status).toBe(302);
+      expect(response.headers.location).toContain(failAudit ? '/oauth/error' : '/oauth/success');
+      expect(await models.Token.countDocuments()).toBe(failAudit ? 0 : 3);
+      const flow = await flowManager.getFlowState(flowId, 'mcp_oauth');
+      expect(flow?.status).toBe(failAudit ? 'FAILED' : 'COMPLETED');
+      if (!failAudit) {
+        expect(flow?.result).toBeNull();
+        expect((await outbox().findOne())?.payload).toMatchObject({
+          action: 'mcp.oauth.authorized',
+          outcome: 'success',
+          resource: { id: connectionId },
+        });
+        expect(
+          await storage.getTokens({
+            userId: actor.id,
+            serverName,
+            binding,
+            findToken: methods.findToken,
+          }),
+        ).toMatchObject(tokenData().tokens);
+      }
+      expect(response.text).not.toContain('access-secret');
+      expect(JSON.stringify(await models.Token.find().lean())).not.toContain('access-secret');
+    });
+  },
+);
 
 it('commits encrypted access, refresh, and client tokens with the authorization event', async () => {
   await schemas.runAsSystem(async () => {
