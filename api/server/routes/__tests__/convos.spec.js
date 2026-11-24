@@ -24,6 +24,8 @@ describe('Convos Routes', () => {
   const { deleteToolCalls, deleteConvos, saveConvo } = require('~/models');
   const {
     deleteAllSharedLinksWithCleanup,
+    deleteGovernanceConversations,
+    isGovernancePilotEnabled,
     deleteConvoSharedLinksWithCleanup,
   } = require('@librechat/api');
 
@@ -44,6 +46,34 @@ describe('Convos Routes', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('governed conversation deletion', () => {
+    it('returns a successful bulk deletion with separate cleanup failures', async () => {
+      isGovernancePilotEnabled.mockReturnValueOnce(true);
+      const result = { deletedCount: 2, cleanupFailures: ['shared_links'] };
+      deleteGovernanceConversations.mockResolvedValueOnce(result);
+
+      const response = await request(app).delete('/api/convos/all');
+
+      expect(response.status).toBe(201);
+      expect(response.body).toEqual(result);
+      expect(deleteGovernanceConversations).toHaveBeenCalledWith(
+        expect.objectContaining({ user: { id: 'test-user-123' } }),
+        expect.any(Object),
+      );
+      expect(deleteConvos).not.toHaveBeenCalled();
+    });
+
+    it('requires an exact conversation ID on the single-conversation route', async () => {
+      isGovernancePilotEnabled.mockReturnValueOnce(true);
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: { $ne: null } } });
+
+      expect(response.status).toBe(400);
+      expect(deleteGovernanceConversations).not.toHaveBeenCalled();
+    });
   });
 
   describe('DELETE /all', () => {

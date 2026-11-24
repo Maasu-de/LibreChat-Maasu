@@ -190,6 +190,21 @@ describe('DELETE /:conversationId/:messageId – route handler', () => {
     });
   });
 
+  it('uses the audited deletion path in governance mode', async () => {
+    const { isGovernancePilotEnabled, deleteGovernanceMessage } = require('@librechat/api');
+    isGovernancePilotEnabled.mockReturnValueOnce(true);
+    const response = await request(app).delete('/api/messages/convo-1/msg-owned');
+
+    expect(response.status).toBe(204);
+    expect(deleteMessages).not.toHaveBeenCalled();
+    expect(deleteGovernanceMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ user: { id: authenticatedUserId } }),
+      expect.any(Object),
+      'convo-1',
+      'msg-owned',
+    );
+  });
+
   it('should return 500 when deleteMessages throws', async () => {
     deleteMessages.mockRejectedValue(new Error('DB failure'));
 

@@ -173,7 +173,7 @@ export async function commitAuditedChatDeletion<T>(
   req: Pick<ServerRequest, 'user'>,
   operation: (session: ClientSession) => Promise<{
     result: T;
-    resource?: ChatDeletionScope;
+    resource: ChatDeletionScope;
     deletedCount: number;
   }>,
 ): Promise<T> {
@@ -196,9 +196,6 @@ export async function commitAuditedChatDeletion<T>(
       async () => {
         const { result, resource, deletedCount } = await operation(session);
         if (deletedCount > 0) {
-          if (!resource) {
-            throw new Error('Missing resource for committed chat deletion');
-          }
           await outbox().insertOne(
             {
               _id: id,

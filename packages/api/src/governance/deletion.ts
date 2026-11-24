@@ -8,17 +8,20 @@ type DeletionRequest = Pick<ServerRequest, 'user'>;
 
 export async function deleteGovernanceMessage(
   req: DeletionRequest,
-  db: Pick<MessageMethods, 'deleteMessages'>,
+  db: Pick<MessageMethods, 'deleteMessageAndReconnectReplies'>,
   conversationId: string,
   messageId: string,
 ) {
   const user = req.user?.id;
   if (!user) throw new Error('Authenticated user is required');
   await commitAuditedChatDeletion(req, async (session) => {
-    const result = await db.deleteMessages({ user, conversationId, messageId }, session);
+    const deleted = await db.deleteMessageAndReconnectReplies(
+      { user, conversationId, messageId },
+      session,
+    );
     return {
-      result,
-      deletedCount: result.deletedCount,
+      result: undefined,
+      deletedCount: Number(deleted),
       resource: { scope: 'message', conversation_id: conversationId, message_id: messageId },
     };
   });

@@ -73,6 +73,14 @@ different internal endpoint, set `GOVERNANCE_AUDIT_URL`, for example
 An unavailable audit service leaves durable pending events for retry; a missing
 audit endpoint or credential prevents group mutations.
 
+Governed chat history deletions use the same durable delivery worker. The chat
+deletion endpoint defaults to the Gateway base URL with `/v1` replaced by
+`/api/v1/internal/chat-deletion-audit`. Set `GOVERNANCE_CHAT_DELETION_AUDIT_URL`
+to override it. Enable the receiver before rolling out the deletion routes.
+A failed cleanup of related data is reported separately from the committed
+deletion. As with group events, rejected deliveries can be replayed after the
+configuration or receiver is corrected.
+
 MongoDB must support transactions so group writes and their audit outbox entries
 commit together. Both `docker-compose.yml` and `deploy-compose.yml` configure a
 single-member replica set named `rs0`. Their health check initializes an unconfigured

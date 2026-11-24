@@ -349,6 +349,12 @@ async function seedHistory(conversationId: string, user: string, messageId: stri
 it('audits only the authenticated user’s single-message deletion and skips repeats', async () => {
   await runAsSystem(async () => {
     await seedHistory('mine', actor.id, 'owned-message');
+    await models.Message.create({
+      user: actor.id,
+      conversationId: 'mine',
+      messageId: 'reply',
+      parentMessageId: 'owned-message',
+    });
     await seedHistory('theirs', 'other-user', 'other-message');
     await deleteGovernanceMessage({ user: actor }, methods, 'theirs', 'other-message');
     expect(await outbox().countDocuments()).toBe(0);
@@ -358,6 +364,9 @@ it('audits only the authenticated user’s single-message deletion and skips rep
 
     expect(await models.Message.exists({ messageId: 'owned-message' })).toBeNull();
     expect(await models.Conversation.exists({ conversationId: 'mine' })).toBeTruthy();
+    expect(await models.Message.findOne({ messageId: 'reply' })).toMatchObject({
+      parentMessageId: '00000000-0000-0000-0000-000000000000',
+    });
     expect(await models.Message.exists({ messageId: 'other-message' })).toBeTruthy();
     const [event] = await outbox().find().toArray();
     expect(await outbox().countDocuments()).toBe(1);
@@ -402,7 +411,8 @@ it('audits one conversation and reports cleanup failure after commit', async () 
 });
 
 it('retries a durable bulk deletion with exactly the IDs committed by MongoDB', async () => {
-  const sink = jest.spyOn(global, 'fetch')
+  const sink = jest
+    .spyOn(global, 'fetch')
     .mockRejectedValueOnce(new Error('connection lost'))
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
   await runAsSystem(async () => {
@@ -444,7 +454,9 @@ it('rolls back conversation and message deletion when the outbox rejects the eve
   try {
     await runAsSystem(async () => {
       await seedHistory('mine', actor.id, 'owned-message');
-      await expect(deleteGovernanceConversations({ user: actor }, methods, 'mine')).rejects.toThrow();
+      await expect(
+        deleteGovernanceConversations({ user: actor }, methods, 'mine'),
+      ).rejects.toThrow();
       await expect(
         deleteGovernanceMessage({ user: actor }, methods, 'mine', 'owned-message'),
       ).rejects.toThrow();

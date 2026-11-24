@@ -1,4 +1,4 @@
-import { RetentionMode } from 'librechat-data-provider';
+import { Constants, RetentionMode } from 'librechat-data-provider';
 import type { ClientSession, DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
 import type { TMinimalFeedback } from 'librechat-data-provider';
 import type { AppConfig, IMessage } from '~/types';
@@ -84,6 +84,10 @@ export interface MessageMethods {
     searchOptions: Partial<IMessage>,
     hydrate?: boolean,
   ): Promise<unknown>;
+  deleteMessageAndReconnectReplies(
+    filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
+    session: ClientSession,
+  ): Promise<boolean>;
   deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession): Promise<DeleteResult>;
 }
 
@@ -527,6 +531,29 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     }
   }
 
+  async function deleteMessageAndReconnectReplies(
+    filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
+    session: ClientSession,
+  ): Promise<boolean> {
+    const Message = mongoose.models.Message as Model<IMessage>;
+    const deleted = await Message.findOneAndDelete(filter, {
+      session,
+      projection: { parentMessageId: 1 },
+    });
+    if (!deleted) return false;
+
+    await Message.updateMany(
+      {
+        user: filter.user,
+        conversationId: filter.conversationId,
+        parentMessageId: filter.messageId,
+      },
+      { $set: { parentMessageId: deleted.parentMessageId || Constants.NO_PARENT } },
+      { session, timestamps: false },
+    );
+    return true;
+  }
+
   /**
    * Deletes messages from the database.
    */
@@ -606,5 +633,6 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     getMessagesByCursor,
     searchMessages,
     deleteMessages,
+    deleteMessageAndReconnectReplies,
   };
 }
