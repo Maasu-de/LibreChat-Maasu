@@ -312,8 +312,12 @@ function anonymizeMessages(
  * Filter messages up to and including the target message (branch-specific)
  * Similar to getMessagesUpToTargetLevel from fork utilities
  */
-function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string): t.IMessage[] {
-  if (!messages || messages.length === 0) {
+function getMessagesUpToTarget(
+  messages: (t.IMessage | null)[],
+  targetMessageId: string,
+): t.IMessage[] {
+  // Reconnecting replies after deletion can change which messages are within the target's level.
+  if (!messages?.length || !messages.every((message): message is t.IMessage => message != null)) {
     return [];
   }
 
@@ -335,8 +339,8 @@ function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string):
   // Find the target message
   const targetMessage = messages.find((msg) => msg.messageId === targetMessageId);
   if (!targetMessage) {
-    // If target not found, return all messages for backwards compatibility
-    return messages;
+    // Fail closed when the selected sharing boundary no longer exists.
+    return [];
   }
 
   const visited = new Set<string>();
@@ -344,16 +348,8 @@ function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string):
   let currentLevel = rootMessages.length > 0 ? [...rootMessages] : [targetMessage];
   const results = new Set<t.IMessage>(currentLevel);
 
-  // Check if the target message is at the root level
-  if (
-    currentLevel.some((msg) => msg.messageId === targetMessageId) &&
-    targetMessage.parentMessageId === Constants.NO_PARENT
-  ) {
-    return Array.from(results);
-  }
-
   // Iterate level by level until the target is found
-  let targetFound = false;
+  let targetFound = currentLevel.some((msg) => msg.messageId === targetMessageId);
   while (!targetFound && currentLevel.length > 0) {
     const nextLevel: t.IMessage[] = [];
     for (const node of currentLevel) {
@@ -376,7 +372,7 @@ function getMessagesUpToTarget(messages: t.IMessage[], targetMessageId: string):
     currentLevel = nextLevel;
   }
 
-  return Array.from(results);
+  return targetFound ? Array.from(results) : [];
 }
 
 /** Factory function that takes mongoose instance and returns the methods */
@@ -444,19 +440,19 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         .populate({
           path: 'messages',
           select: '-_id -__v -user',
+          retainNullValues: true,
         })
         .select('-__v')
-        .lean()) as (t.ISharedLink & { messages: t.IMessage[] }) | null;
+        .lean()) as (Omit<t.ISharedLink, 'messages'> & { messages: (t.IMessage | null)[] }) | null;
 
       if (!share?.conversationId) {
         return null;
       }
 
       /** Filtered messages based on targetMessageId if present (branch-specific sharing) */
-      let messagesToShare: t.IMessage[] = share.messages;
-      if (share.targetMessageId) {
-        messagesToShare = getMessagesUpToTarget(share.messages, share.targetMessageId);
-      }
+      const messagesToShare = share.targetMessageId
+        ? getMessagesUpToTarget(share.messages, share.targetMessageId)
+        : (share.messages ?? []).filter((message) => message != null);
 
       const newConvoId = anonymizeConvoId(share.conversationId);
       const resolvedShareId = share.shareId || shareId;
@@ -968,17 +964,16 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         shareId,
         ...activeExpirationFilter<t.ISharedLink>(),
       })
-        .populate({ path: 'messages', select: '-_id -__v -user' })
-        .lean()) as (t.ISharedLink & { messages: t.IMessage[] }) | null;
+        .populate({ path: 'messages', select: '-_id -__v -user', retainNullValues: true })
+        .lean()) as (Omit<t.ISharedLink, 'messages'> & { messages: (t.IMessage | null)[] }) | null;
 
       if (!share) {
         return null;
       }
 
-      let messages: t.IMessage[] = share.messages ?? [];
-      if (share.targetMessageId) {
-        messages = getMessagesUpToTarget(messages, share.targetMessageId);
-      }
+      const messages = share.targetMessageId
+        ? getMessagesUpToTarget(share.messages, share.targetMessageId)
+        : (share.messages ?? []).filter((message) => message != null);
 
       const fileSnapshots = await buildFileSnapshots(mongoose, messages, share.user);
       await SharedLink.updateOne({ shareId }, { $set: { fileSnapshots } });
