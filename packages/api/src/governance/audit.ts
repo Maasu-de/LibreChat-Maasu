@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@librechat/data-schemas';
 import type { ClientSession } from 'mongoose';
 import type { IGroup } from '@librechat/data-schemas';
+import type { Filter } from 'mongodb';
 import type { ServerRequest } from '~/types/http';
 import { isGovernancePilotEnabled } from './mode';
 
@@ -237,7 +238,7 @@ async function deliverPendingAudit(): Promise<void> {
   const credential = process.env.LIBRECHAT_SERVICE_CREDENTIAL;
   if ((!groupEndpoint && !chatEndpoint) || !credential || mongoose.connection.readyState !== 1)
     return;
-  const kindFilter =
+  const kindFilter: Filter<AuditDelivery> =
     groupEndpoint && chatEndpoint
       ? {}
       : { kind: chatEndpoint ? 'chat_deletion' : { $ne: 'chat_deletion' } };

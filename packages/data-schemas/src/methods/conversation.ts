@@ -772,9 +772,13 @@ export function createConversationMethods(
       const Conversation = mongoose.models.Conversation as Model<IConversation>;
       const { deleteMessages } = getMessageMethods();
       const userFilter = { ...filter, user };
-      const conversations = await Conversation.find(userFilter, 'conversationId chatProjectId tags', {
-        session,
-      });
+      const conversations = await Conversation.find(
+        userFilter,
+        'conversationId chatProjectId tags',
+        {
+          session,
+        },
+      );
       const conversationIds = conversations.map((c) => c.conversationId);
       const projectIds = new Set(
         conversations
@@ -806,7 +810,9 @@ export function createConversationMethods(
       }
 
       const deleteConvoResult = await Conversation.deleteMany(
-        session ? { ...userFilter, _id: { $in: conversations.map((convo) => convo._id) } } : userFilter,
+        session
+          ? { ...userFilter, _id: { $in: conversations.map((convo) => convo._id) } }
+          : userFilter,
         { session },
       );
       const deleted = deleteConvoResult.deletedCount > 0;

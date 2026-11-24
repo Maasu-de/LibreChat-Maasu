@@ -27,7 +27,7 @@ export function createToolCallMethods(mongoose: typeof import('mongoose')): {
   >;
   deleteToolCalls: (
     userId: string,
-    conversationId?: string,
+    conversationId?: string | string[],
   ) => Promise<import('mongodb').DeleteResult>;
   getToolCallById: (id: string) => Promise<
     | (import('mongoose').FlattenMaps<{
@@ -199,7 +199,9 @@ export function createToolCallMethods(mongoose: typeof import('mongoose')): {
       const ToolCall = mongoose.models.ToolCall as Model<IToolCallData>;
       const query: { user: string; conversationId?: string | { $in: string[] } } = { user: userId };
       if (conversationId) {
-        query.conversationId = Array.isArray(conversationId) ? { $in: conversationId } : conversationId;
+        query.conversationId = Array.isArray(conversationId)
+          ? { $in: conversationId }
+          : conversationId;
       }
       return await ToolCall.deleteMany(query);
     } catch (error) {
