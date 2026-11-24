@@ -53,6 +53,7 @@ interface _DocumentWithMeiliIndex extends Document {
 export type DocumentWithMeiliIndex = _DocumentWithMeiliIndex & IConversation & Partial<IMessage>;
 
 export interface SchemaWithMeiliMethods extends Model<DocumentWithMeiliIndex> {
+  deleteFromMeili(ids: string[]): Promise<void>;
   syncWithMeili(): Promise<void>;
   getSyncProgress(): Promise<SyncProgress>;
   processSyncBatch(
@@ -72,18 +73,6 @@ export interface SchemaWithMeiliMethods extends Model<DocumentWithMeiliIndex> {
     populate?: boolean,
   ): Promise<SearchResponse<MeiliIndexable, Record<string, unknown>>>;
 }
-
-// Environment flags
-/**
- * Flag to indicate if search is enabled based on environment variables.
- */
-const searchEnabled = process.env.SEARCH != null && process.env.SEARCH.toLowerCase() === 'true';
-
-/**
- * Flag to indicate if MeiliSearch is enabled based on required environment variables.
- */
-const meiliEnabled =
-  process.env.MEILI_HOST != null && process.env.MEILI_MASTER_KEY != null && searchEnabled;
 
 /**
  * Get sync configuration from environment variables
@@ -622,6 +611,7 @@ const createMeiliMongooseModel = ({
 export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): void {
   const mongoose = options.mongoose;
   validateOptions(options);
+  const meiliEnabled = process.env.SEARCH?.toLowerCase() === 'true';
 
   // Add _meiliIndex field to the schema to track if a document has been indexed in MeiliSearch.
   schema.add({
@@ -716,6 +706,14 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
     }),
   );
 
+  if (meiliEnabled) {
+    schema.static('deleteFromMeili', async (ids: string[]) => {
+      await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
+        await index.deleteDocuments(batch);
+      });
+    });
+  }
+
   // Register Mongoose hooks
   schema.pre('save', function (this: DocumentWithMeiliIndex, next) {
     if (hasSchemaPath(schema, 'isTemporary')) {
@@ -738,7 +736,7 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
 
   // Pre-deleteMany hook: remove corresponding documents from MeiliSearch when multiple documents are deleted.
   schema.pre('deleteMany', async function (next) {
-    if (!meiliEnabled) {
+    if (!meiliEnabled || this.getOptions().session?.inTransaction()) {
       return next();
     }
 

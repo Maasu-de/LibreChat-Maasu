@@ -1,7 +1,8 @@
 import { RetentionMode } from 'librechat-data-provider';
 import type { ClientSession, FilterQuery, Model, SortOrder } from 'mongoose';
 import type { DeleteResult } from 'mongoose';
-import type { AppConfig, IChatProjectDocument, IConversation } from '~/types';
+import type { AppConfig, IChatProjectDocument, IConversation, IMessage } from '~/types';
+import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type { MessageMethods } from './message';
 import {
   refreshChatProjectStatsForUser,
@@ -18,6 +19,7 @@ type ConversationDeletionResult = DeleteResult & { messages: DeleteResult };
 type AuditedConversationDeletionResult = ConversationDeletionResult & {
   conversationIds: string[];
   cleanup: () => Promise<void>;
+  cleanupSearch: () => Promise<void>;
 };
 
 export interface ConversationMethods {
@@ -769,7 +771,10 @@ export function createConversationMethods(
     session?: ClientSession,
   ): Promise<ConversationDeletionResult | AuditedConversationDeletionResult> {
     try {
-      const Conversation = mongoose.models.Conversation as Model<IConversation>;
+      const Conversation = mongoose.models.Conversation as Model<IConversation> &
+        Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
+      const Message = mongoose.models.Message as Model<IMessage> &
+        Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
       const { deleteMessages } = getMessageMethods();
       const userFilter = { ...filter, user };
       const conversations = await Conversation.find(
@@ -806,7 +811,13 @@ export function createConversationMethods(
           throw new Error('Conversation not found or already deleted.');
         }
         const empty: DeleteResult = { acknowledged: true, deletedCount: 0 };
-        return { ...empty, messages: empty, conversationIds, cleanup: async () => {} };
+        return {
+          ...empty,
+          messages: empty,
+          conversationIds,
+          cleanup: async () => {},
+          cleanupSearch: async () => {},
+        };
       }
 
       const deleteConvoResult = await Conversation.deleteMany(
@@ -835,6 +846,10 @@ export function createConversationMethods(
       }
 
       const messageFilter = { conversationId: { $in: conversationIds }, user };
+      const searchMessages =
+        session && Message.deleteFromMeili
+          ? await Message.find(messageFilter, { messageId: 1 }, { session }).lean()
+          : [];
       const deleteMessagesResult = session
         ? await deleteMessages(messageFilter, session)
         : await deleteMessages(messageFilter);
@@ -846,6 +861,14 @@ export function createConversationMethods(
           cleanup: async () => {
             await decrementTagCounts(mongoose, user, tagDecrements);
             await refreshProjects();
+          },
+          cleanupSearch: async () => {
+            const outcomes = await Promise.allSettled([
+              Conversation.deleteFromMeili?.(conversationIds),
+              Message.deleteFromMeili?.(searchMessages.map((message) => message.messageId)),
+            ]);
+            const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+            if (failure) throw failure.reason;
           },
         };
       }

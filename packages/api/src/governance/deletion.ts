@@ -17,17 +17,24 @@ export async function deleteGovernanceMessage(
 ): Promise<void> {
   const user = req.user?.id;
   if (!user) throw new Error('Authenticated user is required');
-  await commitAuditedChatDeletion(req, async (session) => {
-    const deleted = await db.deleteMessageAndReconnectReplies(
+  const cleanupSearch = await commitAuditedChatDeletion(req, async (session) => {
+    const cleanupSearch = await db.deleteMessageAndReconnectReplies(
       { user, conversationId, messageId },
       session,
     );
     return {
-      result: undefined,
-      deletedCount: Number(deleted),
+      result: cleanupSearch,
+      deletedCount: Number(cleanupSearch !== null),
       resource: { scope: 'message', conversation_id: conversationId, message_id: messageId },
     };
   });
+  try {
+    await cleanupSearch?.();
+  } catch {
+    logger.warn('[Governance deletion] Post-commit cleanup failed', {
+      cleanupFailures: ['search_index'],
+    });
+  }
 }
 
 export async function deleteGovernanceConversations(
@@ -37,7 +44,7 @@ export async function deleteGovernanceConversations(
 ): Promise<ConversationDeletionResponse> {
   const user = req.user?.id;
   if (!user) throw new Error('Authenticated user is required');
-  const { conversationIds, cleanup, ...result } = await commitAuditedChatDeletion(
+  const { conversationIds, cleanup, cleanupSearch, ...result } = await commitAuditedChatDeletion(
     req,
     async (session) => {
       const result = await db.deleteConvos(user, conversationId ? { conversationId } : {}, session);
@@ -54,6 +61,7 @@ export async function deleteGovernanceConversations(
   if (!conversationIds.length) return result;
   const tasks = {
     conversation_metadata: cleanup,
+    search_index: cleanupSearch,
     tool_calls: () => db.deleteToolCalls(user, conversationIds),
     shared_links: () => deleteSharedLinksForConversations(user, conversationIds),
   };

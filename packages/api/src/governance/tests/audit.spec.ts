@@ -50,7 +50,8 @@ app.delete('/groups/:id/members/:userId', async (req, res) => {
   await handlers.removeGroupMember(req as ServerRequest, res);
 });
 const outbox = () => mongoose.connection.db!.collection('governance_group_audit_outbox');
-const deletionOutbox = () => mongoose.connection.db!.collection('governance_chat_deletion_audit_outbox');
+const deletionOutbox = () =>
+  mongoose.connection.db!.collection('governance_chat_deletion_audit_outbox');
 
 beforeAll(async () => {
   replica = await MongoMemoryReplSet.create({
@@ -421,6 +422,42 @@ it('audits one conversation and reports cleanup failure after commit', async () 
   });
 });
 
+it('queues search cleanup only after the matching deletion audit is durable', async () => {
+  await runAsSystem(async () => {
+    await seedHistory('message-chat', actor.id, 'single-message');
+    await seedHistory('conversation-chat', actor.id, 'conversation-message');
+    const deleteIndexedMessages = jest.fn(async (ids: string[]) => {
+      expect(await models.Message.countDocuments({ messageId: { $in: ids } })).toBe(0);
+      expect(await deletionOutbox().countDocuments()).toBeGreaterThan(0);
+    });
+    const deleteIndexedConversations = jest.fn(async (ids: string[]) => {
+      expect(await models.Conversation.countDocuments({ conversationId: { $in: ids } })).toBe(0);
+      expect(await deletionOutbox().countDocuments()).toBe(2);
+    });
+    Object.assign(models.Message, { deleteFromMeili: deleteIndexedMessages });
+    Object.assign(models.Conversation, { deleteFromMeili: deleteIndexedConversations });
+    try {
+      await deleteGovernanceMessage({ user: actor }, methods, 'message-chat', 'single-message');
+      const result = await deleteGovernanceConversations(
+        { user: actor },
+        methods,
+        'conversation-chat',
+      );
+
+      expect(result.cleanupFailures).toBeUndefined();
+      expect(deleteIndexedMessages.mock.calls).toEqual([
+        [['single-message']],
+        [['conversation-message']],
+      ]);
+      await Promise.all(deleteIndexedMessages.mock.results.map((result) => result.value));
+      expect(deleteIndexedConversations).toHaveBeenCalledWith(['conversation-chat']);
+    } finally {
+      Reflect.deleteProperty(models.Message, 'deleteFromMeili');
+      Reflect.deleteProperty(models.Conversation, 'deleteFromMeili');
+    }
+  });
+});
+
 it('retries a durable bulk deletion with exactly the IDs committed by MongoDB', async () => {
   const sink = jest
     .spyOn(global, 'fetch')
@@ -440,7 +477,10 @@ it('retries a durable bulk deletion with exactly the IDs committed by MongoDB', 
   });
   expect(await outbox().countDocuments()).toBe(0);
   await flushGovernanceGroupAudit();
-  expect(await deletionOutbox().findOne()).toMatchObject({ retryCount: 1, lastError: { kind: 'network' } });
+  expect(await deletionOutbox().findOne()).toMatchObject({
+    retryCount: 1,
+    lastError: { kind: 'network' },
+  });
   await deletionOutbox().updateMany({}, { $set: { nextAttemptAt: new Date(0) } });
   await mongoose.disconnect();
   await mongoose.connect(replica.getUri());

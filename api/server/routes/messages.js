@@ -71,24 +71,24 @@ router.get('/', async (req, res) => {
         messageId: { $in: messageIds },
       });
 
-      const dbMessageMap = {};
-      for (const dbMessage of dbMessages) {
-        dbMessageMap[dbMessage.messageId] = dbMessage;
-      }
+      const dbMessageMap = new Map(dbMessages.map((message) => [message.messageId, message]));
 
       const activeMessages = [];
       for (const message of cleanedMessages) {
         const convo = result.convoMap[message.conversationId];
-        const dbMessage = dbMessageMap[message.messageId];
+        const dbMessage = dbMessageMap.get(message.messageId);
+        if (!dbMessage || dbMessage.conversationId !== message.conversationId) {
+          continue;
+        }
 
         activeMessages.push({
           ...message,
           title: convo.title,
           conversationId: message.conversationId,
           model: convo.model,
-          isCreatedByUser: dbMessage?.isCreatedByUser,
-          endpoint: dbMessage?.endpoint,
-          iconURL: dbMessage?.iconURL,
+          isCreatedByUser: dbMessage.isCreatedByUser,
+          endpoint: dbMessage.endpoint,
+          iconURL: dbMessage.iconURL,
         });
       }
 

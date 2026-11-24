@@ -2,6 +2,7 @@ import { Constants, RetentionMode } from 'librechat-data-provider';
 import type { ClientSession, DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
 import type { TMinimalFeedback } from 'librechat-data-provider';
 import type { AppConfig, IMessage } from '~/types';
+import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { createFallbackRetentionDate } from '~/utils/retention';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
@@ -87,7 +88,7 @@ export interface MessageMethods {
   deleteMessageAndReconnectReplies(
     filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
     session: ClientSession,
-  ): Promise<boolean>;
+  ): Promise<(() => Promise<void>) | null>;
   deleteMessages(filter: FilterQuery<IMessage>, session?: ClientSession): Promise<DeleteResult>;
 }
 
@@ -534,13 +535,14 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   async function deleteMessageAndReconnectReplies(
     filter: Pick<IMessage, 'user' | 'conversationId' | 'messageId'>,
     session: ClientSession,
-  ): Promise<boolean> {
-    const Message = mongoose.models.Message as Model<IMessage>;
+  ): Promise<(() => Promise<void>) | null> {
+    const Message = mongoose.models.Message as Model<IMessage> &
+      Partial<Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>>;
     const deleted = await Message.findOneAndDelete(filter, {
       session,
       projection: { parentMessageId: 1 },
     });
-    if (!deleted) return false;
+    if (!deleted) return null;
 
     await Message.updateMany(
       {
@@ -551,7 +553,9 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
       { $set: { parentMessageId: deleted.parentMessageId || Constants.NO_PARENT } },
       { session, timestamps: false },
     );
-    return true;
+    return async () => {
+      await Message.deleteFromMeili?.([filter.messageId]);
+    };
   }
 
   /**

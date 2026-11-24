@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { EModelEndpoint } from 'librechat-data-provider';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import mongoMeili, { type SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import { createConversationModel } from '~/models/convo';
 import { createMessageModel } from '~/models/message';
@@ -83,17 +83,18 @@ jest.mock('meilisearch', () => {
 describe('Meilisearch Mongoose plugin', () => {
   const OLD_ENV = process.env;
 
-  let mongoServer: MongoMemoryServer;
+  let mongoServer: MongoMemoryReplSet;
 
   beforeAll(async () => {
     process.env = {
       ...OLD_ENV,
+      SEARCH: 'true',
       // Set a fake meilisearch host/key so that we activate the meilisearch plugin
       MEILI_HOST: 'foo',
       MEILI_MASTER_KEY: 'bar',
     };
 
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const mongoUri = mongoServer.getUri();
     await mongoose.connect(mongoUri);
   });
@@ -335,6 +336,48 @@ describe('Meilisearch Mongoose plugin', () => {
     await conversationModel.syncWithMeili();
 
     expect(mockAddDocuments).not.toHaveBeenCalled();
+  });
+
+  test('transactional deletions leave search untouched until committed cleanup', async () => {
+    const conversationModel = createConversationModel(mongoose) as ReturnType<
+      typeof createConversationModel
+    > &
+      Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>;
+    const messageModel = createMessageModel(mongoose) as ReturnType<typeof createMessageModel> &
+      Pick<SchemaWithMeiliMethods, 'deleteFromMeili'>;
+    const conversationId = new mongoose.Types.ObjectId().toString();
+    const messageId = new mongoose.Types.ObjectId().toString();
+    const user = new mongoose.Types.ObjectId().toString();
+    await conversationModel.create({ conversationId, user, endpoint: EModelEndpoint.openAI });
+    await messageModel.create({ messageId, conversationId, user, text: 'Searchable message' });
+
+    const session = await mongoose.startSession();
+    const remove = async () => {
+      await conversationModel.deleteMany({ conversationId, user }, { session });
+      await messageModel.deleteMany({ conversationId, user }, { session });
+      expect(mockDeleteDocument).not.toHaveBeenCalled();
+      expect(mockDeleteDocuments).not.toHaveBeenCalled();
+    };
+    try {
+      const rollback = new Error('outbox rejected');
+      await expect(
+        session.withTransaction(async () => {
+          await remove();
+          throw rollback;
+        }),
+      ).rejects.toThrow(rollback);
+      expect(await conversationModel.exists({ conversationId, user })).toBeTruthy();
+      expect(await messageModel.exists({ messageId, user })).toBeTruthy();
+      await session.withTransaction(remove);
+    } finally {
+      await session.endSession();
+    }
+
+    expect(await conversationModel.exists({ conversationId, user })).toBeNull();
+    expect(await messageModel.exists({ messageId, user })).toBeNull();
+    await conversationModel.deleteFromMeili([conversationId]);
+    await messageModel.deleteFromMeili([messageId]);
+    expect(mockDeleteDocuments.mock.calls).toEqual([[[conversationId]], [[messageId]]]);
   });
 
   test('sync w/ meili excludes legacy temporary conversations without isTemporary', async () => {
