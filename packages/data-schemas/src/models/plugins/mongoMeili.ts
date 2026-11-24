@@ -708,11 +708,30 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
   );
 
   if (meiliEnabled) {
-    schema.static('indexAfterCommit', async (doc: DocumentWithMeiliIndex) => {
-      if (!doc.unfinished && doc.postSaveHook) {
+    schema.static(
+      'indexAfterCommit',
+      async function (this: SchemaWithMeiliMethods, doc: DocumentWithMeiliIndex) {
+        if (doc.unfinished || !doc.postSaveHook) {
+          return;
+        }
+
         await new Promise<void>((resolve) => doc.postSaveHook!(() => resolve()));
-      }
-    });
+
+        // A deletion on any replica may have queued removal before this write reached Meili.
+        // Check the primary after submission so a second removal is queued after the stale write.
+        try {
+          if (!(await this.exists({ _id: doc._id }).read('primary'))) {
+            const indexedId = doc.preprocessObjectForIndex!()[primaryKey];
+            await index.deleteDocument(String(indexedId));
+          }
+        } catch (error) {
+          logger.error(
+            '[indexAfterCommit] Failed to reconcile a concurrently deleted document:',
+            error,
+          );
+        }
+      },
+    );
     schema.static('deleteFromMeili', async (ids: string[]) => {
       await processBatch(ids, syncOptions.batchSize, syncOptions.delayMs, async (batch) => {
         await index.deleteDocuments(batch);

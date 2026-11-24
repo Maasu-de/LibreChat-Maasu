@@ -188,6 +188,62 @@ describe('Meilisearch Mongoose plugin', () => {
     );
   });
 
+  test('removes a message when a post-commit index write arrives after deletion', async () => {
+    const Message = createMessageModel(mongoose) as unknown as SchemaWithMeiliMethods;
+    const messageId = new mongoose.Types.ObjectId().toString();
+    const message = await mongoose.connection.transaction(
+      async (session) =>
+        await Message.findOneAndUpdate(
+          { messageId },
+          {
+            conversationId: new mongoose.Types.ObjectId().toString(),
+            user: new mongoose.Types.ObjectId().toString(),
+            isCreatedByUser: true,
+            text: 'Synthetic message',
+          },
+          { session, new: true, upsert: true },
+        ).orFail(),
+    );
+
+    const indexedMessages = new Set<string>();
+    let startWrite!: () => void;
+    let releaseWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      startWrite = resolve;
+    });
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    mockAddDocuments.mockImplementationOnce(async () => {
+      startWrite();
+      await writeReleased;
+      indexedMessages.add(messageId);
+    });
+    mockDeleteDocuments.mockImplementationOnce(async (ids: string[]) => {
+      ids.forEach((id) => indexedMessages.delete(id));
+    });
+    mockDeleteDocument.mockImplementationOnce(async (id: string) => {
+      indexedMessages.delete(id);
+    });
+
+    const pendingIndex = Message.indexAfterCommit(message);
+    try {
+      await writeStarted;
+      await mongoose.connection.transaction(
+        async (session) =>
+          await Message.findOneAndDelete({ _id: message._id }, { session }).orFail(),
+      );
+      await Message.deleteFromMeili([messageId]);
+    } finally {
+      releaseWrite();
+      await pendingIndex;
+    }
+
+    expect(mockDeleteDocuments).toHaveBeenCalledWith([messageId]);
+    expect(mockDeleteDocument).toHaveBeenCalledWith(messageId);
+    expect(indexedMessages.has(messageId)).toBe(false);
+  });
+
   test('saving messages with expiredAt=null indexes w/ meilisearch', async () => {
     await createMessageModel(mongoose).create({
       messageId: new mongoose.Types.ObjectId(),
