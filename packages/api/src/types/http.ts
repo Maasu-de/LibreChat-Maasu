@@ -1,7 +1,13 @@
-import type { TConversation, TEndpointOption, GovernanceDlpReview } from 'librechat-data-provider';
+import type {
+  TConversation,
+  GovernanceMask,
+  TEndpointOption,
+  GovernanceDlpReview,
+} from 'librechat-data-provider';
 import type { IUser, AppConfig } from '@librechat/data-schemas';
 import type { Request } from 'express';
 import type { DlpFileContext } from '~/governance/review';
+import type { GovernanceAgentRun, GovernanceAgentRequest } from '~/governance/agents';
 
 /**
  * LibreChat-specific request body type that extends Express Request body
@@ -13,6 +19,7 @@ export type RequestBody = {
   conversationId?: string;
   parentMessageId?: string;
   endpoint?: string;
+  agent_id?: string;
   endpointType?: string;
   model?: string;
   key?: string;
@@ -37,6 +44,9 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   authStrategy?: string;
   /** Set for plain-text sends, whose completion goes through the governed DLP approval flow. */
   governanceDlpEligible?: boolean;
+  governanceAgentRun?: GovernanceAgentRun;
+  governanceAgentRequest?: GovernanceAgentRequest;
+  governanceDlpReviewedInstructions?: Set<string>;
   /** Server-resolved LibreChat group IDs used by the governed completion. */
   governanceGroupIds?: string[];
   /** The user message this turn's gateway calls are correlated with. */
@@ -47,6 +57,8 @@ export type ServerRequest = Request<unknown, unknown, RequestBody> & {
   governanceDlpReview?: GovernanceDlpReview;
   /** Set when the approved review's last send failed and put it back, so it can be sent again. */
   governanceDlpApprovalKept?: boolean;
+  /** Where the approved review masks the submitted message, stored with the sent message. */
+  governanceDlpMasked?: { masks: GovernanceMask[]; maskedFileIds: string[] };
   /** Whether this comparison turn claimed the review the user approved, shared by both models. */
   governanceComparisonApproval?: Promise<boolean>;
   /** Resolves once both compared models' first gateway calls came back. */

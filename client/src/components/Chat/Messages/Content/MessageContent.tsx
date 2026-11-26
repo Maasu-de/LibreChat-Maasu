@@ -6,6 +6,7 @@ import type { TMessageContentProps, TDisplayProps } from '~/common';
 import Error from '~/components/Messages/Content/Error';
 import { useMessageContext } from '~/Providers';
 import MarkdownLite from './MarkdownLite';
+import MaskedText from './MaskedText';
 import EditMessage from './EditMessage';
 import Thinking from './Parts/Thinking';
 import { useLocalize } from '~/hooks';
@@ -100,15 +101,22 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
     [showCursor, isSubmitting],
   );
 
+  /** The gateway's replacements in a sent message, marked in its plain text. */
+  const masks = isCreatedByUser ? message?.governanceMasks : undefined;
+  const plainText = isCreatedByUser && (!enableUserMsgMarkdown || (masks?.length ?? 0) > 0);
+
   const content = useMemo(() => {
     if (!isCreatedByUser) {
       return <Markdown content={text} isLatestMessage={isLatestMessage} />;
+    }
+    if (masks && masks.length > 0) {
+      return <MaskedText text={text} masks={masks} />;
     }
     if (enableUserMsgMarkdown) {
       return <MarkdownLite content={text} />;
     }
     return <>{text}</>;
-  }, [isCreatedByUser, enableUserMsgMarkdown, text, isLatestMessage]);
+  }, [isCreatedByUser, enableUserMsgMarkdown, text, isLatestMessage, masks]);
 
   return (
     <Container message={message}>
@@ -117,7 +125,7 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
           'markdown prose message-content dark:prose-invert light w-full break-words',
           isSubmitting && 'submitting',
           showCursorState && text.length > 0 && 'result-streaming',
-          isCreatedByUser && !enableUserMsgMarkdown && 'whitespace-pre-wrap',
+          plainText && 'whitespace-pre-wrap',
           isCreatedByUser ? 'dark:text-gray-20' : 'dark:text-gray-100',
         )}
       >

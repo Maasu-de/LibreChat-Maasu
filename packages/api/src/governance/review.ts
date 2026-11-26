@@ -1,17 +1,21 @@
 import { CacheKeys, GOVERNANCE_DLP_TEXT_LOCATION } from 'librechat-data-provider';
 import type {
+  GovernanceMask,
   GovernanceTier,
   GovernanceFinding,
   GovernanceDecision,
   GovernanceDlpReview,
   GovernanceFileFinding,
+  GovernanceInstructionReview,
   GovernanceModelRestriction,
 } from 'librechat-data-provider';
 import type { FinalEvent, FinalMessageFields } from '~/types/events';
 import type { FileContext } from '~/files/context';
 import type { GovernanceChatMessage } from './dlp';
+import type { GovernanceAgentRequest } from './agents';
 import type { GovernanceMasking } from './mask';
 import { standardCache } from '~/cache';
+import { getGovernanceMasking } from './mask';
 
 const DEFAULT_REVIEW_TTL_MS = 10 * 60 * 1000;
 const EVENT_END = /\r?\n\r?\n/;
@@ -42,6 +46,13 @@ export interface StoredReview {
   dlpToken: string;
   /** Unix seconds at which the gateway's approval token expires. */
   expiresAt?: number;
+  /** Where the approved text has replacements, which the sent message highlights. */
+  masks?: GovernanceMask[];
+  /** The submitted message's attached files in which values are masked. */
+  maskedFileIds?: string[];
+  agentRequest?: GovernanceAgentRequest;
+  instructionMessages?: string[];
+  conversationCreatedAt?: string;
 }
 
 export interface ReviewStore {
@@ -202,7 +213,33 @@ export function findingsInSubmittedText(
     }));
 }
 
-const MESSAGE_CONTENT_LOCATION = /^\/messages\/(\d+)\/content$/;
+/** Findings in newly introduced agent instructions, kept separate from the user's draft. */
+export function findingsInInstructions(
+  messages: GovernanceChatMessage[],
+  findings: GovernanceFinding[],
+  messageIndices: number[] = [],
+): GovernanceInstructionReview[] {
+  return messageIndices.flatMap((index) => {
+    const message = messages[index];
+    if (message?.role !== 'system') {
+      return [];
+    }
+    const instructionFindings = findings
+      .filter((finding) => finding.location === `/messages/${index}/content`)
+      .map((finding) => ({ ...finding, location: GOVERNANCE_DLP_TEXT_LOCATION }));
+    if (instructionFindings.length === 0) {
+      return [];
+    }
+    const { ranges } = getGovernanceMasking(message.content, instructionFindings);
+    return [
+      {
+        text: message.content,
+        findings: instructionFindings,
+        ...(ranges.length > 0 ? { maskedRanges: ranges } : {}),
+      },
+    ];
+  });
+}
 
 /** An attached-document block this turn added to a message; `current` marks the submitted one's. */
 export interface DlpFileContext extends FileContext {
@@ -217,47 +254,31 @@ interface LocatedFile {
   end: number;
 }
 
-/** A user message's code points and the attached files located in it. */
-interface MessageFiles {
-  chars: string[];
-  files: LocatedFile[];
-}
-
 /**
- * Places the recorded attached-document blocks found in `content` at their code-point offsets.
- * Only a block's exact text is matched, so text inside a file cannot fake a file boundary. The
- * submitted message is matched against this turn's blocks only, which name their files' IDs.
+ * Places this turn's attached-document blocks of the submitted message at their code-point offsets
+ * in `content`. Only a block's exact text is matched, so text inside a file cannot fake a file
+ * boundary.
  */
-function locateFiles(
-  content: string,
-  fileContexts: DlpFileContext[],
-  current: boolean,
-): LocatedFile[] {
+function locateFiles(content: string, fileContexts: DlpFileContext[]): LocatedFile[] {
   const located: LocatedFile[] = [];
   for (const fileContext of fileContexts) {
-    const index = fileContext.current === current ? content.lastIndexOf(fileContext.text) : -1;
+    const index = fileContext.current ? content.lastIndexOf(fileContext.text) : -1;
     if (index === -1) {
       continue;
     }
     const base = Array.from(content.slice(0, index)).length;
     for (const { fileId, filename, type, start, end } of fileContext.files) {
-      located.push({
-        ...(current ? { fileId } : {}),
-        filename,
-        type,
-        start: base + start,
-        end: base + end,
-      });
+      located.push({ fileId, filename, type, start: base + start, end: base + end });
     }
   }
   return located;
 }
 
 /**
- * Findings inside files attached to user messages, counted per file, category and action, with
- * the distinct values they matched. Findings in the submitted text are left to
- * `findingsInSubmittedText`. A finding in a file attached to the submitted message names that
- * file's ID, since only those can be withdrawn.
+ * Findings inside the files attached to the submitted message, counted per file, category and
+ * action, with the distinct values they matched. Files attached to earlier messages were reviewed
+ * in their own turn, so their findings are left out; the gateway still masks them. Findings in the
+ * submitted text are left to `findingsInSubmittedText`.
  */
 export function findingsInFiles(
   messages: GovernanceChatMessage[],
@@ -265,30 +286,19 @@ export function findingsInFiles(
   submitted: SubmittedText,
   fileContexts: DlpFileContext[] = [],
 ): GovernanceFileFinding[] {
-  const filesByMessage = new Map<number, MessageFiles>();
+  const chars = Array.from(messages[submitted.messageIndex]?.content ?? '');
+  const files = locateFiles(chars.slice(0, submitted.offset).join(''), fileContexts);
+  const location = `/messages/${submitted.messageIndex}/content`;
   const counted = new Map<string, { counter: GovernanceFileFinding; terms: Map<string, string> }>();
   for (const finding of findings) {
-    const match = MESSAGE_CONTENT_LOCATION.exec(finding.location);
-    const messageIndex = match ? Number(match[1]) : -1;
-    const message = messages[messageIndex];
-    const isSubmitted = messageIndex === submitted.messageIndex;
-    if (message?.role !== 'user' || (isSubmitted && finding.end > submitted.offset)) {
+    if (finding.location !== location || finding.end > submitted.offset) {
       continue;
     }
-    let located = filesByMessage.get(messageIndex);
-    if (!located) {
-      const chars = Array.from(message.content);
-      const content = isSubmitted ? chars.slice(0, submitted.offset).join('') : message.content;
-      located = { chars, files: locateFiles(content, fileContexts, isSubmitted) };
-      filesByMessage.set(messageIndex, located);
-    }
-    const file = located.files.find(
-      ({ start, end }) => finding.start >= start && finding.start < end,
-    );
+    const file = files.find(({ start, end }) => finding.start >= start && finding.start < end);
     if (!file) {
       continue;
     }
-    const term = located.chars.slice(finding.start, finding.end).join('');
+    const term = chars.slice(finding.start, finding.end).join('');
     const { fileId, filename, type } = file;
     const key = JSON.stringify([fileId ?? null, filename, finding.category, finding.action]);
     const entry = counted.get(key);
@@ -311,6 +321,9 @@ export function findingsInFiles(
     }
     if (type !== undefined) {
       counter.type = type;
+    }
+    if (finding.replacement !== undefined) {
+      counter.replacement = finding.replacement;
     }
     const terms = new Map<string, string>();
     addTerm(terms, term);
@@ -397,6 +410,7 @@ export function toClientReview(
   findings: GovernanceFinding[],
   { text, ranges }: GovernanceMasking,
   fileFindings: GovernanceFileFinding[] = [],
+  instructions: GovernanceInstructionReview[] = [],
 ): GovernanceDlpReview {
   return {
     reviewId: review.review_id,
@@ -405,6 +419,7 @@ export function toClientReview(
     findings,
     maskedRanges: ranges.length > 0 ? ranges : undefined,
     fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
+    instructions: instructions.length > 0 ? instructions : undefined,
     maskedPreview:
       decision === 'BLOCK' ? undefined : [{ location: GOVERNANCE_DLP_TEXT_LOCATION, text }],
     expiresAt: review.expires_at,
@@ -420,6 +435,7 @@ export function toModelBlockReview(
   model: string,
   findings: GovernanceFinding[],
   fileFindings: GovernanceFileFinding[],
+  instructions: GovernanceInstructionReview[] = [],
 ): GovernanceDlpReview {
   return {
     reviewId: review.review_id,
@@ -427,6 +443,7 @@ export function toModelBlockReview(
     policyVersion: review.policy_version,
     findings: findings.map((finding) => ({ ...finding, replacement: undefined })),
     fileFindings: fileFindings.length > 0 ? fileFindings : undefined,
+    instructions: instructions.length > 0 ? instructions : undefined,
     modelNotAllowed: { model, allowedTiers: review.allowed_tiers ?? [] },
   };
 }

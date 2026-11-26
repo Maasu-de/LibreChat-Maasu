@@ -380,7 +380,11 @@ it.each([savedConversation, newConversation])(
 
     fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('com_ui_dlp_category_email_address')).toBeVisible();
+    expect(
+      screen.getByRole('button', {
+        name: 'com_ui_dlp_category_email_address · com_ui_dlp_decision_mask',
+      }),
+    ).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_dlp_send_masked' }));
 
     expect(setSubmission).toHaveBeenCalledTimes(1);
@@ -539,8 +543,11 @@ it('shows a BLOCK review without a way to send the message', () => {
 
   fireEvent.click(screen.getByRole('button', { name: 'Stream review' }));
 
-  expect(screen.getByText('com_ui_dlp_block_title')).toBeInTheDocument();
-  expect(screen.queryByText('com_ui_dlp_continue')).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'com_ui_dlp_title' })).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'com_ui_dlp_overall_action' })).toHaveTextContent(
+    'com_ui_dlp_decision_block',
+  );
+  expect(screen.queryByText('com_ui_dlp_send_anyway')).not.toBeInTheDocument();
   expect(screen.queryByText('com_ui_dlp_send_masked')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'com_ui_close' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

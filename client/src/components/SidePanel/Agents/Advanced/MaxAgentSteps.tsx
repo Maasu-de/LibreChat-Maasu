@@ -24,14 +24,14 @@ export default function AdvancedPanel() {
         render={({ field }) => (
           <FormInput
             field={field}
-            containerClass="w-1/2"
+            containerClass="min-w-0"
             inputClass="w-full"
             label={localize('com_ui_agent_recursion_limit')}
             placeholder={localize('com_nav_theme_system')}
             type="number"
-            labelClass="w-fit"
+            labelClass="min-w-0 leading-5"
             labelAdjacent={
-              <HoverCardTrigger>
+              <HoverCardTrigger className="inline-flex shrink-0 items-center justify-center">
                 <CircleHelpIcon className="h-4 w-4 text-text-tertiary" />
               </HoverCardTrigger>
             }

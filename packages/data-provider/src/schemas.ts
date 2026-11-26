@@ -823,6 +823,19 @@ export const tMessageSchema = z.object({
    * request time and counted in the user message token count.
    */
   quotes: z.array(z.string()).optional(),
+  /** Where the gateway replaced a detected value in this user message's text, and its category. */
+  governanceMasks: z
+    .array(
+      z.object({
+        start: z.number(),
+        end: z.number(),
+        category: z.string(),
+        label: z.string().optional(),
+      }),
+    )
+    .optional(),
+  /** Attached files of this user message in which the gateway masked values. */
+  governanceMaskedFiles: z.array(z.string()).optional(),
 });
 
 export type MemoryArtifact = {

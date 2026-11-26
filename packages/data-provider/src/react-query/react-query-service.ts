@@ -191,12 +191,13 @@ function governanceModelIds(catalog?: GovernanceModelsConfig): string[] | undefi
   return catalog?.[GOVERNANCE_ENDPOINT]?.map(({ id }) => id);
 }
 
-export const useGetGovernanceModelsQuery = () => {
+export const useGetGovernanceModelsQuery = (enabled = true) => {
   const queryClient = useQueryClient();
   return useQuery<GovernanceModelsConfig>(
     [QueryKeys.governanceModels],
     dataService.getGovernanceModels,
     {
+      enabled,
       refetchOnWindowFocus: true,
       staleTime: Time.ONE_MINUTE,
       onSuccess: (catalog) => {

@@ -1383,7 +1383,7 @@ class AgentClient extends BaseClient {
           initialSummary,
           initialSessions,
           calibrationRatio,
-          runId: this.responseMessageId,
+          runId: this.options.req?.governanceAgentRun?.runId ?? this.responseMessageId,
           signal: abortController.signal,
           customHandlers: this.options.eventHandlers,
           requestBody: config.configurable.requestBody,
