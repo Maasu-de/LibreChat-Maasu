@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const request = require('supertest');
 const { MongoMemoryServer } = require('mongodb-memory-server');
+const { SystemRoles } = require('librechat-data-provider');
 
 jest.mock('~/cache', () => ({ getLogStores: require('~/cache/getLogStores') }));
 jest.mock('~/cache/getLogStores', () => () => ({
@@ -102,6 +103,15 @@ it('rejects ordinary-user account deletion before the controller and preserves d
   expect(await User.exists({ _id: user.id })).not.toBeNull();
   expect(await Conversation.countDocuments({ user: user.id })).toBe(1);
   expect(await Message.countDocuments({ user: user.id })).toBe(1);
+});
+
+it('lets a Governance Admin delete their own account while account deletion is disabled', async () => {
+  user.role = SystemRoles.GOVERNANCE_ADMIN;
+  await user.save();
+
+  const response = await request(app).delete('/api/user/delete');
+  expect(response.status).toBe(204);
+  expect(deleteUserController).toHaveBeenCalledTimes(1);
 });
 
 it('still deletes an owned message while account deletion is disabled', async () => {
