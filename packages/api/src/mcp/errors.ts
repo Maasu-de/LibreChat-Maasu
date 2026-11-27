@@ -5,9 +5,20 @@
 export const MCPErrorCodes = {
   DOMAIN_NOT_ALLOWED: 'MCP_DOMAIN_NOT_ALLOWED',
   INSPECTION_FAILED: 'MCP_INSPECTION_FAILED',
+  API_KEY_REENTRY_REQUIRED: 'MCP_API_KEY_REENTRY_REQUIRED',
+  OAUTH_SECRET_REENTRY_REQUIRED: 'MCP_OAUTH_SECRET_REENTRY_REQUIRED',
 } as const;
 
 export type MCPErrorCode = (typeof MCPErrorCodes)[keyof typeof MCPErrorCodes];
+
+export class MCPConnectionNotFoundError extends Error {
+  public readonly statusCode = 404;
+
+  constructor() {
+    super('MCP connection not found');
+    this.name = 'MCPConnectionNotFoundError';
+  }
+}
 
 /**
  * Custom error for MCP domain restriction violations.
@@ -58,4 +69,28 @@ export function isMCPDomainNotAllowedError(error: unknown): error is MCPDomainNo
  */
 export function isMCPInspectionFailedError(error: unknown): error is MCPInspectionFailedError {
   return error instanceof MCPInspectionFailedError;
+}
+
+export class MCPApiKeyReentryRequiredError extends Error {
+  public readonly code: 'MCP_API_KEY_REENTRY_REQUIRED' = MCPErrorCodes.API_KEY_REENTRY_REQUIRED;
+  public readonly statusCode = 400;
+  constructor(public readonly changedFields: readonly string[]) {
+    super(
+      `Re-enter apiKey.key when changing API key credential binding fields: ${changedFields.join(', ')}`,
+    );
+    this.name = 'MCPApiKeyReentryRequiredError';
+  }
+}
+
+export class MCPOAuthSecretReentryRequiredError extends Error {
+  public readonly code: 'MCP_OAUTH_SECRET_REENTRY_REQUIRED' =
+    MCPErrorCodes.OAUTH_SECRET_REENTRY_REQUIRED;
+
+  public readonly statusCode = 400;
+  constructor(public readonly changedFields: readonly string[]) {
+    super(
+      `Re-enter oauth.client_secret when changing OAuth credential binding fields: ${changedFields.join(', ')}`,
+    );
+    this.name = 'MCPOAuthSecretReentryRequiredError';
+  }
 }

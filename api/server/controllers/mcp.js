@@ -8,8 +8,13 @@
 const { logger, SystemCapabilities } = require('@librechat/data-schemas');
 const {
   checkAccess,
+  isGovernancePilotEnabled,
+  createGovernanceMCPServerHandlers,
+  isGovernanceRemoteMCP,
   isUserSourced,
   MCPErrorCodes,
+  MCPApiKeyReentryRequiredError,
+  MCPOAuthSecretReentryRequiredError,
   redactServerSecrets,
   redactAllServerSecrets,
   isMCPDomainNotAllowedError,
@@ -35,6 +40,11 @@ const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getMCPManager, getMCPServersRegistry } = require('~/config');
 const db = require('~/models');
 
+const governanceMCPServers = createGovernanceMCPServerHandlers({
+  getRegistry: getMCPServersRegistry,
+  resolveReservedNames: resolveMcpConfigNames,
+});
+
 /**
  * Handles MCP-specific errors and sends appropriate HTTP responses.
  * @param {Error} error - The error to handle
@@ -42,6 +52,14 @@ const db = require('~/models');
  * @returns {import('express').Response | null} Response if handled, null if not an MCP error
  */
 function handleMCPError(error, res) {
+  if (
+    error instanceof MCPApiKeyReentryRequiredError ||
+    error instanceof MCPOAuthSecretReentryRequiredError
+  ) {
+    return res.status(400).json({ error: error.code, message: error.message });
+  }
+  if (isGovernancePilotEnabled())
+    return res.status(error.statusCode ?? 400).json({ message: 'MCP connection operation failed' });
   if (isMCPDomainNotAllowedError(error)) {
     return res.status(error.statusCode).json({
       error: error.code,
@@ -197,8 +215,10 @@ const getMCPTools = async (req, res) => {
 
     res.status(200).json({ servers: mcpServers });
   } catch (error) {
-    logger.error('[getMCPTools]', error);
-    res.status(500).json({ message: error.message });
+    logger.error('[getMCPTools]', isGovernancePilotEnabled() ? 'MCP operation failed' : error);
+    res.status(500).json({
+      message: isGovernancePilotEnabled() ? 'MCP connection operation failed' : error.message,
+    });
   }
 };
 /** Mirrors canAccessResource's capability bypass plus per-resource ACL EDIT check. */
@@ -265,8 +285,13 @@ const getMCPServersList = async (req, res) => {
     const canEditByServer = await computeCanEditByServer(req, serverConfigs);
     return res.json(redactAllServerSecrets(serverConfigs, { canEditByServer }));
   } catch (error) {
-    logger.error('[getMCPServersList]', error);
-    res.status(500).json({ error: error.message });
+    logger.error(
+      '[getMCPServersList]',
+      isGovernancePilotEnabled() ? 'MCP operation failed' : error,
+    );
+    res.status(500).json({
+      error: isGovernancePilotEnabled() ? 'MCP connection operation failed' : error.message,
+    });
   }
 };
 
@@ -332,6 +357,7 @@ async function callerCanConfigureObo(req) {
  * @route POST /api/mcp/servers
  */
 const createMCPServerController = async (req, res) => {
+  if (isGovernancePilotEnabled()) return governanceMCPServers.create(req, res);
   try {
     const userId = req.user?.id;
     const { config } = req.body;
@@ -383,14 +409,18 @@ const getMCPServerById = async (req, res) => {
     if (!serverName) {
       return res.status(400).json({ message: 'Server name is required' });
     }
-    const configServers = await resolveConfigServers(req);
+    const governed = isGovernancePilotEnabled();
+    const configServers = governed ? undefined : await resolveConfigServers(req);
     const parsedConfig = await getMCPServersRegistry().getServerConfig(
       serverName,
       userId,
       configServers,
     );
 
-    if (!parsedConfig) {
+    if (
+      !parsedConfig ||
+      (governed && (!parsedConfig.dbId || !isGovernanceRemoteMCP(parsedConfig)))
+    ) {
       return res.status(404).json({ message: 'MCP server not found' });
     }
 
@@ -398,8 +428,10 @@ const getMCPServerById = async (req, res) => {
     const canEdit = canEditMap.get(serverName) ?? false;
     res.status(200).json(redactServerSecrets(parsedConfig, { canEdit }));
   } catch (error) {
-    logger.error('[getMCPServerById]', error);
-    res.status(500).json({ message: error.message });
+    logger.error('[getMCPServerById]', isGovernancePilotEnabled() ? 'MCP operation failed' : error);
+    res.status(500).json({
+      message: isGovernancePilotEnabled() ? 'MCP connection operation failed' : error.message,
+    });
   }
 };
 
@@ -408,6 +440,7 @@ const getMCPServerById = async (req, res) => {
  * @route PATCH /api/mcp/servers/:serverName
  */
 const updateMCPServerController = async (req, res) => {
+  if (isGovernancePilotEnabled()) return governanceMCPServers.update(req, res);
   try {
     const userId = req.user?.id;
     const { serverName } = req.params;
@@ -473,6 +506,7 @@ const updateMCPServerController = async (req, res) => {
  * @route DELETE /api/mcp/servers/:serverName
  */
 const deleteMCPServerController = async (req, res) => {
+  if (isGovernancePilotEnabled()) return governanceMCPServers.delete(req, res);
   try {
     const userId = req.user?.id;
     const { serverName } = req.params;

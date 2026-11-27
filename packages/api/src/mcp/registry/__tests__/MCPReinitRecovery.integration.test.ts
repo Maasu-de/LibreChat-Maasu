@@ -36,6 +36,7 @@ import { MCPConnection } from '~/mcp/connection';
 import { MCPManager } from '~/mcp/MCPManager';
 
 jest.mock('@librechat/data-schemas', () => ({
+  getTenantId: jest.fn(() => undefined),
   logger: {
     info: jest.fn(),
     warn: jest.fn(),

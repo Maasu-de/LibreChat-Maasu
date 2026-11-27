@@ -85,6 +85,8 @@ export interface MCPOAuthState {
 }
 
 export interface MCPOAuthFlowMetadata extends FlowMetadata {
+  /** Managed connection identity and authorization target captured at initiation. */
+  binding?: string;
   serverName: string;
   userId: string;
   serverUrl: string;

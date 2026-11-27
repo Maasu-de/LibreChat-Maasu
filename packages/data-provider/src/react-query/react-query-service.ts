@@ -374,13 +374,7 @@ export const useUpdateUserPluginsMutation = (
 };
 
 export const useReinitializeMCPServerMutation = (): UseMutationResult<
-  {
-    success: boolean;
-    message: string;
-    serverName: string;
-    oauthRequired?: boolean;
-    oauthUrl?: string;
-  },
+  q.MCPReinitializeResponse,
   unknown,
   string,
   unknown

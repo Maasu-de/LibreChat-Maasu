@@ -15,6 +15,7 @@ import {
   SystemRoles,
   setTokenHeader,
   buildLoginRedirectUrl,
+  redirectMCPFrameToLogin,
 } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
 import type { ReactNode } from 'react';
@@ -95,6 +96,11 @@ const AuthContextProvider = ({
           (redirect && isSafeRedirect(redirect) ? redirect : null);
 
         if (finalRedirect == null) {
+          return;
+        }
+
+        if (finalRedirect === '/governance/mcp' && postLoginRedirect === finalRedirect) {
+          window.location.replace(`${apiBaseUrl()}/governance/mcp`);
           return;
         }
 
@@ -202,6 +208,10 @@ const AuthContextProvider = ({
           const fallbackRedirect = isSafeRedirect(currentUrl) ? currentUrl : '/c/new';
           const redirect =
             storedRedirect && isSafeRedirect(storedRedirect) ? storedRedirect : fallbackRedirect;
+          if (storedRedirect === '/governance/mcp') {
+            window.location.replace(`${baseUrl}/governance/mcp`);
+            return;
+          }
           setUserContext({ user, token, isAuthenticated: true, redirect });
           return;
         }
@@ -209,7 +219,9 @@ const AuthContextProvider = ({
         if (authConfig?.test === true) {
           return;
         }
-        navigate(buildLoginRedirectUrl());
+        if (!redirectMCPFrameToLogin()) {
+          navigate(buildLoginRedirectUrl());
+        }
       },
       onError: (error) => {
         if (isExternalRedirectRef.current) {
@@ -219,7 +231,9 @@ const AuthContextProvider = ({
         if (authConfig?.test === true) {
           return;
         }
-        navigate(buildLoginRedirectUrl());
+        if (!redirectMCPFrameToLogin()) {
+          navigate(buildLoginRedirectUrl());
+        }
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are stable at mount; adding refreshToken causes infinite re-fire
@@ -233,7 +247,9 @@ const AuthContextProvider = ({
       setUser(userQuery.data);
     } else if (userQuery.isError) {
       doSetError((userQuery.error as Error).message);
-      navigate(buildLoginRedirectUrl(), { replace: true });
+      if (!redirectMCPFrameToLogin()) {
+        navigate(buildLoginRedirectUrl(), { replace: true });
+      }
     }
     if (error != null && error && isAuthenticated) {
       doSetError(undefined);

@@ -41,6 +41,7 @@ jest.mock('~/auth', () => ({
 
 jest.mock('~/mcp/mcpConfig', () => ({
   mcpConfig: {
+    ...jest.requireActual<typeof import('../mcpConfig')>('~/mcp/mcpConfig').mcpConfig,
     CONNECTION_CHECK_TTL: 0,
     USER_CONNECTION_IDLE_TIMEOUT: 30 * 60 * 1000,
     TOOLS_LIST_MAX_PAGES: 50,

@@ -250,6 +250,8 @@ export interface UserMCPConnectionOptions extends UserConnectionContext {
 export interface ToolDiscoveryOptions {
   serverName: string;
   user?: IUser;
+  /** Already resolved and authorized configuration for the server being inspected. */
+  serverConfig?: ParsedServerConfig;
   flowManager?: FlowStateManager<o.MCPOAuthTokens | null>;
   tokenMethods?: TokenMethods;
   signal?: AbortSignal;
@@ -258,6 +260,8 @@ export interface ToolDiscoveryOptions {
   requestBody?: RequestBody;
   graphTokenResolver?: GraphTokenResolver;
   connectionTimeout?: number;
+  /** Use a fresh connection and distinguish failed tool listing from a valid empty list. */
+  throwOnError?: boolean;
   /** Pre-resolved config-source servers for tenant-scoped lookup */
   configServers?: Record<string, ParsedServerConfig>;
   oboTokenResolver?: OboTokenResolver;

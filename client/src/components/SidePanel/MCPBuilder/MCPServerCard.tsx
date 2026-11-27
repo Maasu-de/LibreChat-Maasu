@@ -8,6 +8,8 @@ import { getStatusDotColor } from './MCPStatusBadge';
 import MCPCardActions from './MCPCardActions';
 import { useMCPServerManager, useLocalize } from '~/hooks';
 import { cn } from '~/utils';
+import MCPInspection from './MCPInspection';
+import { useMCPAdministration } from './administration';
 
 interface MCPServerCardProps {
   server: MCPServerDefinition;
@@ -29,8 +31,10 @@ export default function MCPServerCard({
   canCreateEditMCPs,
 }: MCPServerCardProps) {
   const localize = useLocalize();
+  const administration = useMCPAdministration();
   const triggerRef = useRef<HTMLDivElement>(null);
-  const { initializeServer, revokeOAuthForServer } = useMCPServerManager();
+  const { initializeServer, revokeOAuthForServer, getOAuthUrl, cancelOAuthFlow } =
+    useMCPServerManager();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const statusIconProps = getServerStatusIconProps(server.serverName);
@@ -42,12 +46,29 @@ export default function MCPServerCard({
     onCancel,
     hasCustomUserVars = false,
   } = statusIconProps;
+  const oauthUrl = administration && isInitializing ? getOAuthUrl(server.serverName) : null;
 
   const canEditThisServer = hasPermissions(server.effectivePermissions, PermissionBits.EDIT);
   const displayName = server.config?.title || server.serverName;
   const description = server.config?.description;
-  const statusDotColor = getStatusDotColor(serverStatus, isInitializing);
+  const authorized =
+    administration &&
+    serverStatus?.authorizationComplete === true &&
+    serverStatus.connectionState === 'disconnected';
+  const actionStatus = authorized
+    ? { ...serverStatus, connectionState: 'connected' as const }
+    : serverStatus;
+  const statusDotColor = getStatusDotColor(actionStatus, isInitializing);
   const canEdit = canCreateEditMCPs && canEditThisServer;
+  const inspectionRevision =
+    administration &&
+    (server.config.updatedAt ??
+      JSON.stringify([
+        server.config.type,
+        'url' in server.config ? server.config.url : undefined,
+        server.config.apiKey,
+        server.config.oauth,
+      ]));
 
   const handleInitialize = () => {
     /** If server has custom user vars and is not already connected, show config dialog first
@@ -64,6 +85,13 @@ export default function MCPServerCard({
     revokeOAuthForServer(server.serverName);
   };
 
+  const handleCancel = (event: React.MouseEvent) => {
+    if (!administration) return onCancel(event);
+    event.stopPropagation();
+    event.preventDefault();
+    cancelOAuthFlow(server.serverName);
+  };
+
   const handleEditClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -73,6 +101,7 @@ export default function MCPServerCard({
   // Determine status text for accessibility
   const getStatusText = () => {
     if (isInitializing) return localize('com_nav_mcp_status_initializing');
+    if (authorized) return localize('com_ui_mcp_authorized');
     if (!serverStatus) return localize('com_nav_mcp_status_unknown');
     const { connectionState, requiresOAuth } = serverStatus;
     if (connectionState === 'connected') return localize('com_nav_mcp_status_connected');
@@ -90,14 +119,14 @@ export default function MCPServerCard({
     <>
       <div
         className={cn(
-          'group flex items-center gap-3 rounded-lg px-3 py-2.5',
+          'mcp-server-card group flex items-center gap-3 rounded-lg px-3 py-2.5',
           'border border-border-light bg-transparent',
         )}
         aria-label={`${displayName} - ${getStatusText()}`}
       >
         {/* Server Icon with Status Dot */}
         <div className="relative flex-shrink-0">
-          {server.config?.iconPath ? (
+          {!administration && server.config?.iconPath ? (
             <img
               src={server.config.iconPath}
               className="size-8 rounded-lg object-cover"
@@ -122,29 +151,49 @@ export default function MCPServerCard({
         </div>
 
         {/* Server Info */}
-        <div className="min-w-0 flex-1">
+        <div className="mcp-server-info min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-text-primary">{displayName}</div>
           {description && <p className="truncate text-xs text-text-secondary">{description}</p>}
+          {authorized && !isInitializing && (
+            <p className="text-xs text-text-secondary">{localize('com_ui_mcp_authorized')}</p>
+          )}
+          {oauthUrl && (
+            <a
+              href={oauthUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-text-primary underline focus-visible:outline"
+            >
+              {localize('com_ui_mcp_continue_oauth')}
+            </a>
+          )}
         </div>
 
         {/* Actions */}
         <div className="flex-shrink-0">
           <MCPCardActions
             serverName={server.serverName}
-            serverStatus={serverStatus}
+            serverStatus={actionStatus}
             isInitializing={isInitializing}
             canCancel={canCancel}
-            hasCustomUserVars={hasCustomUserVars}
+            hasCustomUserVars={!administration && hasCustomUserVars}
             canEdit={canEdit}
             editButtonRef={triggerRef}
             onEditClick={handleEditClick}
             onConfigClick={onConfigClick}
             onInitialize={handleInitialize}
-            onCancel={onCancel}
+            onCancel={handleCancel}
             onRevoke={handleRevoke}
           />
         </div>
       </div>
+
+      {administration && (
+        <MCPInspection
+          key={`${server.dbId ?? server.serverName}:${inspectionRevision}:${serverStatus?.authorizationComplete === true}`}
+          serverName={server.serverName}
+        />
+      )}
 
       {/* Edit Dialog - separate from card */}
       {canEdit && (

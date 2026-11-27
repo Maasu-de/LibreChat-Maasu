@@ -419,8 +419,7 @@ describe('MCPServerInspector', () => {
         }),
       );
 
-      // Verify temporary connection was disconnected
-      expect(tempMockConnection.disconnect).toHaveBeenCalled();
+      expect(tempMockConnection.dispose).toHaveBeenCalled();
 
       // Verify result is correct
       expect(result).toEqual({
@@ -457,6 +456,7 @@ describe('MCPServerInspector', () => {
 
       // Verify provided connection was NOT disconnected
       expect(mockConnection.disconnect).not.toHaveBeenCalled();
+      expect(mockConnection.dispose).not.toHaveBeenCalled();
     });
   });
 

@@ -9,19 +9,15 @@ const mockGetFlowStateManager = jest.fn();
 const mockGetMCPServersRegistry = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
+  ...jest.requireActual('@librechat/data-schemas'),
   logger: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
   getTenantId: jest.fn(),
   webSearchKeys: [],
 }));
 
-jest.mock('librechat-data-provider', () => ({
-  Tools: {},
-  CacheKeys: { FLOWS: 'flows' },
-  Constants: { mcp_delimiter: '_mcp_', mcp_prefix: 'mcp_' },
-  FileSources: {},
-}));
-
 jest.mock('@librechat/api', () => ({
+  createMCPOAuthDisconnect: jest.requireActual('@librechat/api').createMCPOAuthDisconnect,
+  mergeMCPRevocationFailure: jest.fn(() => ({ outcome: 'failure', reason: 'provider_error' })),
   MCPOAuthHandler: {
     generateFlowId: jest.fn((userId, serverName, tenantId) => {
       const flowId = `${userId}:${serverName}`;
@@ -35,9 +31,13 @@ jest.mock('@librechat/api', () => ({
   },
   MCPTokenStorage: {
     getClientInfoAndMetadata: jest.fn(),
-    getTokens: jest.fn(),
+    getTokensForRevocation: jest.fn(),
     deleteUserTokens: jest.fn().mockResolvedValue(undefined),
   },
+  isGovernancePilotEnabled: () => process.env.GOVERNANCE_PILOT_ENABLED === 'true',
+  getGovernanceMCPOAuthBinding: () => undefined,
+  sanitizeMCPErrorForLogging: (error) =>
+    process.env.GOVERNANCE_PILOT_ENABLED === 'true' ? 'MCP operation failed' : error,
   normalizeHttpError: jest.fn((error) => error),
   extractWebSearchEnvVars: jest.fn((params) => params.keys),
   needsRefresh: jest.fn(),
@@ -239,7 +239,7 @@ describe('updateUserPluginsController MCP OAuth cleanup', () => {
     });
     expect(flowManager.deleteFlow).toHaveBeenCalledWith('user-1:test-server', 'mcp_get_tokens');
     expect(flowManager.deleteFlow).toHaveBeenCalledWith('user-1:test-server', 'mcp_oauth');
-    expect(MCPTokenStorage.getTokens).not.toHaveBeenCalled();
+    expect(MCPTokenStorage.getTokensForRevocation).not.toHaveBeenCalled();
     expect(MCPOAuthHandler.revokeOAuthToken).not.toHaveBeenCalled();
   });
 
@@ -308,13 +308,13 @@ describe('updateUserPluginsController MCP OAuth cleanup', () => {
       clientInfo: { client_id: 'client-1' },
       clientMetadata: {},
     });
-    MCPTokenStorage.getTokens.mockRejectedValue(new Error('token lookup failed'));
+    MCPTokenStorage.getTokensForRevocation.mockRejectedValue(new Error('token lookup failed'));
 
     const res = createResponse();
     await updateUserPluginsController(createRequest(), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(MCPTokenStorage.getTokens).toHaveBeenCalledWith({
+    expect(MCPTokenStorage.getTokensForRevocation).toHaveBeenCalledWith({
       userId: 'user-1',
       serverName: 'test-server',
       findToken: mockFindToken,
@@ -339,7 +339,7 @@ describe('updateUserPluginsController MCP OAuth cleanup', () => {
       clientInfo: { client_id: 'client-1', client_secret: 'secret-1' },
       clientMetadata: { revocation_endpoint: 'https://example.com/revoke' },
     });
-    MCPTokenStorage.getTokens.mockResolvedValue({
+    MCPTokenStorage.getTokensForRevocation.mockResolvedValue({
       access_token: 'access-token',
       refresh_token: 'refresh-token',
     });
@@ -349,7 +349,7 @@ describe('updateUserPluginsController MCP OAuth cleanup', () => {
     await updateUserPluginsController(createRequest(), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(MCPTokenStorage.getTokens).toHaveBeenCalledWith({
+    expect(MCPTokenStorage.getTokensForRevocation).toHaveBeenCalledWith({
       userId: 'user-1',
       serverName: 'test-server',
       findToken: mockFindToken,
@@ -397,7 +397,7 @@ describe('updateUserPluginsController MCP OAuth cleanup', () => {
       clientInfo: { client_id: 'client-1', client_secret: 'secret-1' },
       clientMetadata: {},
     });
-    MCPTokenStorage.getTokens.mockResolvedValue({
+    MCPTokenStorage.getTokensForRevocation.mockResolvedValue({
       access_token: 'access-token',
     });
     MCPOAuthHandler.revokeOAuthToken.mockResolvedValue();
@@ -429,7 +429,7 @@ describe('updateUserPluginsController MCP OAuth cleanup', () => {
       clientInfo: { client_id: 'client-1', client_secret: 'secret-1' },
       clientMetadata: {},
     });
-    MCPTokenStorage.getTokens.mockResolvedValue({
+    MCPTokenStorage.getTokensForRevocation.mockResolvedValue({
       refresh_token: 'refresh-token',
     });
     MCPOAuthHandler.revokeOAuthToken.mockResolvedValue();

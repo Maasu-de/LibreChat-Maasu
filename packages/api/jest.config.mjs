@@ -33,6 +33,9 @@ export default {
   },
   transformIgnorePatterns: [`/node_modules/(?!(${esModules})/).*/`],
   moduleNameMapper: {
+    '^~/server/(.*)$': '<rootDir>/../../api/server/$1',
+    '^~/config$': '<rootDir>/../../api/config',
+    '^~/models$': '<rootDir>/../../api/models',
     '^@src/(.*)$': '<rootDir>/src/$1',
     '~/(.*)': '<rootDir>/src/$1',
   },
@@ -44,6 +47,7 @@ export default {
   //     lines: 57,
   //   },
   // },
+  globalSetup: '<rootDir>/jest.globalSetup.cjs',
   setupFiles: ['<rootDir>/jest.setup.cjs'],
   maxWorkers: '50%',
   restoreMocks: true,

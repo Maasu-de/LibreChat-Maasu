@@ -238,6 +238,8 @@ export const cancelMCPOAuth = (serverName: string) => {
 };
 
 export const mcpOAuthBind = (serverName: string) => `${BASE_URL}/api/mcp/${serverName}/oauth/bind`;
+export const mcpOAuthStatus = (flowId: string) =>
+  `${BASE_URL}/api/mcp/oauth/status/${encodeURIComponent(flowId)}`;
 
 export const actionOAuthBind = (actionId: string) =>
   `${BASE_URL}/api/actions/${actionId}/oauth/bind`;
@@ -528,3 +530,8 @@ export const getAllEffectivePermissions = (resourceType: ResourceType) =>
 // SharePoint Graph API Token
 export const graphToken = (scopes: string) =>
   `${BASE_URL}/api/auth/graph-token?scopes=${encodeURIComponent(scopes)}`;
+
+export const mcpInspect = (serverName: string) =>
+  `${BASE_URL}/api/mcp/servers/${encodeURIComponent(serverName)}/inspect`;
+export const mcpOAuthRevoke = (serverName: string) =>
+  `${BASE_URL}/api/mcp/${encodeURIComponent(serverName)}/oauth/revoke`;

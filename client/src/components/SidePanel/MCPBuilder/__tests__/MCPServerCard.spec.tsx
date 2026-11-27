@@ -1,0 +1,311 @@
+import React from 'react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { dataService, QueryKeys } from 'librechat-data-provider';
+import type { MCPInspectionResponse } from 'librechat-data-provider';
+import type { MCPServerDefinition } from '~/hooks';
+import {
+  useRevokeMCPAuthorizationMutation,
+  useUpdateMCPServerMutation,
+} from '~/data-provider/MCP/mutations';
+import { useMCPServersQuery } from '~/data-provider/MCP/queries';
+import { MCPAdministrationContext } from '../administration';
+import MCPServerList from '../MCPServerList';
+import MCPServerCard from '../MCPServerCard';
+
+const mockGetOAuthUrl = jest.fn();
+
+jest.mock('~/hooks', () => ({
+  useLocalize: () => (key: string) => key,
+  useHasAccess: () => true,
+  useMCPServerManager: () => ({
+    initializeServer: jest.fn(),
+    revokeOAuthForServer: jest.fn(),
+    getOAuthUrl: mockGetOAuthUrl,
+    cancelOAuthFlow: jest.fn(),
+  }),
+}));
+jest.mock('../MCPServerDialog', () => ({ __esModule: true, default: () => null }));
+jest.mock('librechat-data-provider', () => {
+  const original = jest.requireActual('librechat-data-provider');
+  return {
+    ...original,
+    dataService: {
+      ...original.dataService,
+      getMCPServers: jest.fn(),
+      inspectMCPServer: jest.fn(),
+      revokeMCPOAuth: jest.fn(),
+      updateMCPServer: jest.fn(),
+    },
+  };
+});
+
+describe('administrator OAuth authorization status', () => {
+  it('keeps a user-clickable OAuth link available while the admin is waiting', () => {
+    const authorizationUrl = 'https://identity.example/authorize?state=fixture';
+    mockGetOAuthUrl.mockReturnValue(authorizationUrl);
+    const client = new QueryClient();
+    const renderCard = (isInitializing: boolean, administration: boolean) => (
+      <QueryClientProvider client={client}>
+        <MCPAdministrationContext.Provider value={administration}>
+          <MCPServerCard
+            server={{ serverName: 'remote', config: initialConfig, effectivePermissions: 7 }}
+            canCreateEditMCPs
+            getServerStatusIconProps={(serverName) => ({
+              serverName,
+              isInitializing,
+              canCancel: isInitializing,
+              onConfigClick: jest.fn(),
+              onCancel: jest.fn(),
+            })}
+          />
+        </MCPAdministrationContext.Provider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(renderCard(true, true));
+    const link = screen.getByRole('link', { name: 'com_ui_mcp_continue_oauth' });
+    expect(link).toHaveAttribute('href', authorizationUrl);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    rerender(renderCard(false, true));
+    expect(link).not.toBeInTheDocument();
+    rerender(renderCard(true, false));
+    expect(
+      screen.queryByRole('link', { name: 'com_ui_mcp_continue_oauth' }),
+    ).not.toBeInTheDocument();
+    client.clear();
+  });
+
+  it.each([true, false])(
+    'shows authorization without claiming a live connection in administration=%s',
+    (administration) => {
+      const client = new QueryClient();
+      const { container } = render(
+        <QueryClientProvider client={client}>
+          <MCPAdministrationContext.Provider value={administration}>
+            <MCPServerCard
+              server={{
+                serverName: 'remote',
+                config: { ...initialConfig, iconPath: 'https://icons.example/legacy.png' },
+                effectivePermissions: 7,
+              }}
+              canCreateEditMCPs
+              getServerStatusIconProps={(serverName) => ({
+                serverName,
+                serverStatus: {
+                  connectionState: 'disconnected',
+                  requiresOAuth: true,
+                  authorizationComplete: true,
+                },
+                isInitializing: false,
+                canCancel: false,
+                onConfigClick: jest.fn(),
+                onCancel: jest.fn(),
+              })}
+            />
+          </MCPAdministrationContext.Provider>
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByRole('button', { name: 'com_ui_revoke' })).toBeInTheDocument();
+      if (administration) {
+        expect(container.querySelector('img[src="https://icons.example/legacy.png"]')).toBeNull();
+        expect(screen.getByText('com_ui_mcp_authorized')).toBeInTheDocument();
+        expect(screen.getByLabelText('remote - com_ui_mcp_authorized')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'com_nav_mcp_reconnect' })).toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', { name: 'com_nav_mcp_connect' }),
+        ).not.toBeInTheDocument();
+      } else {
+        expect(
+          container.querySelector('img[src="https://icons.example/legacy.png"]'),
+        ).not.toBeNull();
+        expect(screen.queryByText('com_ui_mcp_authorized')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('remote - com_nav_mcp_status_needs_auth')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'com_nav_mcp_connect' })).toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', { name: 'com_nav_mcp_reconnect' }),
+        ).not.toBeInTheDocument();
+      }
+      client.clear();
+    },
+  );
+});
+
+const initialConfig: MCPServerDefinition['config'] = {
+  type: 'sse',
+  url: 'https://original.example/mcp',
+  updatedAt: 1,
+};
+
+const inspectionResult: MCPInspectionResponse = {
+  success: true,
+  tools: [{ name: 'original_tool', inputSchema: { type: 'object' } }],
+};
+const saveLabel = 'Save connection';
+
+function renderManagement(editedConfig: MCPServerDefinition['config'], initial = initialConfig) {
+  let persistedServer = { ...initial, serverName: 'remote', dbId: 'connection-id' };
+  jest.mocked(dataService.getMCPServers).mockImplementation(async () => ({
+    remote: persistedServer,
+  }));
+  jest.mocked(dataService.updateMCPServer).mockImplementation(async () => {
+    persistedServer = { ...editedConfig, serverName: 'remote', dbId: 'connection-id' };
+    return persistedServer;
+  });
+
+  function Management() {
+    const { data } = useMCPServersQuery();
+    const update = useUpdateMCPServerMutation();
+    const servers = Object.entries(data ?? {}).map(([serverName, { dbId, ...config }]) => ({
+      serverName,
+      dbId,
+      config,
+      effectivePermissions: 7,
+    }));
+
+    return (
+      <>
+        <button
+          onClick={() =>
+            update.mutate({
+              serverName: 'remote',
+              data: { config: { type: 'sse', url: 'https://edited.example/mcp' } },
+            })
+          }
+        >
+          {saveLabel}
+        </button>
+        <MCPServerList
+          servers={servers}
+          getServerStatusIconProps={(serverName) => ({
+            serverName,
+            isInitializing: false,
+            canCancel: false,
+            onConfigClick: jest.fn(),
+            onCancel: jest.fn(),
+          })}
+        />
+      </>
+    );
+  }
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MCPAdministrationContext.Provider value={true}>
+        <Management />
+      </MCPAdministrationContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
+describe('inspection after editing an administrative MCP connection', () => {
+  it.each([
+    ['endpoint', { ...initialConfig, url: 'https://edited.example/mcp', updatedAt: 2 }],
+    ['transport', { ...initialConfig, type: 'streamable-http' as const, updatedAt: 2 }],
+    ['authentication', { ...initialConfig, oauth: {}, updatedAt: 2 }],
+    ['stored secret', { ...initialConfig, updatedAt: 2 }],
+  ])('clears previous inspection results after a persisted %s edit', async (_field, edited) => {
+    jest.mocked(dataService.inspectMCPServer).mockResolvedValue(inspectionResult);
+    renderManagement(edited);
+    fireEvent.click(await screen.findByRole('button', { name: 'com_ui_mcp_inspect' }));
+    expect(await screen.findByText('original_tool')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: saveLabel }));
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    expect(screen.queryByText('original_tool')).not.toBeInTheDocument();
+    expect(dataService.inspectMCPServer).toHaveBeenCalledTimes(1);
+
+    jest.mocked(dataService.inspectMCPServer).mockResolvedValue({ success: true, tools: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_mcp_inspect' }));
+    expect(await screen.findByText('com_ui_mcp_no_tools')).toBeInTheDocument();
+    expect(dataService.inspectMCPServer).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores an inspection that completes after its connection was edited', async () => {
+    let completeInspection!: (result: MCPInspectionResponse) => void;
+    jest.mocked(dataService.inspectMCPServer).mockReturnValue(
+      new Promise((resolve) => {
+        completeInspection = resolve;
+      }),
+    );
+    renderManagement({ ...initialConfig, updatedAt: 2 });
+    fireEvent.click(await screen.findByRole('button', { name: 'com_ui_mcp_inspect' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'com_ui_mcp_inspect' })).toBeDisabled(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: saveLabel }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'com_ui_mcp_inspect' })).toBeEnabled(),
+    );
+    await act(async () => completeInspection(inspectionResult));
+    expect(screen.queryByText('original_tool')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(dataService.inspectMCPServer).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('clears inspected tools when OAuth authorization is revoked', async () => {
+  const client = new QueryClient();
+  const card = (authorizationComplete: boolean) => (
+    <QueryClientProvider client={client}>
+      <MCPAdministrationContext.Provider value={true}>
+        <MCPServerCard
+          server={{ serverName: 'remote', config: initialConfig, effectivePermissions: 7 }}
+          canCreateEditMCPs
+          getServerStatusIconProps={(serverName) => ({
+            serverName,
+            serverStatus: {
+              connectionState: 'disconnected',
+              requiresOAuth: true,
+              authorizationComplete,
+            },
+            isInitializing: false,
+            canCancel: false,
+            onConfigClick: jest.fn(),
+            onCancel: jest.fn(),
+          })}
+        />
+      </MCPAdministrationContext.Provider>
+    </QueryClientProvider>
+  );
+  jest.mocked(dataService.inspectMCPServer).mockResolvedValue(inspectionResult);
+  const { rerender } = render(card(true));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_mcp_inspect' }));
+  expect(await screen.findByText('original_tool')).toBeInTheDocument();
+
+  rerender(card(false));
+
+  expect(screen.queryByText('original_tool')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'com_ui_mcp_inspect' })).toBeEnabled();
+  expect(dataService.inspectMCPServer).toHaveBeenCalledTimes(1);
+  client.clear();
+});
+
+it('refreshes authorization status when revocation returns an error after local disconnection', async () => {
+  const client = new QueryClient({
+    logger: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  });
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+  jest
+    .mocked(dataService.revokeMCPOAuth)
+    .mockRejectedValue(new Error('Provider revocation audit could not be recorded'));
+  const { result } = renderHook(useRevokeMCPAuthorizationMutation, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+
+  await act(async () => {
+    await expect(result.current.mutateAsync('remote')).rejects.toThrow(
+      'audit could not be recorded',
+    );
+  });
+
+  expect(invalidate).toHaveBeenCalledWith([QueryKeys.mcpConnectionStatus]);
+  client.clear();
+});
