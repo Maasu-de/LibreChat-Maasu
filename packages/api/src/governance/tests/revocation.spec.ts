@@ -1,80 +1,45 @@
 import express from 'express';
 import request from 'supertest';
 import mongoose from 'mongoose';
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import type { IUser } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 
-let replica: MongoMemoryReplSet;
-let schemas: typeof import('@librechat/data-schemas');
-let models: ReturnType<typeof schemas.createModels>;
-let methods: ReturnType<typeof schemas.createMethods>;
+import { createOAuthTestFixture, failAuditWrites, outbox } from './oauth.helper';
+
+let fixture: Awaited<ReturnType<typeof createOAuthTestFixture>>;
 let administration: typeof import('../mcp');
 let authorization: typeof import('../oauth');
 let storage: typeof import('~/mcp/oauth').MCPTokenStorage;
 let actor: IUser;
-const environment = process.env;
 const connectionId = '507f1f77bcf86cd799439011';
 const otherConnectionId = '507f1f77bcf86cd799439012';
 const serverName = 'administrative';
-const outbox = () => mongoose.connection.db!.collection('governance_group_audit_outbox');
 const tokenData = () => ({
   userId: actor.id,
   serverName,
   tokens: { access_token: 'access-secret', refresh_token: 'refresh-secret', token_type: 'Bearer' },
   clientInfo: { client_id: 'client', client_secret: 'client-secret' },
-  createToken: methods.createToken,
-  updateToken: methods.updateToken,
-  findToken: methods.findToken,
+  createToken: fixture.methods.createToken,
+  updateToken: fixture.methods.updateToken,
+  findToken: fixture.methods.findToken,
 });
 
 beforeAll(async () => {
-  process.env.CREDS_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-  process.env.CREDS_IV = '0123456789abcdef0123456789abcdef';
-  schemas = await import('@librechat/data-schemas');
-  models = schemas.createModels(mongoose);
-  methods = schemas.createMethods(mongoose);
+  fixture = await createOAuthTestFixture();
   administration = await import('../mcp');
   authorization = await import('../oauth');
   storage = (await import('~/mcp/oauth')).MCPTokenStorage;
-  replica = await MongoMemoryReplSet.create({
-    binary: { version: '8.2.1' },
-    replSet: { count: 1 },
-  });
-  await mongoose.connect(replica.getUri());
-  await models.User.createCollection();
-  await models.Token.createCollection();
-  await mongoose.connection.db!.createCollection('governance_group_audit_outbox');
 }, 60000);
 
 afterAll(async () => {
-  await mongoose.disconnect();
-  await replica.stop();
+  await fixture?.close();
 });
 
 beforeEach(async () => {
-  process.env = {
-    ...environment,
-    GOVERNANCE_PILOT_ENABLED: 'true',
-    GOVERNANCE_MCP_AUDIT_URL: 'https://governance.example/internal/mcp-audit',
-    LIBRECHAT_SERVICE_CREDENTIAL: 'service',
-  };
-  await schemas.runAsSystem(async () => {
-    await models.Token.deleteMany({});
-    await models.User.deleteMany({});
-    await outbox().deleteMany({});
-    actor = await models.User.create({
-      email: 'admin@test.example',
-      provider: 'openid',
-      role: 'GOVERNANCE_ADMIN',
-      openidId: 'administrator',
-      openidIssuer: 'https://identity.example',
-    });
-  });
+  actor = await fixture.reset();
 });
 
 afterEach(() => {
-  process.env = environment;
   jest.restoreAllMocks();
 });
 
@@ -98,7 +63,7 @@ async function revokeAuthorization(
           userId,
           serverName,
           deleteToken: async (filter) => {
-            await methods.deleteTokens(filter, session);
+            await fixture.methods.deleteTokens(filter, session);
           },
         }),
       );
@@ -114,17 +79,8 @@ async function revokeAuthorization(
   return request(app).post(`/${serverName}/revoke`);
 }
 
-function failAuditWrites() {
-  const database = mongoose.connection.db!;
-  const original = database.collection.bind(database);
-  return jest.spyOn(database, 'collection').mockImplementation((name, options) => {
-    if (name === 'governance_group_audit_outbox') throw new Error('audit unavailable');
-    return original(name, options);
-  });
-}
-
 it('rejects a callback whose token exchange finishes after successful revocation', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     const revoked = await revokeAuthorization();
     expect(revoked.status).toBe(200);
@@ -144,7 +100,7 @@ it('rejects a callback whose token exchange finishes after successful revocation
       ),
     ).rejects.toThrow();
 
-    expect(await models.Token.countDocuments()).toBe(0);
+    expect(await fixture.models.Token.countDocuments()).toBe(0);
     const events = await outbox().find().toArray();
     expect(events).toHaveLength(2);
     expect(events[0].payload).toMatchObject({
@@ -155,7 +111,7 @@ it('rejects a callback whose token exchange finishes after successful revocation
 });
 
 it('allows a fresh authorization started after revocation', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const previous = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     expect((await revokeAuthorization()).status).toBe(200);
     const current = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
@@ -168,10 +124,14 @@ it('allows a fresh authorization started after revocation', async () => {
       current,
     );
 
-    expect(await models.Token.countDocuments()).toBe(3);
+    expect(await fixture.models.Token.countDocuments()).toBe(3);
     expect(await authorization.isGovernanceMCPOAuthAuthorized(actor.id, connectionId)).toBe(true);
     expect(
-      await storage.getTokens({ userId: actor.id, serverName, findToken: methods.findToken }),
+      await storage.getTokens({
+        userId: actor.id,
+        serverName,
+        findToken: fixture.methods.findToken,
+      }),
     ).toMatchObject({ access_token: 'access-secret', refresh_token: 'refresh-secret' });
     const events = await outbox().find().sort({ createdAt: 1 }).toArray();
     expect(events.map(({ payload }) => payload.action)).toEqual([
@@ -183,7 +143,7 @@ it('allows a fresh authorization started after revocation', async () => {
 });
 
 it('reports authorization only for the connection configuration that received the grant', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const binding = 'a'.repeat(64);
     await administration.storeGovernanceMCPOAuth(
       { user: actor } as ServerRequest,
@@ -202,12 +162,12 @@ it('reports authorization only for the connection configuration that received th
 });
 
 it('rejects an authorization transaction with a snapshot from before revocation committed', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-      await models.Token.countDocuments().session(session);
+      await fixture.models.Token.countDocuments().session(session);
       expect((await revokeAuthorization()).status).toBe(200);
       await expect(
         authorization.claimGovernanceMCPOAuthGeneration(
@@ -221,7 +181,7 @@ it('rejects an authorization transaction with a snapshot from before revocation 
       await session.abortTransaction();
       await session.endSession();
     }
-    expect(await models.Token.countDocuments()).toBe(0);
+    expect(await fixture.models.Token.countDocuments()).toBe(0);
     expect(
       await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId),
     ).toBeGreaterThan(generation);
@@ -229,7 +189,7 @@ it('rejects an authorization transaction with a snapshot from before revocation 
 });
 
 it('rolls back the revocation generation and token deletion when audit insertion fails', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     await administration.storeGovernanceMCPOAuth(
       { user: actor } as ServerRequest,
       connectionId,
@@ -238,7 +198,7 @@ it('rolls back the revocation generation and token deletion when audit insertion
     );
     await outbox().deleteMany({});
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
-    const tokens = await models.Token.find().sort({ identifier: 1 }).lean();
+    const tokens = await fixture.models.Token.find().sort({ identifier: 1 }).lean();
     const failure = failAuditWrites();
     const revoked = await revokeAuthorization();
     failure.mockRestore();
@@ -247,7 +207,7 @@ it('rolls back the revocation generation and token deletion when audit insertion
     expect(await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId)).toBe(
       generation,
     );
-    expect(await models.Token.find().sort({ identifier: 1 }).lean()).toEqual(tokens);
+    expect(await fixture.models.Token.find().sort({ identifier: 1 }).lean()).toEqual(tokens);
     expect(await authorization.isGovernanceMCPOAuthAuthorized(actor.id, connectionId)).toBe(true);
     expect(await outbox().countDocuments()).toBe(0);
     await administration.storeGovernanceMCPOAuth(
@@ -256,12 +216,12 @@ it('rolls back the revocation generation and token deletion when audit insertion
       tokenData(),
       generation,
     );
-    expect(await models.Token.countDocuments()).toBe(3);
+    expect(await fixture.models.Token.countDocuments()).toBe(3);
   });
 });
 
 it('rolls back the authorization generation when storing its audit fails', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     const failure = failAuditWrites();
     await expect(
@@ -277,7 +237,7 @@ it('rolls back the authorization generation when storing its audit fails', async
     expect(await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId)).toBe(
       generation,
     );
-    expect(await models.Token.countDocuments()).toBe(0);
+    expect(await fixture.models.Token.countDocuments()).toBe(0);
     expect(await outbox().countDocuments()).toBe(0);
     expect(await authorization.isGovernanceMCPOAuthAuthorized(actor.id, connectionId)).toBe(false);
     await administration.storeGovernanceMCPOAuth(
@@ -286,7 +246,7 @@ it('rolls back the authorization generation when storing its audit fails', async
       tokenData(),
       generation,
     );
-    expect(await models.Token.countDocuments()).toBe(3);
+    expect(await fixture.models.Token.countDocuments()).toBe(3);
   });
 });
 
@@ -300,13 +260,13 @@ it('isolates revocation generations by administrator, connection, and tenant', a
   ];
   const generations = await Promise.all(
     scopes.map((scope) =>
-      schemas.tenantStorage.run({ tenantId: scope.tenantId }, async () =>
+      fixture.tenantStorage.run({ tenantId: scope.tenantId }, async () =>
         authorization.getGovernanceMCPOAuthGeneration(scope.userId, scope.connectionId),
       ),
     ),
   );
   const first = scopes[0];
-  await schemas.tenantStorage.run({ tenantId: first.tenantId }, async () => {
+  await fixture.tenantStorage.run({ tenantId: first.tenantId }, async () => {
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () =>
@@ -323,7 +283,7 @@ it('isolates revocation generations by administrator, connection, and tenant', a
   });
   const updated = await Promise.all(
     scopes.map((scope) =>
-      schemas.tenantStorage.run({ tenantId: scope.tenantId }, async () =>
+      fixture.tenantStorage.run({ tenantId: scope.tenantId }, async () =>
         authorization.getGovernanceMCPOAuthGeneration(scope.userId, scope.connectionId),
       ),
     ),
@@ -333,7 +293,7 @@ it('isolates revocation generations by administrator, connection, and tenant', a
 });
 
 it('does not publish or reconnect a committed grant after revocation wins the next transaction', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     await administration.storeGovernanceMCPOAuth(
       { user: actor } as ServerRequest,
@@ -354,12 +314,12 @@ it('does not publish or reconnect a committed grant after revocation wins the ne
     ).rejects.toThrow('MCP OAuth authorization is no longer current');
 
     expect(publish).not.toHaveBeenCalled();
-    expect(await models.Token.countDocuments()).toBe(0);
+    expect(await fixture.models.Token.countDocuments()).toBe(0);
   });
 });
 
 it('serializes revocation behind an authorization publication already in progress', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     const generation = await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId);
     await administration.storeGovernanceMCPOAuth(
       { user: actor } as ServerRequest,
@@ -399,7 +359,7 @@ it('serializes revocation behind an authorization publication already in progres
     }
 
     expect((await revokeAuthorization()).status).toBe(200);
-    expect(await models.Token.countDocuments()).toBe(0);
+    expect(await fixture.models.Token.countDocuments()).toBe(0);
     expect(await authorization.getGovernanceMCPOAuthGeneration(actor.id, connectionId)).toBe(
       generation + 2,
     );
@@ -407,7 +367,7 @@ it('serializes revocation behind an authorization publication already in progres
 });
 
 it('keeps local deletion successful and audits a provider 503 separately', async () => {
-  await schemas.runAsSystem(async () => {
+  await fixture.runAsSystem(async () => {
     await storage.storeTokens(tokenData());
     const provider = {
       outcome: 'failure' as const,
@@ -421,7 +381,7 @@ it('keeps local deletion successful and audits a provider 503 separately', async
       local_disconnection: { outcome: 'success' },
       provider_revocation: provider,
     });
-    expect(await models.Token.countDocuments()).toBe(0);
+    expect(await fixture.models.Token.countDocuments()).toBe(0);
     const events = await outbox().find().sort({ createdAt: 1 }).toArray();
     expect(
       events.map(({ payload }) => ({

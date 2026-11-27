@@ -117,7 +117,7 @@ export default function MCPServerCard({
       >
         {/* Server Icon with Status Dot */}
         <div className="relative flex-shrink-0">
-          {server.config?.iconPath ? (
+          {!administration && server.config?.iconPath ? (
             <img
               src={server.config.iconPath}
               className="size-8 rounded-lg object-cover"

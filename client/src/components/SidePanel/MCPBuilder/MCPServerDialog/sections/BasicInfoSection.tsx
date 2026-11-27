@@ -1,12 +1,14 @@
 import { useFormContext } from 'react-hook-form';
-import { Input, Label, Textarea } from '@librechat/client';
+import { Input, Label, MCPIcon, Textarea } from '@librechat/client';
 import type { MCPServerFormData } from '../hooks/useMCPServerForm';
-import MCPIcon from '~/components/SidePanel/Agents/MCPIcon';
+import MCPIconPicker from '~/components/SidePanel/Agents/MCPIcon';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
+import { useMCPAdministration } from '../../administration';
 
 export default function BasicInfoSection() {
   const localize = useLocalize();
+  const administration = useMCPAdministration();
   const {
     register,
     watch,
@@ -33,7 +35,13 @@ export default function BasicInfoSection() {
       {/* Icon + Name row */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div className="flex-shrink-0">
-          <MCPIcon icon={iconValue} onIconChange={handleIconChange} />
+          {administration ? (
+            <div className="flex size-16 items-center justify-center rounded-xl bg-surface-tertiary">
+              <MCPIcon className="size-8 text-text-secondary" aria-hidden="true" />
+            </div>
+          ) : (
+            <MCPIconPicker icon={iconValue} onIconChange={handleIconChange} />
+          )}
         </div>
         <div className="w-full space-y-1.5 sm:flex-1">
           <Label htmlFor="mcp-title" className="text-sm font-medium">

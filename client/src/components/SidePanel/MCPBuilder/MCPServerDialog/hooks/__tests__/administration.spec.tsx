@@ -82,6 +82,28 @@ describe('administrative MCP connection form', () => {
     expect(onSuccess).toHaveBeenCalledWith('remote', false);
   });
 
+  it('does not preload or submit a custom icon when editing a legacy connection', async () => {
+    const server: MCPServerDefinition = {
+      serverName: 'remote',
+      effectivePermissions: 7,
+      config: {
+        type: 'sse',
+        title: 'Existing',
+        url: 'https://remote.example/mcp',
+        iconPath: 'https://icons.example/custom.png',
+      },
+    };
+    const { result } = renderHook(() => useMCPServerForm({ server }), { wrapper: Wrapper });
+    expect(result.current.methods.getValues('icon')).toBe('');
+    act(() => result.current.methods.setValue('icon', server.config.iconPath));
+    await act(async () => result.current.onSubmit());
+
+    expect(mockUpdate).toHaveBeenCalledWith({
+      serverName: 'remote',
+      data: { config: { type: 'sse', title: 'Existing', url: 'https://remote.example/mcp' } },
+    });
+  });
+
   it('uses administrator-provided service credentials only', async () => {
     const { result } = renderHook(() => useMCPServerForm({}), { wrapper: Wrapper });
     act(() => {

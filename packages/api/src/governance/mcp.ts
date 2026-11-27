@@ -136,14 +136,6 @@ export const requireGovernanceMCPAdministrator: RequestHandler = (req, res, next
   next();
 };
 
-export const requireGovernanceMCPAdministration: RequestHandler = (req, res, next) => {
-  if (!isGovernancePilotEnabled()) {
-    res.sendStatus(404);
-    return;
-  }
-  requireGovernanceMCPAdministrator(req, res, next);
-};
-
 export async function storeGovernanceMCPOAuth(
   req: ServerRequest,
   connectionId: string,

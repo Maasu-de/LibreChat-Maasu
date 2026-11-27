@@ -37,11 +37,15 @@ describe('administrator OAuth authorization status', () => {
     'shows authorization without claiming a live connection in administration=%s',
     (administration) => {
       const client = new QueryClient();
-      render(
+      const { container } = render(
         <QueryClientProvider client={client}>
           <MCPAdministrationContext.Provider value={administration}>
             <MCPServerCard
-              server={{ serverName: 'remote', config: initialConfig, effectivePermissions: 7 }}
+              server={{
+                serverName: 'remote',
+                config: { ...initialConfig, iconPath: 'https://icons.example/legacy.png' },
+                effectivePermissions: 7,
+              }}
               canCreateEditMCPs
               getServerStatusIconProps={(serverName) => ({
                 serverName,
@@ -62,6 +66,7 @@ describe('administrator OAuth authorization status', () => {
 
       expect(screen.getByRole('button', { name: 'com_ui_revoke' })).toBeInTheDocument();
       if (administration) {
+        expect(container.querySelector('img[src="https://icons.example/legacy.png"]')).toBeNull();
         expect(screen.getByText('com_ui_mcp_authorized')).toBeInTheDocument();
         expect(screen.getByLabelText('remote - com_ui_mcp_authorized')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'com_nav_mcp_reconnect' })).toBeInTheDocument();
@@ -69,6 +74,9 @@ describe('administrator OAuth authorization status', () => {
           screen.queryByRole('button', { name: 'com_nav_mcp_connect' }),
         ).not.toBeInTheDocument();
       } else {
+        expect(
+          container.querySelector('img[src="https://icons.example/legacy.png"]'),
+        ).not.toBeNull();
         expect(screen.queryByText('com_ui_mcp_authorized')).not.toBeInTheDocument();
         expect(screen.getByLabelText('remote - com_nav_mcp_status_needs_auth')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'com_nav_mcp_connect' })).toBeInTheDocument();

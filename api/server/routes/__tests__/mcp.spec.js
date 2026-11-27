@@ -36,6 +36,7 @@ jest.mock('@librechat/api', () => {
   const actual = jest.requireActual('@librechat/api');
   return {
     ...actual,
+    requireGovernanceMCPAdministrator: jest.fn(actual.requireGovernanceMCPAdministrator),
     queueGovernanceMCPAudit: jest.fn().mockResolvedValue(undefined),
     storeGovernanceMCPOAuth: jest.fn().mockResolvedValue(undefined),
     getGovernanceMCPOAuthGeneration: jest.fn().mockResolvedValue(0),
@@ -165,7 +166,7 @@ jest.mock('~/cache', () => ({
 }));
 
 jest.mock('~/server/middleware', () => ({
-  requireJwtAuth: (req, res, next) => next(),
+  requireJwtAuth: jest.fn((_req, _res, next) => next()),
   canAccessMCPServerResource: () => (req, res, next) => next(),
 }));
 
@@ -300,6 +301,32 @@ describe('MCP Routes', () => {
       const response = await request(app).get('/api/mcp/servers');
       expect(response.status).toBe(403);
       expect(mockRegistryInstance.getAllServerConfigs).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['get', '/api/mcp/servers/remote/inspect'],
+      ['post', '/api/mcp/remote/oauth/revoke'],
+    ])('checks JWT and administrator entitlement once for %s %s', async (method, path) => {
+      const { requireJwtAuth } = require('~/server/middleware');
+      const { requireGovernanceMCPAdministrator } = require('@librechat/api');
+
+      await request(app)[method](path).expect(404);
+      expect(requireJwtAuth).toHaveBeenCalledTimes(1);
+      expect(requireGovernanceMCPAdministrator).toHaveBeenCalledTimes(1);
+
+      currentUser = { ...actor, role: 'USER' };
+      await request(app)[method](path).expect(403);
+      expect(mockRegistryInstance.getServerConfig).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets the OAuth callback validate its state without router JWT or admin checks', async () => {
+      const { requireJwtAuth } = require('~/server/middleware');
+      const { requireGovernanceMCPAdministrator } = require('@librechat/api');
+      currentUser = { id: actor.id, role: 'USER' };
+      const response = await request(app).get('/api/mcp/remote/oauth/callback').expect(302);
+      expect(response.headers.location).toContain('/oauth/error?error=missing_code');
+      expect(requireJwtAuth).not.toHaveBeenCalled();
+      expect(requireGovernanceMCPAdministrator).not.toHaveBeenCalled();
     });
 
     describe('connection reinitialization', () => {
@@ -511,6 +538,24 @@ describe('MCP Routes', () => {
           failFlow: jest.fn().mockResolvedValue(true),
         };
         require('~/config').getFlowStateManager.mockReturnValue(manager);
+      });
+
+      it.each([
+        ['post', '/api/mcp/servers', 'mcp.created', 'https://icons.example/custom.png'],
+        ['patch', '/api/mcp/servers/test-server', 'mcp.updated', 'data:image/png;base64,test'],
+      ])('rejects and audits a custom icon on %s %s', async (method, path, action, iconPath) => {
+        const response = await request(app)
+          [method](path)
+          .send({
+            config: { type: 'sse', url: 'https://mcp.test/server', iconPath },
+          });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('MCP_CUSTOM_ICON_NOT_ALLOWED');
+        expect(response.text).not.toContain(iconPath);
+        expect(mockRegistryInstance.addServer).not.toHaveBeenCalled();
+        expect(mockRegistryInstance.updateServer).not.toHaveBeenCalled();
+        expect((await outbox().findOne()).payload).toMatchObject({ action, outcome: 'failure' });
       });
 
       it.each(['api_token', '%61pi_token', 'provider_credential'])(

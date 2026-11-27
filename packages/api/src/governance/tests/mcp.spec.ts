@@ -7,7 +7,6 @@ import {
   isGovernanceMCPApi,
   isGovernanceRemoteMCP,
   requireGovernanceMCPAdministrator,
-  requireGovernanceMCPAdministration,
   createGovernanceMCPHandlers,
 } from '../mcp';
 import { enforceGovernancePilot } from '../pilot';
@@ -119,43 +118,6 @@ describe('governed MCP administration boundary', () => {
     await expect(
       request(app({ ...administrator, role: 'USER' })).get('/api/mcp/tools'),
     ).resolves.toMatchObject({ status: 204 });
-  });
-
-  it.each(['USER', 'ADMIN', 'GOVERNANCE_ADMIN'])(
-    'does not add administration endpoints outside governed mode for %s',
-    async (role) => {
-      process.env.GOVERNANCE_PILOT_ENABLED = 'false';
-      const server = express();
-      server.use((req, _res, next) => {
-        Object.assign(req, { user: { ...administrator, role } });
-        next();
-      });
-      server.use(requireGovernanceMCPAdministration);
-      server.use((_req, res) => {
-        res.sendStatus(204);
-      });
-      await expect(request(server).get('/servers/remote/inspect')).resolves.toMatchObject({
-        status: 404,
-      });
-      await expect(request(server).post('/remote/oauth/revoke')).resolves.toMatchObject({
-        status: 404,
-      });
-    },
-  );
-
-  it('allows the governed-only endpoint guard for an OIDC governance administrator', async () => {
-    const server = express();
-    server.use((req, _res, next) => {
-      Object.assign(req, { user: administrator });
-      next();
-    });
-    server.use(requireGovernanceMCPAdministration);
-    server.use((_req, res) => {
-      res.sendStatus(204);
-    });
-    await expect(request(server).get('/servers/remote/inspect')).resolves.toMatchObject({
-      status: 204,
-    });
   });
 
   it('blocks MCP ACL management while preserving the existing agent ACL boundary', async () => {

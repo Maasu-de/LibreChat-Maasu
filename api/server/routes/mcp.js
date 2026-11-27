@@ -14,7 +14,6 @@ const {
   getMCPAuthorizationFlowId,
   getMCPAuthorizationInitiationBinding,
   requireGovernanceMCPAdministrator,
-  requireGovernanceMCPAdministration,
   queueGovernanceMCPAudit,
   storeGovernanceMCPOAuth,
   getGovernanceMCPOAuthGeneration,
@@ -1045,18 +1044,12 @@ const governanceMCP = createGovernanceMCPHandlers({
     }),
   revoke: maybeUninstallOAuthMCP,
 });
-router.get(
-  '/servers/:serverName/inspect',
-  requireJwtAuth,
-  requireGovernanceMCPAdministration,
-  governanceMCP.inspect,
-);
-router.post(
-  '/:serverName/oauth/revoke',
-  requireJwtAuth,
-  requireGovernanceMCPAdministration,
-  governanceMCP.revoke,
-);
+function requireGovernanceMCPPilot(_req, res, next) {
+  return isGovernancePilotEnabled() ? next() : res.sendStatus(404);
+}
+
+router.get('/servers/:serverName/inspect', requireGovernanceMCPPilot, governanceMCP.inspect);
+router.post('/:serverName/oauth/revoke', requireGovernanceMCPPilot, governanceMCP.revoke);
 
 /**
 MCP Server CRUD Routes (User-Managed MCP Servers)

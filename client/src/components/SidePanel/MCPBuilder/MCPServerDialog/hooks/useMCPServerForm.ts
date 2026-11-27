@@ -96,7 +96,7 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
         description: server.config.description || '',
         url: 'url' in server.config ? server.config.url : '',
         type: (server.config.type as 'streamable-http' | 'sse') || 'streamable-http',
-        icon: server.config.iconPath || '',
+        icon: administration ? '' : server.config.iconPath || '',
         auth: {
           auth_type: authType,
           api_key: '', // Never pre-fill secrets
@@ -189,7 +189,7 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
         url: formData.url,
         title: formData.title,
         ...(formData.description && { description: formData.description }),
-        ...(formData.icon && { iconPath: formData.icon }),
+        ...(!administration && formData.icon && { iconPath: formData.icon }),
       };
 
       // Add OAuth configuration
@@ -263,6 +263,8 @@ export function useMCPServerForm({ server, onSuccess, onClose }: UseMCPServerFor
           errorMessage = localize('com_ui_mcp_server_connection_failed');
         } else if (axiosError.response?.data?.error === 'MCP_DOMAIN_NOT_ALLOWED') {
           errorMessage = localize('com_ui_mcp_domain_not_allowed');
+        } else if (axiosError.response?.data?.error === 'MCP_CUSTOM_ICON_NOT_ALLOWED') {
+          errorMessage = localize('com_ui_mcp_custom_icon_not_allowed');
         } else if (axiosError.response?.data?.error === 'MCP_INVALID_ADMIN_CONNECTION') {
           errorMessage = localize('com_ui_mcp_invalid_admin_connection');
         } else if (axiosError.response?.data?.error) {

@@ -16,6 +16,11 @@ interface GovernanceMCPServerDependencies {
   resolveReservedNames: (req: ServerRequest) => Promise<Iterable<string>>;
 }
 
+const customIconError = {
+  error: 'MCP_CUSTOM_ICON_NOT_ALLOWED',
+  message: 'Custom icons are not supported for governed MCP connections',
+};
+
 function sendMutationError(res: Response, error: Error & { statusCode?: number }): void {
   if (
     error instanceof MCPApiKeyReentryRequiredError ||
@@ -48,6 +53,11 @@ export function createGovernanceMCPServerHandlers(deps: GovernanceMCPServerDepen
           error: 'MCP_INVALID_ADMIN_CONNECTION',
           message: 'Only remote administrative MCP connections are supported',
         });
+        return;
+      }
+      if (validation.data.iconPath) {
+        await recordGovernanceMCPFailure(request, 'mcp.created');
+        res.status(400).json(customIconError);
         return;
       }
       const result = await deps
@@ -99,6 +109,10 @@ export function createGovernanceMCPServerHandlers(deps: GovernanceMCPServerDepen
           },
           connectionId,
         );
+        return;
+      }
+      if (validation.data.iconPath) {
+        await rejectGovernanceMCPUpdate(request, res, customIconError, connectionId);
         return;
       }
       const config = await deps
