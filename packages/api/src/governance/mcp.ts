@@ -34,6 +34,7 @@ import {
 } from './oauth';
 
 import { requireApiKeyReentryForRebinding, prepareOAuthSecretReuse } from '~/mcp/registry/binding';
+import { isOAuthServer } from '~/mcp/utils';
 
 const routingQueryParameters = new Set(['tenant', 'api-version', 'toolset']);
 
@@ -196,6 +197,7 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
     const request = req as ServerRequest;
     const { serverName } = req.params;
     let config: ParsedServerConfig | undefined;
+    res.set('Cache-Control', 'no-store');
     try {
       config = await deps.getRegistry().getServerConfig(serverName, request.user?.id);
       if (!config?.dbId || !isGovernanceRemoteMCP(config)) {
@@ -207,7 +209,8 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
         serverName,
         serverConfig: config,
       });
-      const success = result.tools != null && !result.oauthRequired;
+      const tools = result.oauthRequired ? null : result.tools;
+      const success = tools != null;
       await queueGovernanceMCPAudit(
         request,
         'mcp.inspected',
@@ -216,13 +219,12 @@ export function createGovernanceMCPHandlers(deps: GovernanceMCPDependencies): {
       );
       res.json({
         success,
-        tools: success
-          ? (result?.tools ?? []).map(({ name, description, inputSchema }) => ({
-              name,
-              description,
-              inputSchema,
-            }))
-          : [],
+        ...(result.oauthRequired && isOAuthServer(config) && { oauthRequired: true }),
+        tools: (tools ?? []).map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema,
+        })),
       });
     } catch {
       await recordGovernanceMCPFailure(request, 'mcp.inspected', config?.dbId);

@@ -25,7 +25,13 @@ export default function MCPInspection({ serverName }: { serverName: string }) {
         />
       </Button>
       {(inspection.isError || inspection.data?.success === false) && (
-        <p role="alert">{localize('com_ui_mcp_server_connection_failed')}</p>
+        <p role="alert">
+          {localize(
+            inspection.data?.oauthRequired
+              ? 'com_ui_mcp_inspection_authorize_first'
+              : 'com_ui_mcp_server_connection_failed',
+          )}
+        </p>
       )}
       {inspection.data?.success && (
         <div role="status" className="space-y-3">

@@ -334,10 +334,28 @@ describe('administrative inspection and revocation', () => {
     });
   });
 
-  it('does not report successful authenticated inspection while OAuth is required', async () => {
+  it('returns a private, passive inspection result when OAuth is required', async () => {
+    const { server, discover, getServerConfig } = setup();
+    const { apiKey: _serviceKey, ...oauthConfig } = config;
+    getServerConfig.mockResolvedValue({ ...oauthConfig, requiresOAuth: true });
+    discover.mockResolvedValue({
+      oauthRequired: true,
+      oauthUrl: 'https://identity.example/authorize?state=private',
+      tools,
+    });
+    const response = await request(server)
+      .get('/inspect/remote')
+      .expect(200)
+      .expect('Cache-Control', 'no-store');
+    expect(response.body).toEqual({ success: false, oauthRequired: true, tools: [] });
+  });
+
+  it('does not suggest OAuth after a rejected service credential', async () => {
     const { server, discover } = setup();
-    discover.mockResolvedValue({ oauthRequired: true, oauthUrl: null, tools });
-    const response = await request(server).get('/inspect/remote');
+    discover.mockResolvedValue({ oauthRequired: true, oauthUrl: null, tools: null });
+
+    const response = await request(server).get('/inspect/remote').expect(200);
+
     expect(response.body).toEqual({ success: false, tools: [] });
   });
 

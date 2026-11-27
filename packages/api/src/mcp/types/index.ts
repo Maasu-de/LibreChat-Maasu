@@ -250,6 +250,8 @@ export interface UserMCPConnectionOptions extends UserConnectionContext {
 export interface ToolDiscoveryOptions {
   serverName: string;
   user?: IUser;
+  /** Already resolved and authorized configuration for the server being inspected. */
+  serverConfig?: ParsedServerConfig;
   flowManager?: FlowStateManager<o.MCPOAuthTokens | null>;
   tokenMethods?: TokenMethods;
   signal?: AbortSignal;

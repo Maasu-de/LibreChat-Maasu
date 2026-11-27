@@ -329,6 +329,34 @@ describe('MCP Routes', () => {
       expect(requireGovernanceMCPAdministrator).not.toHaveBeenCalled();
     });
 
+    it('passes the validated connection to passive inspection', async () => {
+      const config = {
+        type: 'streamable-http',
+        url: 'https://mcp.test/server',
+        dbId: '507f1f77bcf86cd799439011',
+      };
+      mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+      const discoverServerTools = jest.fn().mockResolvedValue({
+        tools: [],
+        oauthRequired: false,
+        oauthUrl: null,
+      });
+      require('~/config').getMCPManager.mockReturnValue({ discoverServerTools });
+
+      await request(app)
+        .get('/api/mcp/servers/remote/inspect')
+        .expect(200)
+        .expect('Cache-Control', 'no-store');
+      expect(discoverServerTools).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverName: 'remote',
+          serverConfig: config,
+          throwOnError: true,
+        }),
+      );
+      expect(mockRegistryInstance.getServerConfig).toHaveBeenCalledTimes(1);
+    });
+
     describe('connection reinitialization', () => {
       const connectionId = '507f1f77bcf86cd799439011';
       let manager;

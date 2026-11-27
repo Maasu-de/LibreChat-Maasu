@@ -1,10 +1,13 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { dataService } from 'librechat-data-provider';
+import { dataService, QueryKeys } from 'librechat-data-provider';
 import type { MCPInspectionResponse } from 'librechat-data-provider';
 import type { MCPServerDefinition } from '~/hooks';
-import { useUpdateMCPServerMutation } from '~/data-provider/MCP/mutations';
+import {
+  useRevokeMCPAuthorizationMutation,
+  useUpdateMCPServerMutation,
+} from '~/data-provider/MCP/mutations';
 import { useMCPServersQuery } from '~/data-provider/MCP/queries';
 import { MCPAdministrationContext } from '../administration';
 import MCPServerList from '../MCPServerList';
@@ -31,6 +34,7 @@ jest.mock('librechat-data-provider', () => {
       ...original.dataService,
       getMCPServers: jest.fn(),
       inspectMCPServer: jest.fn(),
+      revokeMCPOAuth: jest.fn(),
       updateMCPServer: jest.fn(),
     },
   };
@@ -243,4 +247,65 @@ describe('inspection after editing an administrative MCP connection', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(dataService.inspectMCPServer).toHaveBeenCalledTimes(1);
   });
+});
+
+it('clears inspected tools when OAuth authorization is revoked', async () => {
+  const client = new QueryClient();
+  const card = (authorizationComplete: boolean) => (
+    <QueryClientProvider client={client}>
+      <MCPAdministrationContext.Provider value={true}>
+        <MCPServerCard
+          server={{ serverName: 'remote', config: initialConfig, effectivePermissions: 7 }}
+          canCreateEditMCPs
+          getServerStatusIconProps={(serverName) => ({
+            serverName,
+            serverStatus: {
+              connectionState: 'disconnected',
+              requiresOAuth: true,
+              authorizationComplete,
+            },
+            isInitializing: false,
+            canCancel: false,
+            onConfigClick: jest.fn(),
+            onCancel: jest.fn(),
+          })}
+        />
+      </MCPAdministrationContext.Provider>
+    </QueryClientProvider>
+  );
+  jest.mocked(dataService.inspectMCPServer).mockResolvedValue(inspectionResult);
+  const { rerender } = render(card(true));
+  fireEvent.click(screen.getByRole('button', { name: 'com_ui_mcp_inspect' }));
+  expect(await screen.findByText('original_tool')).toBeInTheDocument();
+
+  rerender(card(false));
+
+  expect(screen.queryByText('original_tool')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'com_ui_mcp_inspect' })).toBeEnabled();
+  expect(dataService.inspectMCPServer).toHaveBeenCalledTimes(1);
+  client.clear();
+});
+
+it('refreshes authorization status when revocation returns an error after local disconnection', async () => {
+  const client = new QueryClient({
+    logger: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  });
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+  jest
+    .mocked(dataService.revokeMCPOAuth)
+    .mockRejectedValue(new Error('Provider revocation audit could not be recorded'));
+  const { result } = renderHook(useRevokeMCPAuthorizationMutation, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+
+  await act(async () => {
+    await expect(result.current.mutateAsync('remote')).rejects.toThrow(
+      'audit could not be recorded',
+    );
+  });
+
+  expect(invalidate).toHaveBeenCalledWith([QueryKeys.mcpConnectionStatus]);
+  client.clear();
 });

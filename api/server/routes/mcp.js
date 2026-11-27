@@ -1034,10 +1034,11 @@ async function getOAuthHeaders(serverName, userId, configServers) {
 const governanceMCP = createGovernanceMCPHandlers({
   getRegistry: getMCPServersRegistry,
   getManager: getMCPManager,
-  discover: ({ user, serverName }) =>
+  discover: ({ user, serverName, serverConfig }) =>
     getMCPManager().discoverServerTools({
       user,
       serverName,
+      serverConfig,
       flowManager: getFlowStateManager(getLogStores(CacheKeys.FLOWS)),
       tokenMethods: {
         findToken: db.findToken,

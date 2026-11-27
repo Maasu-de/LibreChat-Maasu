@@ -371,6 +371,11 @@ it('audits an inspection failure with a safe creation-attempt reference', async 
     .mockRejectedValueOnce(new Error('Unreachable server with confidential-service-key'));
   const response = await request(app).post('/servers').send({ config });
   expect(response.status).toBe(400);
+  expect(response.body).toEqual({
+    error: 'MCP_INSPECTION_FAILED',
+    message: 'Could not connect to the MCP server',
+  });
+  expect(response.text).not.toContain('confidential-service-key');
   expect(await schemas.runAsSystem(() => models.MCPServer.countDocuments())).toBe(0);
   expect(await schemas.runAsSystem(() => models.AclEntry.countDocuments())).toBe(0);
   const events = await outbox().find({}).toArray();
@@ -383,6 +388,35 @@ it('audits an inspection failure with a safe creation-attempt reference', async 
   });
   expect(JSON.stringify(events)).not.toMatch(/confidential|mcp\.example/);
 });
+
+it('returns a safe domain error when editing a connection', async () => {
+  const name = await create();
+  const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+  const { MCPDomainNotAllowedError } = await import('~/mcp/errors');
+  jest
+    .mocked(MCPServerInspector.inspect)
+    .mockRejectedValueOnce(new MCPDomainNotAllowedError('private-host.example'));
+
+  const response = await request(app)
+    .patch(`/servers/${name}`)
+    .send({
+      config: { ...config, url: 'https://private-host.example/mcp' },
+    });
+
+  expect(response.status).toBe(403);
+  expect(response.body).toEqual({
+    error: 'MCP_DOMAIN_NOT_ALLOWED',
+    message: 'The MCP server domain is not allowed',
+  });
+  expect(response.text).not.toMatch(/private-host|confidential-service-key/);
+  const stored = await schemas.runAsSystem(() => models.MCPServer.findOne({ serverName: name }));
+  expect(stored?.config).toMatchObject({ url: config.url });
+  expect((await outbox().findOne({ 'payload.action': 'mcp.updated' }))?.payload).toMatchObject({
+    outcome: 'failure',
+    resource: { id: stored?._id.toString() },
+  });
+});
+
 it('audits a rolled-back creation after a transient audit-storage failure', async () => {
   failAudit(true);
   const response = await request(app).post('/servers').send({ config });

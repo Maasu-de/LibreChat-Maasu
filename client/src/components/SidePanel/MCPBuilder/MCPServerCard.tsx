@@ -190,7 +190,7 @@ export default function MCPServerCard({
 
       {administration && (
         <MCPInspection
-          key={`${server.dbId ?? server.serverName}:${inspectionRevision}`}
+          key={`${server.dbId ?? server.serverName}:${inspectionRevision}:${serverStatus?.authorizationComplete === true}`}
           serverName={server.serverName}
         />
       )}

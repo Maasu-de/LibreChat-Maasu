@@ -23,9 +23,14 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('administrative MCP connection form', () => {
-  it.each(['create', 'update'])(
-    'keeps rejected %s input open and shows safe configuration guidance',
-    async (operation) => {
+  it.each([
+    ['create', 'MCP_INVALID_ADMIN_CONNECTION', 'com_ui_mcp_invalid_admin_connection'],
+    ['update', 'MCP_INVALID_ADMIN_CONNECTION', 'com_ui_mcp_invalid_admin_connection'],
+    ['create', 'MCP_INSPECTION_FAILED', 'com_ui_mcp_server_connection_failed'],
+    ['update', 'MCP_DOMAIN_NOT_ALLOWED', 'com_ui_mcp_domain_not_allowed'],
+  ])(
+    'keeps rejected %s input open and shows safe configuration guidance for %s',
+    async (operation, code, message) => {
       const isEditMode = operation === 'update';
       const server: MCPServerDefinition | undefined = isEditMode
         ? {
@@ -40,7 +45,7 @@ describe('administrative MCP connection form', () => {
       mutation.mockRejectedValueOnce({
         response: {
           data: {
-            error: 'MCP_INVALID_ADMIN_CONNECTION',
+            error: code,
             message: 'Provider rejected https://remote.example/mcp?api_token=private-secret',
           },
         },
@@ -54,7 +59,7 @@ describe('administrative MCP connection form', () => {
       await act(async () => result.current.onSubmit());
 
       expect(mockShowToast).toHaveBeenCalledWith({
-        message: 'com_ui_mcp_invalid_admin_connection',
+        message,
         status: 'error',
       });
       expect(JSON.stringify(mockShowToast.mock.calls)).not.toContain('private-secret');

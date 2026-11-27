@@ -1264,7 +1264,7 @@ describe('MCPManager', () => {
   });
 
   describe('discoverServerTools', () => {
-    const mockTools = [
+    const mockTools: NonNullable<t.ToolDiscoveryResult['tools']> = [
       { name: 'tool1', description: 'First tool', inputSchema: { type: 'object' } },
       { name: 'tool2', description: 'Second tool', inputSchema: { type: 'object' } },
     ];
@@ -1319,6 +1319,39 @@ describe('MCPManager', () => {
       expect(MCPConnectionFactory.discoverTools).toHaveBeenCalledWith(
         expect.objectContaining({ serverName }),
         expect.objectContaining({ user }),
+        true,
+      );
+    });
+
+    it('inspects the already resolved configuration without a second registry read', async () => {
+      const get = jest.fn().mockResolvedValue(mockConnection);
+      mockAppConnections({ get });
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      const getServerConfig = jest.mocked(mockRegistryInstance.getServerConfig);
+      getServerConfig.mockClear();
+      const serverConfig: t.ParsedServerConfig = {
+        type: 'streamable-http',
+        url: 'https://mcp.example/managed',
+      };
+      jest.mocked(MCPConnectionFactory.discoverTools).mockResolvedValue({
+        tools: mockTools,
+        connection: null,
+        oauthRequired: false,
+        oauthUrl: null,
+      });
+
+      const result = await manager.discoverServerTools({
+        serverName,
+        serverConfig,
+        throwOnError: true,
+      });
+
+      expect(result.tools).toEqual(mockTools);
+      expect(getServerConfig).not.toHaveBeenCalled();
+      expect(get).not.toHaveBeenCalled();
+      expect(MCPConnectionFactory.discoverTools).toHaveBeenCalledWith(
+        expect.objectContaining({ serverName, serverConfig }),
+        expect.any(Object),
         true,
       );
     });

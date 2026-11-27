@@ -5,7 +5,12 @@ import type { RequestHandler, Response } from 'express';
 import type { ServerRequest } from '~/types/http';
 import { createGovernanceMCPMutation, recordGovernanceMCPFailure } from './audit';
 import { isGovernanceRemoteMCP, rejectGovernanceMCPUpdate } from './mcp';
-import { MCPApiKeyReentryRequiredError, MCPOAuthSecretReentryRequiredError } from '~/mcp/errors';
+import {
+  isMCPDomainNotAllowedError,
+  isMCPInspectionFailedError,
+  MCPApiKeyReentryRequiredError,
+  MCPOAuthSecretReentryRequiredError,
+} from '~/mcp/errors';
 import { redactServerSecrets } from '~/mcp/utils';
 
 interface GovernanceMCPServerDependencies {
@@ -27,6 +32,20 @@ function sendMutationError(res: Response, error: Error & { statusCode?: number }
     error instanceof MCPOAuthSecretReentryRequiredError
   ) {
     res.status(400).json({ error: error.code, message: error.message });
+    return;
+  }
+  if (isMCPDomainNotAllowedError(error)) {
+    res.status(error.statusCode).json({
+      error: error.code,
+      message: 'The MCP server domain is not allowed',
+    });
+    return;
+  }
+  if (isMCPInspectionFailedError(error)) {
+    res.status(error.statusCode).json({
+      error: error.code,
+      message: 'Could not connect to the MCP server',
+    });
     return;
   }
   res.status(error.statusCode ?? 400).json({ message: 'MCP connection operation failed' });

@@ -163,8 +163,6 @@ export const useRevokeMCPAuthorizationMutation = (): UseMutationResult<
 > => {
   const queryClient = useQueryClient();
   return useMutation((serverName: string) => dataService.revokeMCPOAuth(serverName), {
-    onSuccess: () => {
-      queryClient.invalidateQueries([QueryKeys.mcpConnectionStatus]);
-    },
+    onSettled: () => queryClient.invalidateQueries([QueryKeys.mcpConnectionStatus]),
   });
 };

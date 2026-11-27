@@ -51,5 +51,6 @@ export type MCPServersListResponse = Record<string, MCPServerDBObjectResponse>;
 
 export interface MCPInspectionResponse {
   success: boolean;
+  oauthRequired?: boolean;
   tools: { name: string; description?: string; inputSchema: JSONSchema7 }[];
 }

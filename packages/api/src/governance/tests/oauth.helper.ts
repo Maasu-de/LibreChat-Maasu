@@ -1,5 +1,24 @@
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import type {
+  createMethods,
+  createModels,
+  IUser,
+  runAsSystem,
+  tenantStorage,
+} from '@librechat/data-schemas';
+
+interface OAuthTestFixture {
+  models: Pick<ReturnType<typeof createModels>, 'Token'>;
+  methods: Pick<
+    ReturnType<typeof createMethods>,
+    'createToken' | 'updateToken' | 'findToken' | 'deleteTokens' | 'findUser'
+  >;
+  runAsSystem: typeof runAsSystem;
+  tenantStorage: typeof tenantStorage;
+  reset: () => Promise<IUser>;
+  close: () => Promise<void>;
+}
 
 const outboxName = 'governance_group_audit_outbox';
 
@@ -14,7 +33,7 @@ export function failAuditWrites() {
   });
 }
 
-export async function createOAuthTestFixture() {
+export async function createOAuthTestFixture(): Promise<OAuthTestFixture> {
   const environment = process.env;
   const replica = await MongoMemoryReplSet.create({
     binary: { version: '8.2.1' },

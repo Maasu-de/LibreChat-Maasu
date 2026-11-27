@@ -127,9 +127,10 @@ export class MCPManager extends UserConnectionManager {
     const logPrefix = user?.id ? `[MCP][User: ${user.id}][${serverName}]` : `[MCP][${serverName}]`;
 
     try {
-      const existingAppConnection = args.throwOnError
-        ? undefined
-        : await this.appConnections?.get(serverName);
+      const existingAppConnection =
+        args.throwOnError || args.serverConfig
+          ? undefined
+          : await this.appConnections?.get(serverName);
       if (existingAppConnection && (await existingAppConnection.isConnected())) {
         const tools = await existingAppConnection.fetchTools();
         return { tools, oauthRequired: false, oauthUrl: null };
@@ -138,11 +139,10 @@ export class MCPManager extends UserConnectionManager {
       logger.debug(`${logPrefix} [Discovery] App connection not available, trying discovery mode`);
     }
 
-    const serverConfig = await MCPServersRegistry.getInstance().getServerConfig(
-      serverName,
-      user?.id,
-      args.configServers,
-    );
+    const registry = MCPServersRegistry.getInstance();
+    const serverConfig =
+      args.serverConfig ??
+      (await registry.getServerConfig(serverName, user?.id, args.configServers));
 
     if (!serverConfig) {
       logger.warn(`${logPrefix} [Discovery] Server config not found`);
@@ -160,7 +160,6 @@ export class MCPManager extends UserConnectionManager {
       return { tools: null, oauthRequired: false, oauthUrl: null };
     }
 
-    const registry = MCPServersRegistry.getInstance();
     const { allowedDomains, allowedAddresses, useSSRFProtection } =
       await registry.resolveAllowlists({ userId: user?.id, role: user?.role });
     await this.assertResolvedRuntimeConfigAllowed({

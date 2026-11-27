@@ -48,4 +48,19 @@ describe('MCP connection inspection', () => {
     );
     expect(screen.queryByText('private server error')).not.toBeInTheDocument();
   });
+
+  it('tells the administrator to authorize an OAuth connection before inspecting again', async () => {
+    jest.mocked(dataService.inspectMCPServer).mockResolvedValue({
+      success: false,
+      oauthRequired: true,
+      tools: [],
+    });
+    renderInspection();
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_mcp_inspect' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'com_ui_mcp_inspection_authorize_first',
+    );
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });
