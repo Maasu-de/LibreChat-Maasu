@@ -13,6 +13,18 @@ let mockStartupConfig: { governancePilotEnabled: boolean } | undefined;
 let mockServers: MCPServersListResponse;
 const mockShowToast = jest.fn();
 const mockReinitialize = jest.fn();
+const mockGetOAuthStatus = jest.fn();
+
+jest.mock('librechat-data-provider', () => {
+  const original = jest.requireActual('librechat-data-provider');
+  return {
+    ...original,
+    dataService: {
+      ...original.dataService,
+      getMCPOAuthStatus: (...args: unknown[]) => mockGetOAuthStatus(...args),
+    },
+  };
+});
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
@@ -149,6 +161,8 @@ describe('governed MCP management isolation', () => {
 });
 
 describe('OAuth authorization completion polling', () => {
+  const oauthAttempt = { flowId: 'flow-id', id: 'current-attempt' };
+
   beforeEach(() => {
     jest.useFakeTimers();
     mockStartupConfig = { governancePilotEnabled: false };
@@ -156,6 +170,7 @@ describe('OAuth authorization completion polling', () => {
       success: true,
       oauthRequired: true,
       oauthUrl: 'https://identity.example/authorize',
+      oauthAttempt,
     });
   });
 
@@ -164,26 +179,25 @@ describe('OAuth authorization completion polling', () => {
     jest.useRealTimers();
   });
 
-  it.each([true, false])(
-    'accepts an authorized disconnected connection only in administration=%s',
-    async (administration) => {
+  it.each(['connected', 'disconnected'] as const)(
+    'waits for the current attempt even when the old grant reports %s',
+    async (connectionState) => {
       const queryClient = new QueryClient();
       queryClient.setQueryData([QueryKeys.mcpConnectionStatus], {
         connectionStatus: {
           remote: {
-            connectionState: 'disconnected',
+            connectionState,
             requiresOAuth: true,
             authorizationComplete: true,
           },
         },
       });
-      const refetch = jest.spyOn(queryClient, 'refetchQueries').mockResolvedValue(undefined);
-      const statusRefetches = () =>
-        refetch.mock.calls.filter(([key]) =>
-          Array.isArray(key) ? key[0] === QueryKeys.mcpConnectionStatus : false,
-        );
+      jest.spyOn(queryClient, 'refetchQueries').mockResolvedValue(undefined);
+      mockGetOAuthStatus
+        .mockResolvedValueOnce({ attemptId: oauthAttempt.id, completed: false, failed: false })
+        .mockResolvedValueOnce({ attemptId: oauthAttempt.id, completed: true, failed: false });
       const { result, unmount } = renderHook(() => useMCPServerManager(), {
-        wrapper: wrapper(administration, queryClient),
+        wrapper: wrapper(true, queryClient),
       });
 
       await act(async () => {
@@ -191,28 +205,63 @@ describe('OAuth authorization completion polling', () => {
       });
       expect(result.current.isInitializing('remote')).toBe(true);
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(6000);
+        await jest.advanceTimersByTimeAsync(5000);
       });
 
-      expect(result.current.isInitializing('remote')).toBe(!administration);
-      if (administration) {
-        expect(mockShowToast).toHaveBeenCalledWith({
-          message: 'com_ui_mcp_authenticated_success',
-          status: 'success',
-        });
-        await act(async () => {
-          await jest.advanceTimersByTimeAsync(30000);
-        });
-        expect(statusRefetches()).toHaveLength(1);
-      } else {
-        expect(mockShowToast).not.toHaveBeenCalled();
-        await act(async () => {
-          await jest.advanceTimersByTimeAsync(5000);
-        });
-        expect(statusRefetches()).toHaveLength(2);
-      }
+      expect(mockGetOAuthStatus).toHaveBeenCalledWith(oauthAttempt.flowId);
+      expect(result.current.isInitializing('remote')).toBe(true);
+      expect(mockShowToast).not.toHaveBeenCalled();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(6000);
+      });
+      expect(result.current.isInitializing('remote')).toBe(false);
+      expect(mockShowToast).toHaveBeenCalledWith({
+        message: 'com_ui_mcp_authenticated_success',
+        status: 'success',
+      });
       unmount();
       queryClient.clear();
     },
   );
+
+  it.each([
+    { attemptId: 'another-attempt', completed: true, failed: false },
+    { attemptId: oauthAttempt.id, completed: false, failed: true },
+  ])('does not accept a failed or replaced attempt (%j)', async (status) => {
+    mockGetOAuthStatus.mockResolvedValueOnce(status);
+    const { result } = renderHook(() => useMCPServerManager(), { wrapper: wrapper(true) });
+    await act(async () => {
+      await result.current.initializeServer('remote', false);
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    expect(result.current.isInitializing('remote')).toBe(false);
+    expect(mockShowToast).toHaveBeenCalledWith({
+      message: 'com_ui_mcp_init_failed',
+      status: 'error',
+    });
+  });
+
+  it('keeps ordinary chat polling on the connection-status API', async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData([QueryKeys.mcpConnectionStatus], {
+      connectionStatus: { remote: { connectionState: 'connected', requiresOAuth: true } },
+    });
+    jest.spyOn(queryClient, 'refetchQueries').mockResolvedValue(undefined);
+    const { result } = renderHook(() => useMCPServerManager(), {
+      wrapper: wrapper(false, queryClient),
+    });
+    await act(async () => {
+      await result.current.initializeServer('remote', false);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(6000);
+    });
+    expect(result.current.isInitializing('remote')).toBe(false);
+    expect(mockGetOAuthStatus).not.toHaveBeenCalled();
+    expect(mockShowToast).toHaveBeenCalledWith({
+      message: 'com_ui_mcp_authenticated_success',
+      status: 'success',
+    });
+    queryClient.clear();
+  });
 });

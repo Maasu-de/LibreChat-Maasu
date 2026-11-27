@@ -13,6 +13,7 @@ const {
   createGovernanceMCPReinitialization,
   getMCPAuthorizationFlowId,
   getMCPAuthorizationInitiationBinding,
+  getGovernanceMCPOAuthAttemptId,
   requireGovernanceMCPAdministrator,
   queueGovernanceMCPAudit,
   storeGovernanceMCPOAuth,
@@ -292,6 +293,7 @@ router.get('/:serverName/oauth/initiate', requireJwtAuth, setOAuthSession, async
  */
 router.get('/:serverName/oauth/callback', async (req, res) => {
   const basePath = getBasePath();
+  if (isGovernancePilotEnabled()) res.set('Referrer-Policy', 'no-referrer');
   try {
     const { serverName } = req.params;
     const { code, state, error: oauthError } = req.query;
@@ -359,7 +361,10 @@ router.get('/:serverName/oauth/callback', async (req, res) => {
 
     const flowId = await MCPOAuthHandler.resolveStateToFlowId(state, flowManager);
     if (!flowId) {
-      logger.error('[MCP OAuth] Could not resolve state to flow ID', { state });
+      logger.error(
+        '[MCP OAuth] Could not resolve state to flow ID',
+        isGovernancePilotEnabled() ? { serverName } : { state },
+      );
       return res.redirect(`${basePath}/oauth/error?error=invalid_state`);
     }
     logger.debug('[MCP OAuth] Resolved flow ID from state', { flowId });
@@ -706,14 +711,14 @@ router.get('/oauth/status/:flowId', requireJwtAuth, async (req, res) => {
       return res.status(404).json({ error: 'Flow not found' });
     }
 
+    const governed = isGovernancePilotEnabled();
+    if (governed) res.set('Cache-Control', 'no-store');
     res.json({
       status: flowState.status,
       completed: flowState.status === 'COMPLETED',
       failed: flowState.status === 'FAILED',
-      error:
-        flowState.error && isGovernancePilotEnabled()
-          ? 'OAuth authorization failed'
-          : flowState.error,
+      ...(governed && { attemptId: getGovernanceMCPOAuthAttemptId(flowState.metadata?.state) }),
+      error: flowState.error && governed ? 'OAuth authorization failed' : flowState.error,
     });
   } catch (error) {
     logger.error(

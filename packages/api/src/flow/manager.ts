@@ -104,7 +104,8 @@ export class FlowStateManager<T = unknown> {
       metadata,
       createdAt: Date.now(),
     };
-    logger.debug(`[${flowKey}] Storing initial flow state`);
+    const logKey = type === 'mcp_oauth_state' ? type : flowKey;
+    logger.debug(`[${logKey}] Storing initial flow state`);
     await this.storage.set(flowKey, initialState);
   }
 
@@ -443,12 +444,16 @@ export class FlowStateManager<T = unknown> {
    */
   async deleteFlow(flowId: string, type: string): Promise<boolean> {
     const flowKey = this.getFlowKey(flowId, type);
+    const logKey = type === 'mcp_oauth_state' ? type : flowKey;
     try {
       await this.keyv.delete(flowKey);
-      logger.debug(`[${flowKey}] Flow deleted`);
+      logger.debug(`[${logKey}] Flow deleted`);
       return true;
     } catch (error) {
-      logger.error(`[${flowKey}] Error deleting flow:`, error);
+      logger.error(
+        `[${logKey}] Error deleting flow:`,
+        type === 'mcp_oauth_state' ? undefined : error,
+      );
       return false;
     }
   }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getTenantId, tenantStorage, logger } from '@librechat/data-schemas';
 import { SystemRoles } from 'librechat-data-provider';
 import type { AllMethods, IUser, TokenMethods } from '@librechat/data-schemas';
@@ -15,6 +16,12 @@ import { GovernanceMCPOAuthStaleError } from './oauth';
 import { MCPOAuthHandler } from '~/mcp/oauth';
 import { getBasePath } from '~/utils/path';
 import { isGovernancePilotEnabled } from './mode';
+
+/** A flow ID is reused across retries. Identify each attempt without exposing its OAuth state. */
+export function getGovernanceMCPOAuthAttemptId(state: unknown): string | undefined {
+  if (typeof state !== 'string' || !state) return;
+  return createHash('sha256').update(state).digest('hex');
+}
 
 export async function getMCPAuthorizationFlowId(
   userId: string,

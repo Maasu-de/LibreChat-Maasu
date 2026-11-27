@@ -199,6 +199,26 @@ export interface MCPServerStatus {
   authorizationComplete?: boolean;
 }
 
+export interface MCPOAuthAttempt {
+  flowId: string;
+  id: string;
+}
+
+export interface MCPOAuthStatusResponse {
+  attemptId?: string;
+  completed: boolean;
+  failed: boolean;
+}
+
+export interface MCPReinitializeResponse {
+  success: boolean;
+  message: string;
+  serverName: string;
+  oauthRequired?: boolean;
+  oauthUrl?: string | null;
+  oauthAttempt?: MCPOAuthAttempt;
+}
+
 export interface MCPConnectionStatusResponse {
   success: boolean;
   connectionStatus: Record<string, MCPServerStatus>;

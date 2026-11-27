@@ -10,12 +10,16 @@ import { MCPAdministrationContext } from '../administration';
 import MCPServerList from '../MCPServerList';
 import MCPServerCard from '../MCPServerCard';
 
+const mockGetOAuthUrl = jest.fn();
+
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
   useHasAccess: () => true,
   useMCPServerManager: () => ({
     initializeServer: jest.fn(),
     revokeOAuthForServer: jest.fn(),
+    getOAuthUrl: mockGetOAuthUrl,
+    cancelOAuthFlow: jest.fn(),
   }),
 }));
 jest.mock('../MCPServerDialog', () => ({ __esModule: true, default: () => null }));
@@ -33,6 +37,41 @@ jest.mock('librechat-data-provider', () => {
 });
 
 describe('administrator OAuth authorization status', () => {
+  it('keeps a user-clickable OAuth link available while the admin is waiting', () => {
+    const authorizationUrl = 'https://identity.example/authorize?state=fixture';
+    mockGetOAuthUrl.mockReturnValue(authorizationUrl);
+    const client = new QueryClient();
+    const renderCard = (isInitializing: boolean, administration: boolean) => (
+      <QueryClientProvider client={client}>
+        <MCPAdministrationContext.Provider value={administration}>
+          <MCPServerCard
+            server={{ serverName: 'remote', config: initialConfig, effectivePermissions: 7 }}
+            canCreateEditMCPs
+            getServerStatusIconProps={(serverName) => ({
+              serverName,
+              isInitializing,
+              canCancel: isInitializing,
+              onConfigClick: jest.fn(),
+              onCancel: jest.fn(),
+            })}
+          />
+        </MCPAdministrationContext.Provider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(renderCard(true, true));
+    const link = screen.getByRole('link', { name: 'com_ui_mcp_continue_oauth' });
+    expect(link).toHaveAttribute('href', authorizationUrl);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    rerender(renderCard(false, true));
+    expect(link).not.toBeInTheDocument();
+    rerender(renderCard(true, false));
+    expect(
+      screen.queryByRole('link', { name: 'com_ui_mcp_continue_oauth' }),
+    ).not.toBeInTheDocument();
+    client.clear();
+  });
+
   it.each([true, false])(
     'shows authorization without claiming a live connection in administration=%s',
     (administration) => {

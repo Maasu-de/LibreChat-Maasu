@@ -427,6 +427,54 @@ it('rolls back an update when enqueue fails and records the actual failed outcom
     outcome: 'failure',
   });
 });
+
+it('does not convert a hidden legacy connection into a governed connection', async () => {
+  const legacyConfig = {
+    type: 'websocket',
+    url: 'wss://legacy.example/mcp',
+    title: 'Legacy WebSocket',
+  };
+  const legacy = await schemas.runAsSystem(() =>
+    models.MCPServer.create({ serverName: 'legacy', author: actor._id, config: legacyConfig }),
+  );
+  const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+  await request(app).patch('/servers/legacy').send({ config }).expect(404);
+  expect(MCPServerInspector.inspect).not.toHaveBeenCalled();
+  expect(
+    (await schemas.runAsSystem(() => models.MCPServer.findById(legacy._id).lean()))?.config,
+  ).toEqual(legacyConfig);
+  expect(await outbox().countDocuments()).toBe(0);
+});
+
+it('does not update a replacement record created during inspection', async () => {
+  const name = await create();
+  const { MCPServerInspector } = await import('~/mcp/registry/MCPServerInspector');
+  const replacementConfig = { type: 'sse', url: 'https://replacement.example/mcp' };
+  jest.mocked(MCPServerInspector.inspect).mockImplementationOnce(async (_name, input) => {
+    await schemas.runAsSystem(async () => {
+      await models.MCPServer.deleteOne({ serverName: name });
+      await models.MCPServer.create({
+        serverName: name,
+        author: actor._id,
+        config: replacementConfig,
+      });
+    });
+    return { ...input };
+  });
+
+  await request(app).patch(`/servers/${name}`).send({ config }).expect(404);
+  expect(
+    (await schemas.runAsSystem(() => models.MCPServer.findOne({ serverName: name }).lean()))
+      ?.config,
+  ).toEqual(replacementConfig);
+  expect(
+    await outbox().countDocuments({
+      'payload.action': 'mcp.updated',
+      'payload.outcome': 'success',
+    }),
+  ).toBe(0);
+});
+
 it('restores server and ACL after delete audit failure and responds during a persistent outage', async () => {
   const name = await create();
   const previousACL = await schemas.runAsSystem(() => models.AclEntry.find({}).lean());

@@ -11,6 +11,15 @@ export const MCPErrorCodes = {
 
 export type MCPErrorCode = (typeof MCPErrorCodes)[keyof typeof MCPErrorCodes];
 
+export class MCPConnectionNotFoundError extends Error {
+  public readonly statusCode = 404;
+
+  constructor() {
+    super('MCP connection not found');
+    this.name = 'MCPConnectionNotFoundError';
+  }
+}
+
 /**
  * Custom error for MCP domain restriction violations.
  * Thrown when a user attempts to connect to an MCP server whose domain is not in the allowlist.

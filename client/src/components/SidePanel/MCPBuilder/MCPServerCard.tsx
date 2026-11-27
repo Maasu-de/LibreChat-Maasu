@@ -33,7 +33,8 @@ export default function MCPServerCard({
   const localize = useLocalize();
   const administration = useMCPAdministration();
   const triggerRef = useRef<HTMLDivElement>(null);
-  const { initializeServer, revokeOAuthForServer } = useMCPServerManager();
+  const { initializeServer, revokeOAuthForServer, getOAuthUrl, cancelOAuthFlow } =
+    useMCPServerManager();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const statusIconProps = getServerStatusIconProps(server.serverName);
@@ -45,6 +46,7 @@ export default function MCPServerCard({
     onCancel,
     hasCustomUserVars = false,
   } = statusIconProps;
+  const oauthUrl = administration && isInitializing ? getOAuthUrl(server.serverName) : null;
 
   const canEditThisServer = hasPermissions(server.effectivePermissions, PermissionBits.EDIT);
   const displayName = server.config?.title || server.serverName;
@@ -81,6 +83,13 @@ export default function MCPServerCard({
 
   const handleRevoke = () => {
     revokeOAuthForServer(server.serverName);
+  };
+
+  const handleCancel = (event: React.MouseEvent) => {
+    if (!administration) return onCancel(event);
+    event.stopPropagation();
+    event.preventDefault();
+    cancelOAuthFlow(server.serverName);
   };
 
   const handleEditClick = (e: React.MouseEvent) => {
@@ -148,6 +157,16 @@ export default function MCPServerCard({
           {authorized && !isInitializing && (
             <p className="text-xs text-text-secondary">{localize('com_ui_mcp_authorized')}</p>
           )}
+          {oauthUrl && (
+            <a
+              href={oauthUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-text-primary underline focus-visible:outline"
+            >
+              {localize('com_ui_mcp_continue_oauth')}
+            </a>
+          )}
         </div>
 
         {/* Actions */}
@@ -163,7 +182,7 @@ export default function MCPServerCard({
             onEditClick={handleEditClick}
             onConfigClick={onConfigClick}
             onInitialize={handleInitialize}
-            onCancel={onCancel}
+            onCancel={handleCancel}
             onRevoke={handleRevoke}
           />
         </div>

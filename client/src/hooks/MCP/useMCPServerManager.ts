@@ -10,6 +10,7 @@ import {
   PermissionBits,
   ResourceType,
   PermissionTypes,
+  dataService,
 } from 'librechat-data-provider';
 import {
   useCancelMCPOAuthMutation,
@@ -22,6 +23,7 @@ import type {
   TPlugin,
   MCPServersResponse,
   MCPConnectionStatusResponse,
+  MCPOAuthAttempt,
 } from 'librechat-data-provider';
 import type { MCPServerInitState } from '~/store/mcp';
 import type { ConfigFieldDetail } from '~/common';
@@ -215,7 +217,7 @@ export function useMCPServerManager({
   );
 
   const startServerPolling = useCallback(
-    (serverName: string) => {
+    (serverName: string, oauthAttempt?: MCPOAuthAttempt) => {
       // Prevent duplicate polling for the same server
       if (pollIntervalsRef.current[serverName]) {
         console.debug(`[MCP Manager] Polling already active for ${serverName}, skipping duplicate`);
@@ -224,6 +226,8 @@ export function useMCPServerManager({
 
       let pollAttempts = 0;
       let timeoutId: NodeJS.Timeout | null = null;
+      const startedAt = Date.now();
+      const isCurrentPoll = () => pollIntervalsRef.current[serverName] === timeoutId;
 
       /** OAuth can take several minutes if the user steps away from the consent screen.
        * Poll for the full server-side handling window (MCP_OAUTH_HANDLING_TIMEOUT
@@ -250,12 +254,8 @@ export function useMCPServerManager({
       const pollOnce = async () => {
         try {
           pollAttempts++;
-          const state = getServerInitState(serverInitStates, serverName);
-
           /** Stop polling once the handling window or max attempts is exceeded */
-          const elapsedTime = state?.oauthStartTime
-            ? Date.now() - state.oauthStartTime
-            : pollAttempts * 5000; // Rough estimate if no start time
+          const elapsedTime = Date.now() - startedAt;
 
           if (pollAttempts > maxAttempts || elapsedTime > oauthTimeoutMs) {
             console.warn(
@@ -272,7 +272,11 @@ export function useMCPServerManager({
             return;
           }
 
-          await queryClient.refetchQueries([QueryKeys.mcpConnectionStatus]);
+          const [, attemptStatus] = await Promise.all([
+            queryClient.refetchQueries([QueryKeys.mcpConnectionStatus]),
+            oauthAttempt ? dataService.getMCPOAuthStatus(oauthAttempt.flowId) : undefined,
+          ]);
+          if (!isCurrentPoll()) return;
 
           const freshConnectionData = queryClient.getQueryData<MCPConnectionStatusResponse>([
             QueryKeys.mcpConnectionStatus,
@@ -287,10 +291,10 @@ export function useMCPServerManager({
 
           const serverStatus = freshConnectionStatus[serverName];
 
-          if (
-            serverStatus?.connectionState === 'connected' ||
-            (administration && serverStatus?.authorizationComplete)
-          ) {
+          const completed = oauthAttempt
+            ? attemptStatus?.attemptId === oauthAttempt.id && attemptStatus.completed
+            : serverStatus?.connectionState === 'connected';
+          if (completed) {
             if (timeoutId) {
               clearTimeout(timeoutId);
             }
@@ -309,14 +313,16 @@ export function useMCPServerManager({
 
             // This delay is to ensure UI has updated with new connection status before cleanup
             // Otherwise servers will show as disconnected for a second after OAuth flow completes
-            setTimeout(() => {
+            if (!isCurrentPoll()) return;
+            timeoutId = setTimeout(() => {
               cleanupServerState(serverName);
             }, 1000);
+            pollIntervalsRef.current[serverName] = timeoutId;
             return;
           }
 
           // Check for OAuth timeout (should align with maxAttempts)
-          if (state?.oauthStartTime && Date.now() - state.oauthStartTime > oauthTimeoutMs) {
+          if (Date.now() - startedAt > oauthTimeoutMs) {
             showToast({
               message: localize('com_ui_mcp_oauth_timeout', { 0: serverName }),
               status: 'error',
@@ -328,7 +334,10 @@ export function useMCPServerManager({
             return;
           }
 
-          if (serverStatus?.connectionState === 'error') {
+          const failed = oauthAttempt
+            ? attemptStatus?.attemptId !== oauthAttempt.id || attemptStatus.failed
+            : serverStatus?.connectionState === 'error';
+          if (failed) {
             showToast({
               message: localize('com_ui_mcp_init_failed'),
               status: 'error',
@@ -353,7 +362,12 @@ export function useMCPServerManager({
           timeoutId = setTimeout(pollOnce, nextInterval);
           pollIntervalsRef.current[serverName] = timeoutId;
         } catch (error) {
-          console.error(`[MCP Manager] Error polling server ${serverName}:`, error);
+          if (!isCurrentPoll()) return;
+          if (oauthAttempt) {
+            showToast({ message: localize('com_ui_mcp_init_failed'), status: 'error' });
+          } else {
+            console.error(`[MCP Manager] Error polling server ${serverName}:`, error);
+          }
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
@@ -366,15 +380,7 @@ export function useMCPServerManager({
       timeoutId = setTimeout(pollOnce, getPollInterval(0));
       pollIntervalsRef.current[serverName] = timeoutId;
     },
-    [
-      administration,
-      queryClient,
-      serverInitStates,
-      showToast,
-      localize,
-      setMCPValues,
-      cleanupServerState,
-    ],
+    [queryClient, showToast, localize, setMCPValues, cleanupServerState],
   );
 
   const initializeServer = useCallback(
@@ -382,7 +388,12 @@ export function useMCPServerManager({
       updateServerInitState(serverName, { isInitializing: true });
       try {
         const response = await reinitializeMutation.mutateAsync(serverName);
-        if (!response.success) {
+        if (
+          !response.success ||
+          (administration &&
+            response.oauthRequired &&
+            (!response.oauthUrl || !response.oauthAttempt))
+        ) {
           showToast({
             message: localize('com_ui_mcp_init_failed', { 0: serverName }),
             status: 'error',
@@ -403,7 +414,7 @@ export function useMCPServerManager({
             window.open(response.oauthUrl, '_blank', 'noopener,noreferrer');
           }
 
-          startServerPolling(serverName);
+          startServerPolling(serverName, administration ? response.oauthAttempt : undefined);
         } else {
           await Promise.all([
             queryClient.invalidateQueries([QueryKeys.mcpServers]),
@@ -435,6 +446,7 @@ export function useMCPServerManager({
       }
     },
     [
+      administration,
       updateServerInitState,
       reinitializeMutation,
       startServerPolling,

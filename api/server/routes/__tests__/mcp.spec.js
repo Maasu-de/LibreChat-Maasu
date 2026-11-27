@@ -405,7 +405,7 @@ describe('MCP Routes', () => {
         },
       );
 
-      it('preserves OAuth initiation for a managed remote connection', async () => {
+      it('returns an opaque ID that the administrator can use to track this OAuth attempt', async () => {
         const config = {
           type: 'streamable-http',
           url: 'https://mcp.test/server',
@@ -413,19 +413,45 @@ describe('MCP Routes', () => {
           oauth: {},
         };
         mockRegistryInstance.getServerConfig.mockResolvedValue(config);
+        const state = 'test-provider-state';
+        const oauthUrl = `https://provider.test/authorize?state=${state}`;
         require('~/server/services/Tools/mcp').reinitMCPServer.mockResolvedValue({
-          success: false,
+          success: true,
           oauthRequired: true,
-          oauthUrl: 'https://provider.test/authorize',
+          oauthUrl,
         });
 
         const response = await request(app).post('/api/mcp/server/reinitialize');
 
         expect(response.status).toBe(200);
+        const { flowId, id } = response.body.oauthAttempt;
         expect(response.body).toMatchObject({
           oauthRequired: true,
-          oauthUrl: 'https://provider.test/authorize',
+          oauthUrl,
+          oauthAttempt: { flowId: expect.any(String), id: expect.stringMatching(/^[a-f0-9]{64}$/) },
         });
+        const getFlowState = jest
+          .fn()
+          .mockResolvedValueOnce({ status: 'PENDING', metadata: { state } })
+          .mockResolvedValueOnce({ status: 'COMPLETED', metadata: { state } })
+          .mockResolvedValueOnce({ status: 'COMPLETED', metadata: { state: 'other-attempt' } });
+        require('~/config').getFlowStateManager.mockReturnValue({ getFlowState });
+        const path = `/api/mcp/oauth/status/${encodeURIComponent(flowId)}`;
+        const pending = await request(app)
+          .get(path)
+          .expect(200)
+          .expect('Cache-Control', 'no-store');
+        expect(pending.body).toEqual({
+          status: 'PENDING',
+          completed: false,
+          failed: false,
+          attemptId: id,
+        });
+        expect(pending.text).not.toContain(state);
+        const completed = await request(app).get(path).expect(200);
+        expect(completed.body).toMatchObject({ completed: true, attemptId: id });
+        const replaced = await request(app).get(path).expect(200);
+        expect(replaced.body.attemptId).not.toBe(id);
         expect(require('@librechat/api').queueGovernanceMCPAudit).toHaveBeenCalledWith(
           expect.objectContaining({ user: actor }),
           'mcp.inspected',

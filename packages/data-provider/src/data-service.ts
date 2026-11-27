@@ -216,9 +216,12 @@ export const updateUserPlugins = (payload: t.TUpdateUserPlugins) => {
   return request.post(endpoints.userPlugins(), payload);
 };
 
-export const reinitializeMCPServer = (serverName: string) => {
+export const reinitializeMCPServer = (serverName: string): Promise<q.MCPReinitializeResponse> => {
   return request.post(endpoints.mcpReinitialize(serverName));
 };
+
+export const getMCPOAuthStatus = (flowId: string): Promise<q.MCPOAuthStatusResponse> =>
+  request.get(endpoints.mcpOAuthStatus(flowId));
 
 export const bindMCPOAuth = (serverName: string): Promise<{ success: boolean }> => {
   return request.post(endpoints.mcpOAuthBind(serverName));

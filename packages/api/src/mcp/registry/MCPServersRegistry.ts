@@ -11,7 +11,11 @@ import {
   APP_CACHE_NAMESPACE,
   CONFIG_CACHE_NAMESPACE,
 } from './cache/ServerConfigsCacheFactory';
-import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/errors';
+import {
+  MCPConnectionNotFoundError,
+  MCPInspectionFailedError,
+  isMCPDomainNotAllowedError,
+} from '~/mcp/errors';
 import { preserveGovernanceMCPSecrets } from '~/governance/mcp';
 import { isGovernancePilotEnabled } from '~/governance/mode';
 import { sanitizeMCPErrorForLogging } from '~/mcp/utils';
@@ -517,6 +521,7 @@ export class MCPServersRegistry {
     const source = (storageLocation === 'CACHE' ? 'yaml' : 'user') as t.MCPServerSource;
 
     const storedConfig = await configRepo.get(serverName, userId);
+    if (mutation && !storedConfig?.dbId) throw new MCPConnectionNotFoundError();
     if (storedConfig) {
       requireApiKeyReentryForRebinding(storedConfig, config);
       config = prepareOAuthSecretReuse(storedConfig, config);
@@ -571,10 +576,16 @@ export class MCPServersRegistry {
       parsedConfig = { ...parsedConfig, oauth };
     }
     const persist = async (session?: ClientSession) => {
+      if (mutation) {
+        const existing = await configRepo.get(serverName, userId, session);
+        if (!existing?.dbId || existing.dbId !== storedConfig?.dbId) {
+          throw new MCPConnectionNotFoundError();
+        }
+      }
       await configRepo.update(serverName, parsedConfig, userId, session);
       if (!mutation) return parsedConfig;
       const updated = await configRepo.get(serverName, userId, session);
-      if (!updated?.dbId) throw new Error('MCP connection not found');
+      if (!updated?.dbId) throw new MCPConnectionNotFoundError();
       return updated;
     };
     const result = mutation ? await mutation(persist, (updated) => updated.dbId!) : await persist();

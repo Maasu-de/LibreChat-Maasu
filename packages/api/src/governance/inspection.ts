@@ -1,4 +1,5 @@
 import { logger } from '@librechat/data-schemas';
+import type { MCPOAuthAttempt } from 'librechat-data-provider';
 import type { MCPServersRegistry } from '~/mcp/registry/MCPServersRegistry';
 import type { ParsedServerConfig, ToolDiscoveryResult } from '~/mcp/types';
 import type { MCPManager } from '~/mcp/MCPManager';
@@ -6,6 +7,7 @@ import type { RequestHandler } from 'express';
 import type { ServerRequest } from '~/types/http';
 import type { queueGovernanceMCPAudit } from './audit';
 import { isGovernanceRemoteMCP } from './mcp';
+import { getGovernanceMCPOAuthAttemptId } from './callback';
 import { createSafeUser } from '~/utils/env';
 import { setOAuthCsrfCookie } from '~/oauth/csrf';
 
@@ -64,8 +66,17 @@ export function createGovernanceMCPReinitialization(
         config.dbId,
         success && !oauthRequired ? 'success' : 'failure',
       );
-      if (oauthRequired) {
-        setOAuthCsrfCookie(res, await deps.getFlowId(user.id, serverName), '/api/mcp');
+      let oauthAttempt: MCPOAuthAttempt | undefined;
+      if (oauthRequired && oauthUrl) {
+        const authorizationUrl = new URL(oauthUrl);
+        if (!['http:', 'https:'].includes(authorizationUrl.protocol)) {
+          throw new Error('Invalid MCP authorization URL');
+        }
+        const id = getGovernanceMCPOAuthAttemptId(authorizationUrl.searchParams.get('state'));
+        if (!id) throw new Error('MCP OAuth attempt is missing state');
+        const flowId = await deps.getFlowId(user.id, serverName);
+        setOAuthCsrfCookie(res, flowId, '/api/mcp');
+        oauthAttempt = { flowId, id };
       }
       res.json({
         success,
@@ -73,6 +84,7 @@ export function createGovernanceMCPReinitialization(
         oauthUrl,
         serverName,
         oauthRequired,
+        ...(oauthAttempt && { oauthAttempt }),
       });
     } catch {
       logger.error('[MCP Reinitialize] Unexpected error', 'MCP operation failed');
